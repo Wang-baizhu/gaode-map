@@ -31,6 +31,32 @@ def wgs84_to_gcj02(lng, lat):
 
     return gcj02_lng, gcj02_lat
 
+
+def gcj02_to_wgs84(lng, lat, max_iter=10, threshold=1e-6):
+    """
+    将GCJ-02坐标系反推为WGS84坐标系（迭代法）。
+
+    :param lng: GCJ-02 坐标系的经度
+    :param lat: GCJ-02 坐标系的纬度
+    :param max_iter: 最大迭代次数
+    :param threshold: 收敛阈值（度）
+    :return: 反推后的 WGS84 坐标系经纬度 (lng, lat)
+    """
+    if out_of_china(lng, lat):
+        return lng, lat
+
+    guess_lng, guess_lat = lng, lat
+    for _ in range(max_iter):
+        calc_lng, calc_lat = wgs84_to_gcj02(guess_lng, guess_lat)
+        d_lng = calc_lng - lng
+        d_lat = calc_lat - lat
+        if abs(d_lng) < threshold and abs(d_lat) < threshold:
+            break
+        guess_lng -= d_lng
+        guess_lat -= d_lat
+
+    return guess_lng, guess_lat
+
 def transform_lat(lng, lat):
     """
     计算纬度偏移量的辅助函数

@@ -4,7 +4,7 @@
 """
 
 from pathlib import Path
-from typing import List
+from typing import List, Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -56,6 +56,11 @@ class Settings(BaseSettings):
         "http://127.0.0.1:8001",
         validation_alias="LOCAL_QUERY_BASE_URL",
         description="本地历史数据查询服务地址",
+    )
+    local_query_coord_system: Literal["gcj02", "wgs84"] = Field(
+        "gcj02",
+        validation_alias="LOCAL_QUERY_COORD_SYSTEM",
+        description="本地历史数据查询服务使用的坐标系（location 字段）",
     )
 
     # CORS跨域配置

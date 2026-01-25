@@ -221,7 +221,8 @@ def _local_poi_to_point(poi: Dict, year: Optional[int] = None) -> Dict:
     location = poi.get("location", "0,0")
     lng_str, lat_str = (location.split(",") + ["0", "0"])[:2]
     lng, lat = float(lng_str), float(lat_str)
-    # lng, lat = wgs84_to_gcj02(float(lng_str), float(lat_str))
+    if settings.local_query_coord_system == "wgs84":
+        lng, lat = wgs84_to_gcj02(lng, lat)
     point_type = map_typecode_to_point_type(poi.get("typecode", ""), "poi")
 
     point = {
