@@ -210,3 +210,17 @@ async def delete_map_polygon(map_id: int, polygon_id: int):
             detail="多边形记录不存在",
         )
     return {"status": "ok"}
+
+
+@router.get("/api/v1/config", summary="前端配置接口")
+async def get_frontend_config():
+    """
+    获取前端所需配置信息 (JS API Key, Security Code等)
+    前端 (Vue) 初始化时调用此接口。
+    """
+    return {
+        "amap_js_api_key": settings.amap_js_api_key,
+        "amap_js_security_code": settings.amap_js_security_code,
+        # 默认空的地图配置，analysis页面自己控制逻辑
+        "map_type_config_json": { "groups": [], "markerStyles": {} }
+    }

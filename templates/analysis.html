@@ -3,8 +3,10 @@
 
 <head>
     <meta charset="utf-8">
-    <title>高德地图空间分析 - 笔记本模式</title>
+    <title>高德地图空间分析 (Vue版)</title>
     <link rel="stylesheet" href="/static/css/map-common.css">
+    <!-- 引入 Vue 3 (CDN) -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <style>
         :root {
             --sidebar-width: 320px;
@@ -164,8 +166,6 @@
             border-radius: 4px;
             font-size: 12px;
             margin-bottom: 10px;
-            display: none;
-            /* Hidden until point selected */
         }
 
         /* Map Container override */
@@ -196,155 +196,299 @@
             margin-right: 10px;
             font-size: 16px;
         }
+
+        /* 遮罩层 */
+        .page-loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: white;
+            z-index: 9999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            color: #666;
+        }
     </style>
 </head>
 
 <body>
+    <!-- Vue App 挂载点 -->
+    <div id="app" style="display: flex; width: 100%; height: 100%;">
 
-    <!-- Left Sidebar: Parameters & Controls -->
-    <aside class="sidebar">
-        <div class="sidebar-header">
-            <h2>分析控制台</h2>
-        </div>
-        <div class="sidebar-content">
+        <div v-if="loadingConfig" class="page-loading">正在加载配置...</div>
 
-            <!-- Location Search -->
-            <div class="tool-card">
-                <h3>地点搜索</h3>
-                <div class="form-group">
-                    <input type="text" id="keyword" class="form-control" placeholder="输入地点搜索...">
-                </div>
+        <!-- Left Sidebar: Parameters & Controls -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h2>分析控制台 (Vue)</h2>
             </div>
+            <div class="sidebar-content">
 
-            <!-- Isochrone Params -->
-            <div class="tool-card">
-                <h3>等时圈参数</h3>
-
-                <div class="form-group">
-                    <div id="selectedPointInfo" class="selected-point-info">
-                        已选点: <span id="pointCoords"></span>
-                    </div>
-                    <div class="status-text" id="pointHint">
-                        请在地图上点击选择起点
+                <!-- Location Search -->
+                <div class="tool-card">
+                    <h3>地点搜索</h3>
+                    <div class="form-group">
+                        <input type="text" id="keyword" class="form-control" placeholder="输入地点搜索...">
                     </div>
                 </div>
 
-                <div class="form-group">
-                    <label>出行方式</label>
-                    <select id="transportMode" class="form-control">
-                        <option value="walking">步行 (Walking)</option>
-                        <option value="bicycling">骑行 (Bicycling)</option>
-                        <option value="driving">驾车 (Driving)</option>
-                    </select>
+                <!-- Isochrone Params -->
+                <div class="tool-card">
+                    <h3>等时圈参数</h3>
+
+                    <div class="form-group">
+                        <!-- Vue Conditional Rendering -->
+                        <div v-if="selectedPoint" class="selected-point-info">
+                            {% raw %}已选点: {{ selectedPoint.lng.toFixed(4) }}, {{ selectedPoint.lat.toFixed(4) }}{%
+                            endraw %}
+                        </div>
+                        <div v-else class="status-text">
+                            请在地图上点击选择起点
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>出行方式</label>
+                        <!-- Vue Model Binding -->
+                        <select v-model="transportMode" class="form-control">
+                            <option value="walking">步行 (Walking)</option>
+                            <option value="bicycling">骑行 (Bicycling)</option>
+                            <option value="driving">驾车 (Driving)</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>等时圈时长 (分钟)</label>
+                        <!-- Use step=1 and convert input to number -->
+                        <input type="number" v-model.number="timeHorizon" class="form-control" min="1" max="60"
+                            step="1">
+                    </div>
+
+                    <!-- Vue Event & Binding -->
+                    <button class="btn-primary" :disabled="!selectedPoint || isCalculating" @click="startAnalysis">
+                        {% raw %}{{ isCalculating ? '计算中...' : '开始分析' }}{% endraw %}
+                    </button>
+
+                    <div v-if="errorMessage" class="status-text" style="color: red;">
+                        {% raw %}{{ errorMessage }}{% endraw %}
+                    </div>
+
                 </div>
 
-                <div class="form-group">
-                    <label>等时圈时长 (分钟)</label>
-                    <input type="number" id="timeHorizon" class="form-control" value="15" min="1" max="60">
-                </div>
-
-                <button id="btnStartAnalysis" class="btn-primary" disabled>开始分析</button>
-
-                <div class="status-text" id="analysisStatus">
-                    等待开始...
-                </div>
             </div>
+        </aside>
 
-        </div>
-    </aside>
+        <!-- Middle: Map -->
+        <main class="main-content">
+            <!-- Vue 不直接控制此 DOM，交给 MapCore -->
+            <div id="container"></div>
+        </main>
 
-
-    <!-- Middle: Map -->
-    <main class="main-content">
-        <div id="container"></div>
-    </main>
-
-
-    <!-- Right Sidebar: Data Processing (UI Only) -->
-    <aside class="sidebar right">
-        <div class="sidebar-header">
-            <h2>数据处理</h2>
-        </div>
-        <div class="sidebar-content">
-
-            <div class="tool-card">
-                <h3>分析工具</h3>
-
-                <div class="data-tool-item">
-                    <span class="data-tool-icon">📊</span>
-                    核密度分析
-                </div>
-
-                <div class="data-tool-item">
-                    <span class="data-tool-icon">ℹ️</span>
-                    香农熵
-                </div>
-
-                <div class="data-tool-item">
-                    <span class="data-tool-icon">🌊</span>
-                    桑基图
-                </div>
-
-                <div style="margin-top: 10px; font-size: 12px; color: #999;">
-                    * 更多工具开发中
-                </div>
+        <!-- Right Sidebar: Data Processing -->
+        <aside class="sidebar right">
+            <div class="sidebar-header">
+                <h2>数据处理</h2>
             </div>
+            <div class="sidebar-content">
 
-        </div>
-    </aside>
+                <div class="tool-card">
+                    <h3>分析工具</h3>
 
+                    <div class="data-tool-item">
+                        <span class="data-tool-icon">📊</span>
+                        核密度分析
+                    </div>
 
-    <!-- SCRIPTS -->
-    <script type="text/javascript">
-        window._AMapSecurityConfig = {
-            securityJsCode: "{{ amap_js_security_code }}",
-        };
-    </script>
-    <script
-        src="https://webapi.amap.com/maps?v=1.4.15&key={{ amap_js_api_key }}&plugin=AMap.Autocomplete,AMap.PlaceSearch"></script>
+                    <div class="data-tool-item">
+                        <span class="data-tool-icon">ℹ️</span>
+                        香农熵
+                    </div>
 
-    <!-- Dependencies from map_base -->
+                    <div class="data-tool-item">
+                        <span class="data-tool-icon">🌊</span>
+                        桑基图
+                    </div>
+
+                    <div style="margin-top: 10px; font-size: 12px; color: #999;">
+                        * 更多工具开发中
+                    </div>
+                </div>
+
+            </div>
+        </aside>
+    </div>
+
+    <!-- 依赖库 -->
     <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
-
-    <!-- Local Utils -->
     <script src="/static/js/map-utils.js"></script>
     <script src="/static/js/map-core.js"></script>
-    <!-- We skip map-exporter and draw-bound for now unless requested in this view -->
-
-    <!-- Analysis Logic -->
-    <script src="/static/js/analysis.js"></script>
+    <!-- 引入 analysis.js 也可以，但我们大部分逻辑移入 Vue methods 更好，这里依然引入以兼容 MapCore 依赖 -->
 
     <script>
-        // Initialize Logic
-        var mapTypeConfig = {{ map_type_config_json | safe }} || { groups: [], markerStyles: {} };
+        const { createApp } = Vue;
 
-        // Initialize Map
-        var mapCore = new MapCore('container', {
-            center: { lng: 121.4737, lat: 31.2304 },
-            zoom: 13,
-            zooms: [3, 20],
-            mapData: {}
-        });
-        mapCore.initMap();
-        window.mapCore = mapCore;
+        createApp({
+            data() {
+                return {
+                    loadingConfig: true,
+                    config: null,
 
-        // Initialize Analysis Manager
-        var analysisManager = new AnalysisManager(mapCore);
-        window.analysisManager = analysisManager;
+                    // State
+                    selectedPoint: null, // {lng, lat}
+                    transportMode: 'walking',
+                    timeHorizon: 15,
+                    isCalculating: false,
+                    errorMessage: '',
 
-        // Initialize Search (Copied from previous template block)
-        var autoOptions = {
-            input: "keyword"
-        };
-        var autocomplete = new AMap.Autocomplete(autoOptions);
-        var placeSearch = new AMap.PlaceSearch({
-            map: mapCore.map
-        });
+                    // Instances - stored directly on 'this', not in data() to avoid Proxy issues
+                }
+            },
+            async mounted() {
+                try {
+                    // 1. 获取后端配置
+                    const res = await fetch('/api/v1/config');
+                    if (!res.ok) {
+                        throw new Error(`配置接口返回 ${res.status}`);
+                    }
+                    const data = await res.json();
+                    this.config = data;
 
-        AMap.event.addListener(autocomplete, "select", function (e) {
-            placeSearch.setCity(e.poi.adcode);
-            placeSearch.search(e.poi.name);
-        });
+                    // 2. 动态加载高德地图脚本
+                    await this.loadAMapScript(data.amap_js_api_key, data.amap_js_security_code);
+
+                    // 3. 初始化地图
+                    this.initMap();
+                } catch (e) {
+                    console.error("Initialization Failed:", e);
+                    const message = e && e.message ? e.message : String(e);
+                    this.errorMessage = "系统初始化失败: " + message;
+                } finally {
+                    this.loadingConfig = false;
+                }
+            },
+            methods: {
+                loadAMapScript(key, securityCode) {
+                    return new Promise((resolve, reject) => {
+                        window._AMapSecurityConfig = { securityJsCode: securityCode };
+                        const script = document.createElement('script');
+                        script.src = `https://webapi.amap.com/maps?v=1.4.15&key=${key}&plugin=AMap.Autocomplete,AMap.PlaceSearch`;
+                        script.onload = resolve;
+                        script.onerror = reject;
+                        document.head.appendChild(script);
+                    });
+                },
+                initMap() {
+                    const mapCore = new MapCore('container', {
+                        center: { lng: 121.4737, lat: 31.2304 },
+                        zoom: 13,
+                        zooms: [3, 20],
+                        mapData: {}
+                    });
+                    mapCore.initMap();
+                    this.mapCore = mapCore;
+
+                    // 绑定地图点击事件
+                    mapCore.map.on('click', (e) => {
+                        this.setSelectedPoint(e.lnglat);
+                    });
+
+                    // 初始化搜索 (保留现有逻辑)
+                    this.initSearch(mapCore.map);
+                },
+                initSearch(map) {
+                    const autoOptions = { input: "keyword" };
+                    const autocomplete = new AMap.Autocomplete(autoOptions);
+                    // PlaceSearch is optional if we just want to jump to the point
+                    const placeSearch = new AMap.PlaceSearch({ map: map });
+
+                    AMap.event.addListener(autocomplete, "select", (e) => {
+                        if (e.poi && e.poi.location) {
+                            // 1. Center map
+                            map.setZoomAndCenter(15, e.poi.location);
+                            // 2. Trigger selection logic
+                            this.setSelectedPoint(e.poi.location);
+                        }
+                    });
+                },
+                setSelectedPoint(lnglat) {
+                    // 1. 更新数据状态
+                    this.selectedPoint = { lng: lnglat.lng, lat: lnglat.lat };
+                    this.errorMessage = '';
+
+                    // 2. 更新地图视觉 (Marker)
+                    if (this.marker) {
+                        this.marker.setPosition(lnglat);
+                        return;
+                    }
+
+                    this.marker = new AMap.Marker({
+                        position: lnglat
+                        // Use default anchor
+                    });
+                    this.mapCore.map.add(this.marker);
+                },
+                async startAnalysis() {
+                    if (!this.selectedPoint) return;
+                    if (this.isCalculating) return;
+
+                    this.isCalculating = true;
+                    this.errorMessage = '';
+
+                    try {
+                        // Send GCJ02 coordinates directly to backend
+                        // Backend will handle GCJ02 -> WGS84 (for Valhalla) -> GCJ02 (for response)
+                        const payload = {
+                            lat: this.selectedPoint.lat,
+                            lon: this.selectedPoint.lng,
+                            time_min: parseInt(this.timeHorizon),
+                            mode: this.transportMode,
+                            coord_type: 'gcj02'
+                        };
+
+                        const res = await fetch('/api/v1/analysis/isochrone', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+
+                        if (!res.ok) throw new Error("API 请求失败");
+                        const geojson = await res.json();
+
+                        this.renderResult(geojson);
+
+                    } catch (e) {
+                        console.error(e);
+                        this.errorMessage = "计算失败: " + e.message;
+                    } finally {
+                        this.isCalculating = false;
+                    }
+                },
+                renderResult(geojson) {
+                    if (!geojson || !geojson.geometry || !geojson.geometry.coordinates) {
+                        this.errorMessage = "未获取到有效数据";
+                        return;
+                    }
+
+                    const coords = geojson.geometry.coordinates;
+                    const type = geojson.geometry.type;
+                    let paths = [];
+
+                    // Backend returns GCJ02 if we sent GCJ02, so no conversion needed here
+                    if (type === 'Polygon') {
+                        paths.push(coords[0]);
+                    } else if (type === 'MultiPolygon') {
+                        coords.forEach(poly => paths.push(poly[0]));
+                    }
+
+                    // 调用底层 MapCore 绘图
+                    this.mapCore.setCustomPolygons(paths);
+                }
+            }
+        }).mount('#app');
     </script>
 </body>
 

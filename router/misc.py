@@ -36,3 +36,14 @@ async def favicon():
         return FileResponse(favicon_path)
     # 如果没有图标文件，返回204 No Content (成功但无内容) 避免浏览器控制台报错
     return Response(status_code=204)
+
+
+@router.get("/api/v1/config", summary="获取前端配置")
+async def get_frontend_config():
+    """
+    返回前端所需的配置信息 (如高德地图 API Key)
+    """
+    return {
+        "amap_js_api_key": settings.amap_js_api_key,
+        "amap_js_security_code": settings.amap_js_security_code,
+    }
