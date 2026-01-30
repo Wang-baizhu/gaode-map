@@ -66,5 +66,17 @@ class Settings(BaseSettings):
     # CORS跨域配置
     cors_origins: List[str] = ["*"]  # 允许访问的域名列表
 
+    # 等时圈（Isochrone）配置
+    valhalla_base_url: str = Field(
+        "http://127.0.0.1:8002",
+        validation_alias="VALHALLA_BASE_URL",
+        description="Valhalla 路由引擎基础地址",
+    )
+    valhalla_timeout_s: int = Field(
+        60,
+        validation_alias="VALHALLA_TIMEOUT_S",
+        description="Valhalla 请求超时时间（秒）",
+    )
+
 
 settings = Settings()

@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from config import settings
-from router import admin_router, api_router, misc_router, pages_router
+from router import admin_router, api_router, misc_router, pages_router, analysis_router
 from store import init_db
 import asyncio
 
@@ -79,6 +79,7 @@ app.include_router(api_router)
 app.include_router(admin_router)
 app.include_router(pages_router)
 app.include_router(misc_router)
+app.include_router(analysis_router)
 # ==================== 主入口 ====================
 
 if __name__ == "__main__":

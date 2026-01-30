@@ -1,6 +1,7 @@
 from datetime import datetime
-
-from fastapi import APIRouter
+import os
+from fastapi import APIRouter, Response
+from fastapi.responses import FileResponse
 
 from config import settings
 
@@ -25,3 +26,13 @@ async def root():
         "docs": f"{settings.app_base_url}/docs",
         "health": f"{settings.app_base_url}/health",
     }
+
+
+@router.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """处理favicon.ico请求，避免404错误"""
+    favicon_path = os.path.join(settings.static_dir, "favicon.ico")
+    if os.path.exists(favicon_path):
+        return FileResponse(favicon_path)
+    # 如果没有图标文件，返回204 No Content (成功但无内容) 避免浏览器控制台报错
+    return Response(status_code=204)

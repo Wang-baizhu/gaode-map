@@ -12,7 +12,6 @@ from fastapi.responses import StreamingResponse
 from config import settings
 from models import (
     MapGenerateRequest,
-    MapRequest,
     MapResponse,
     PolygonCreateRequest,
     PolygonListResponse,

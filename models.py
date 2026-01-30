@@ -140,3 +140,13 @@ class AdminMapListResponse(BaseModel):
     """
 
     maps: List[AdminMapRecord] = Field(default_factory=list, description="地图列表")
+
+
+class IsochroneRequest(BaseModel):
+    """
+    等时圈计算请求
+    """
+    lat: float = Field(..., description="中心点纬度 (WGS84)", ge=-90, le=90)
+    lon: float = Field(..., description="中心点经度 (WGS84)", ge=-180, le=180)
+    time_min: int = Field(15, description="时间范围(分钟)", gt=0, le=120)
+    mode: Literal["walking", "driving", "bicycling"] = Field("walking", description="出行方式")

@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: gaode-map-app
+    ports:
+      - "8000:8000"
+    environment:
+      - VALHALLA_BASE_URL=http://valhalla:8002
+      - AMAP_WEB_SERVICE_KEY=${AMAP_WEB_SERVICE_KEY:-your_key_here}
+    depends_on:
+      - valhalla
+    volumes:
+      - ./data:/app/data
+
+  valhalla:
+    image: ghcr.io/gis-ops/docker-valhalla/valhalla:latest
+    container_name: gaode-map-valhalla
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./docker/valhalla_custom_files:/custom_files
+    environment:
+      - build_elevation=True
+      - build_admins=True
+      - build_time_zones=True
+      - server_threads=2
+      - use_default_speeds_config=True
+      - default_speeds_config_url=https://raw.githubusercontent.com/OpenStreetMapSpeeds/schema/master/default_speeds.json
+    # Note: Valhalla needs a 'tiles.tar' or PBF files in the mapped volume to start effectively.
+    # Without data, it will start but return empty results for routing.
+

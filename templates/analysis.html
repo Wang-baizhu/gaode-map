@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title>高德地图空间分析 - 笔记本模式</title>
+    <link rel="stylesheet" href="/static/css/map-common.css">
+    <style>
+        :root {
+            --sidebar-width: 320px;
+            --bg-color: #f8f9fa;
+            --card-bg: #ffffff;
+            --border-color: #e0e0e0;
+            --primary-color: #1a73e8;
+            --text-primary: #202124;
+            --text-secondary: #5f6368;
+        }
+
+        body {
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            display: flex;
+            font-family: 'Roboto', 'Segoe UI', Arial, sans-serif;
+            background-color: var(--bg-color);
+            margin: 0;
+            padding: 0;
+        }
+
+        /* Layout Columns */
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-color);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            z-index: 10;
+            box-shadow: 2px 0 5px rgba(0, 0, 0, 0.02);
+            height: 100%;
+        }
+
+        .sidebar.right {
+            border-right: none;
+            border-left: 1px solid var(--border-color);
+            box-shadow: -2px 0 5px rgba(0, 0, 0, 0.02);
+        }
+
+        .main-content {
+            flex: 1;
+            position: relative;
+            background: white;
+        }
+
+        /* Sidebar Header */
+        .sidebar-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border-color);
+            background: var(--card-bg);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .sidebar-header h2 {
+            margin: 0;
+            font-size: 18px;
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+
+        /* Sidebar Content */
+        .sidebar-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+        }
+
+        /* Cards/Sections */
+        .tool-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 16px;
+            transition: box-shadow 0.2s;
+        }
+
+        .tool-card:hover {
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+        }
+
+        .tool-card h3 {
+            margin-top: 0;
+            margin-bottom: 12px;
+            font-size: 14px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 600;
+        }
+
+        /* Form Elements */
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 13px;
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            font-size: 14px;
+            box-sizing: border-box;
+            transition: border-color 0.2s;
+        }
+
+        .form-control:focus {
+            outline: none;
+            border-color: var(--primary-color);
+        }
+
+        .btn-primary {
+            width: 100%;
+            padding: 10px;
+            background: var(--primary-color);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s;
+            margin-top: 10px;
+        }
+
+        .btn-primary:hover {
+            background: #1557b0;
+        }
+
+        .btn-primary:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .status-text {
+            margin-top: 8px;
+            font-size: 12px;
+            color: var(--text-secondary);
+            text-align: center;
+        }
+
+        .selected-point-info {
+            background: #e8f0fe;
+            color: #1a73e8;
+            padding: 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            margin-bottom: 10px;
+            display: none;
+            /* Hidden until point selected */
+        }
+
+        /* Map Container override */
+        #container {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Placeholder for Right Sidebar Tools */
+        .data-tool-item {
+            display: flex;
+            align-items: center;
+            padding: 12px;
+            border: 1px dashed var(--border-color);
+            border-radius: 6px;
+            margin-bottom: 8px;
+            color: var(--text-secondary);
+            font-size: 13px;
+            cursor: not-allowed;
+            background: #fdfdfd;
+        }
+
+        .data-tool-item:hover {
+            background: #f0f0f0;
+        }
+
+        .data-tool-icon {
+            margin-right: 10px;
+            font-size: 16px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- Left Sidebar: Parameters & Controls -->
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <h2>分析控制台</h2>
+        </div>
+        <div class="sidebar-content">
+
+            <!-- Location Search -->
+            <div class="tool-card">
+                <h3>地点搜索</h3>
+                <div class="form-group">
+                    <input type="text" id="keyword" class="form-control" placeholder="输入地点搜索...">
+                </div>
+            </div>
+
+            <!-- Isochrone Params -->
+            <div class="tool-card">
+                <h3>等时圈参数</h3>
+
+                <div class="form-group">
+                    <div id="selectedPointInfo" class="selected-point-info">
+                        已选点: <span id="pointCoords"></span>
+                    </div>
+                    <div class="status-text" id="pointHint">
+                        请在地图上点击选择起点
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>出行方式</label>
+                    <select id="transportMode" class="form-control">
+                        <option value="walking">步行 (Walking)</option>
+                        <option value="bicycling">骑行 (Bicycling)</option>
+                        <option value="driving">驾车 (Driving)</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>等时圈时长 (分钟)</label>
+                    <input type="number" id="timeHorizon" class="form-control" value="15" min="1" max="60">
+                </div>
+
+                <button id="btnStartAnalysis" class="btn-primary" disabled>开始分析</button>
+
+                <div class="status-text" id="analysisStatus">
+                    等待开始...
+                </div>
+            </div>
+
+        </div>
+    </aside>
+
+
+    <!-- Middle: Map -->
+    <main class="main-content">
+        <div id="container"></div>
+    </main>
+
+
+    <!-- Right Sidebar: Data Processing (UI Only) -->
+    <aside class="sidebar right">
+        <div class="sidebar-header">
+            <h2>数据处理</h2>
+        </div>
+        <div class="sidebar-content">
+
+            <div class="tool-card">
+                <h3>分析工具</h3>
+
+                <div class="data-tool-item">
+                    <span class="data-tool-icon">📊</span>
+                    核密度分析
+                </div>
+
+                <div class="data-tool-item">
+                    <span class="data-tool-icon">ℹ️</span>
+                    香农熵
+                </div>
+
+                <div class="data-tool-item">
+                    <span class="data-tool-icon">🌊</span>
+                    桑基图
+                </div>
+
+                <div style="margin-top: 10px; font-size: 12px; color: #999;">
+                    * 更多工具开发中
+                </div>
+            </div>
+
+        </div>
+    </aside>
+
+
+    <!-- SCRIPTS -->
+    <script type="text/javascript">
+        window._AMapSecurityConfig = {
+            securityJsCode: "{{ amap_js_security_code }}",
+        };
+    </script>
+    <script
+        src="https://webapi.amap.com/maps?v=1.4.15&key={{ amap_js_api_key }}&plugin=AMap.Autocomplete,AMap.PlaceSearch"></script>
+
+    <!-- Dependencies from map_base -->
+    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+
+    <!-- Local Utils -->
+    <script src="/static/js/map-utils.js"></script>
+    <script src="/static/js/map-core.js"></script>
+    <!-- We skip map-exporter and draw-bound for now unless requested in this view -->
+
+    <!-- Analysis Logic -->
+    <script src="/static/js/analysis.js"></script>
+
+    <script>
+        // Initialize Logic
+        var mapTypeConfig = {{ map_type_config_json | safe }} || { groups: [], markerStyles: {} };
+
+        // Initialize Map
+        var mapCore = new MapCore('container', {
+            center: { lng: 121.4737, lat: 31.2304 },
+            zoom: 13,
+            zooms: [3, 20],
+            mapData: {}
+        });
+        mapCore.initMap();
+        window.mapCore = mapCore;
+
+        // Initialize Analysis Manager
+        var analysisManager = new AnalysisManager(mapCore);
+        window.analysisManager = analysisManager;
+
+        // Initialize Search (Copied from previous template block)
+        var autoOptions = {
+            input: "keyword"
+        };
+        var autocomplete = new AMap.Autocomplete(autoOptions);
+        var placeSearch = new AMap.PlaceSearch({
+            map: mapCore.map
+        });
+
+        AMap.event.addListener(autocomplete, "select", function (e) {
+            placeSearch.setCity(e.poi.adcode);
+            placeSearch.search(e.poi.name);
+        });
+    </script>
+</body>
+
+</html>
