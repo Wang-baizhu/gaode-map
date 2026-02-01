@@ -119,4 +119,76 @@ async def calculate_isochrone_endpoint(payload: IsochroneRequest):
         raise HTTPException(status_code=503, detail="Analysis Service Unavailable (Valhalla connection failed)")
     except Exception as e:
         logger.error(f"Unexpected analysis error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal Server Error")
+
+from modules.poi.schemas import PoiRequest, PoiResponse
+from modules.poi.core import fetch_pois_by_polygon
+from store.history_repo import history_repo
+
+@router.post(
+    "/analysis/pois",
+    response_model=PoiResponse,
+    summary="Fetch POIs in Isochrone",
+    description="Fetch POIs within the given polygon boundary. Optionally saves to history."
+)
+async def fetch_pois_endpoint(payload: PoiRequest):
+    try:
+        # payload.polygon is List[List[float]] [[lng, lat]]
+        # Assumed to be GCJ02 matching the map
+        
+        results = await fetch_pois_by_polygon(
+            payload.polygon,
+            payload.keywords,
+            payload.types,
+            max_count=payload.max_count
+        )
+        
+        # Save History if requested
+        if payload.save_history:
+            center = payload.center or [0, 0]
+            if payload.location_name:
+                desc = f"{payload.location_name} - {len(results)} POIs"
+            else:
+                desc = f"{payload.keywords} - {len(results)} POIs"
+            
+            if payload.time_min:
+                desc = f"{payload.time_min}min Analysis - {desc}"
+                
+            params = {
+                "center": center,
+                "time_min": payload.time_min,
+                "keywords": payload.keywords,
+                "mode": "walking" # Default or passed from context?
+            }
+            
+            history_repo.create_record(
+                params=params, 
+                polygon=payload.polygon,
+                pois=results,
+                description=desc
+            )
+        
+        return {
+            "pois": results,
+            "count": len(results)
+        }
+    except Exception as e:
+        logger.error(f"POI fetch error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/analysis/history", summary="Get Analysis History")
+async def get_history_list(limit: int = 20):
+    return history_repo.get_list(limit)
+
+@router.get("/analysis/history/{id}", summary="Get Analysis Detail")
+async def get_history_detail(id: int):
+    res = history_repo.get_detail(id)
+    if not res:
+        raise HTTPException(status_code=404, detail="Record not found")
+    return res
+
+@router.delete("/analysis/history/{id}", summary="Delete Analysis Record")
+async def delete_history_record(id: int):
+    success = history_repo.delete_record(id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Record not found or delete failed")
+    return {"status": "success", "id": id}

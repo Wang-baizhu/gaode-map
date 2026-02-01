@@ -11,7 +11,9 @@ services:
       - AMAP_WEB_SERVICE_KEY=${AMAP_WEB_SERVICE_KEY:-your_key_here}
     depends_on:
       - valhalla
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
+      - .:/app
       - ./data:/app/data
 
   valhalla:
