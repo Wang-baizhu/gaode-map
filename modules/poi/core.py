@@ -38,64 +38,6 @@ class KeyManager:
     def rotate(self):
         self.current_index = (self.current_index + 1) % len(self.keys)
 
-
-async def fetch_pois_by_polygon(
-    polygon: List[List[float]],
-    keywords: str,
-    types: str = "",
-    max_count: int = 1000
-) -> List[Dict]:
-    """
-    Fetch POIs using Single Polygon Search (Simplified).
-    
-    Strategy:
-    1. Direct Polygon Search (No H3 Grid).
-    2. Support Key Rotation.
-    3. Pagination up to ~900 results (AMap limit).
-    """
-    
-    # Api Key Check
-    # Support multiple keys
-    raw_keys = settings.amap_web_service_key
-    if not raw_keys:
-        raise ValueError("AMap Web Service Key is missing in settings")
-    
-    key_manager = KeyManager(raw_keys)
-
-    # 1. Geometry - Validate only
-    if not polygon or len(polygon) < 3:
-        # Simple validation
-        logger.error("Invalid polygon input")
-        return []
-
-    logger.info(
-        "POI polygon input: points=%s first=%s last=%s",
-        len(polygon),
-        polygon[0] if polygon else None,
-        polygon[-1] if polygon else None,
-    )
-
-    # 2. Execution
-    limiter = RateLimiter(calls_per_second=20) 
-    
-    # Check Count First (Page 1)
-    count, first_page_pois = await _fetch_amap_page_one(polygon, keywords, types, key_manager, limiter)
-    logger.info(f"Polygon Search: Found {count} results total (Page 1 fetched {len(first_page_pois)}).")
-
-    all_pois = list(first_page_pois)
-
-    # Fetch remaining pages if needed
-    if count > len(all_pois):
-        remaining = await _fetch_remaining_pages(polygon, keywords, types, key_manager, count, limiter)
-        all_pois.extend(remaining)
-        
-    logger.info(f"Fetch Complete. Total POIs: {len(all_pois)}")
-    
-    # 3. No Strict Filtering needed (API handles it mostly, and we trust it for simple use case)
-    # Removing Shapely dependency for speed and simplicity in this mode
-    return all_pois
-
-
 class RateLimiter:
     """Token bucket rate limiter + Global smart backoff"""
     def __init__(self, calls_per_second=20):
@@ -135,7 +77,66 @@ class RateLimiter:
                 self._backoff_until = target
                 logger.warning(f"Global Rate Limit Triggered! Pausing all requests for {seconds}s")
 
-async def _fetch_amap_page_one(polygon, keywords, types, key_manager, limiter):
+# Global rate limiter to stay within AMap QPS limits across parallel requests
+global_limiter = RateLimiter(calls_per_second=20)
+
+async def fetch_pois_by_polygon(
+    polygon: List[List[float]],
+    keywords: str,
+    types: str = "",
+    max_count: int = 1000
+) -> List[Dict]:
+    """
+    Fetch POIs using Single Polygon Search (Simplified).
+    
+    Strategy:
+    1. Direct Polygon Search (No H3 Grid).
+    2. Support Key Rotation.
+    3. Pagination up to ~900 results (AMap limit).
+    """
+    
+    # Api Key Check
+    # Support multiple keys
+    raw_keys = settings.amap_web_service_key
+    if not raw_keys:
+        raise ValueError("AMap Web Service Key is missing in settings")
+    
+    key_manager = KeyManager(raw_keys)
+
+    # 1. Geometry - Validate only
+    if not polygon or len(polygon) < 3:
+        # Simple validation
+        logger.error("Invalid polygon input")
+        return []
+
+    logger.info(
+        "POI polygon input: points=%s first=%s last=%s",
+        len(polygon),
+        polygon[0] if polygon else None,
+        polygon[-1] if polygon else None,
+    )
+
+    # 2. Execution
+    async with aiohttp.ClientSession() as session:
+        # Check Count First (Page 1)
+        count, first_page_pois = await _fetch_amap_page_one(polygon, keywords, types, key_manager, global_limiter, session)
+        logger.info(f"Polygon Search: Found {count} results total (Page 1 fetched {len(first_page_pois)}).")
+
+        all_pois = list(first_page_pois)
+
+        # Fetch remaining pages if needed
+        if count > len(all_pois):
+            remaining = await _fetch_remaining_pages(polygon, keywords, types, key_manager, count, global_limiter, session)
+            all_pois.extend(remaining)
+        
+    logger.info(f"Fetch Complete. Total POIs: {len(all_pois)}")
+    
+    # 3. No Strict Filtering needed (API handles it mostly, and we trust it for simple use case)
+    # Removing Shapely dependency for speed and simplicity in this mode
+    return all_pois
+
+
+async def _fetch_amap_page_one(polygon, keywords, types, key_manager, limiter, session):
     """Fetch page 1 to get total count and first batch"""
     poly_str = ";".join([f"{p[0]:.6f},{p[1]:.6f}" for p in polygon])
     
@@ -155,33 +156,32 @@ async def _fetch_amap_page_one(polygon, keywords, types, key_manager, limiter):
         for attempt in range(3):
             await limiter.acquire()
             try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(AMAP_POLYGON_URL, params=params, timeout=5) as resp:
-                        if resp.status != 200:
-                             logger.warning(f"HTTP {resp.status}")
-                             continue
-                        
-                        data = await resp.json()
-                        status = data.get("status")
-                        
-                        if status == "1":
-                            count = int(data.get("count", 0))
-                            pois = _normalize_pois(data.get("pois", []))
-                            key_manager.rotate() # Success, rotate for load balancing
-                            return count, pois
-                        elif status == "0" and data.get("infocode") == "10003":
-                            # QPS Limit
-                            await limiter.trigger_backoff(2.0 + random.random())
-                            continue # Retry same key
-                        elif status == "0" and data.get("infocode") == "10044":
-                            # DAILY LIMIT - Switch Key!
-                            logger.warning(f"Daily limit reached for key {current_key[:6]}... Switching...")
-                            await key_manager.report_limit_reached()
-                            break # Break retry loop to outer key loop
-                        else:
-                            logger.warning(f"Key {current_key[:6]}... Error: status={status}, info={data.get('info')}, infocode={data.get('infocode')}")
-                            # If invalid key (10001), maybe also switch? keeping simple for now
-                            return 0, []
+                async with session.get(AMAP_POLYGON_URL, params=params, timeout=5) as resp:
+                    if resp.status != 200:
+                        logger.warning(f"HTTP {resp.status}")
+                        continue
+                    
+                    data = await resp.json()
+                    status = data.get("status")
+                    
+                    if status == "1":
+                        count = int(data.get("count", 0))
+                        pois = _normalize_pois(data.get("pois", []))
+                        key_manager.rotate() # Success, rotate for load balancing
+                        return count, pois
+                    elif status == "0" and data.get("infocode") == "10003":
+                        # QPS Limit
+                        await limiter.trigger_backoff(2.0 + random.random())
+                        continue # Retry same key
+                    elif status == "0" and data.get("infocode") == "10044":
+                        # DAILY LIMIT - Switch Key!
+                        logger.warning(f"Daily limit reached for key {current_key[:6]}... Switching...")
+                        await key_manager.report_limit_reached()
+                        break # Break retry loop to outer key loop
+                    else:
+                        logger.warning(f"Key {current_key[:6]}... Error: status={status}, info={data.get('info')}, infocode={data.get('infocode')}")
+                        # If invalid key (10001), maybe also switch? keeping simple for now
+                        return 0, []
             except Exception as e:
                 logger.warning(f"Fetch page 1 error: {e}")
                 await asyncio.sleep(0.5)
@@ -192,7 +192,7 @@ async def _fetch_amap_page_one(polygon, keywords, types, key_manager, limiter):
 
     return 0, []
 
-async def _fetch_remaining_pages(polygon, keywords, types, key_manager, total_count, limiter):
+async def _fetch_remaining_pages(polygon, keywords, types, key_manager, total_count, limiter, session):
     """Fetch pages 2..N"""
     poly_str = ";".join([f"{p[0]:.6f},{p[1]:.6f}" for p in polygon])
     all_pois = []
@@ -217,24 +217,23 @@ async def _fetch_remaining_pages(polygon, keywords, types, key_manager, total_co
             for attempt in range(3):
                 await limiter.acquire()
                 try:
-                    async with aiohttp.ClientSession() as session:
-                         async with session.get(AMAP_POLYGON_URL, params=params, timeout=5) as resp:
-                            if resp.status == 200:
-                                data = await resp.json()
-                                if data.get("status") == "1":
-                                    pois = _normalize_pois(data.get("pois", []))
-                                    key_manager.rotate()
-                                    if not pois: 
-                                        success = True; break
-                                    all_pois.extend(pois)
-                                    success = True
-                                    break
-                                elif data.get("infocode") == "10003":
-                                    await limiter.trigger_backoff(2.0)
-                                elif data.get("infocode") == "10044":
-                                     logger.warning(f"Daily limit (page fetch) for key {current_key[:6]}... Switching...")
-                                     await key_manager.report_limit_reached()
-                                     break # Break network loop, retry with new key
+                    async with session.get(AMAP_POLYGON_URL, params=params, timeout=5) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            if data.get("status") == "1":
+                                pois = _normalize_pois(data.get("pois", []))
+                                key_manager.rotate()
+                                if not pois: 
+                                    success = True; break
+                                all_pois.extend(pois)
+                                success = True
+                                break
+                            elif data.get("infocode") == "10003":
+                                await limiter.trigger_backoff(2.0)
+                            elif data.get("infocode") == "10044":
+                                 logger.warning(f"Daily limit (page fetch) for key {current_key[:6]}... Switching...")
+                                 await key_manager.report_limit_reached()
+                                 break # Break network loop, retry with new key
                 except:
                     pass
             

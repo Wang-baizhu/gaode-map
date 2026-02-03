@@ -10,7 +10,7 @@ services:
       - "8000:8000"
     environment:
       - VALHALLA_BASE_URL=http://valhalla:8002
-
+      - AMAP_WEB_SERVICE_KEY
       - PYTHONUNBUFFERED=1
     depends_on:
       - valhalla
@@ -18,6 +18,8 @@ services:
     volumes:
       - .:/app
       - ./data:/app/data
+      - /app/.venv
+      - /app/__pycache__
 
   valhalla:
     image: ghcr.io/gis-ops/docker-valhalla/valhalla:latest
@@ -25,7 +27,8 @@ services:
     ports:
       - "8002:8002"
     volumes:
-      - ./docker/valhalla_custom_files:/custom_files
+      - D:\ValhallaTiles\custom_files:/custom_files
+      - ./docker/valhalla_tiles:/valhalla/tiles
     environment:
       - build_elevation=False
       - build_admins=False

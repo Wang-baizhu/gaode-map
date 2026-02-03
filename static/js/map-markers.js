@@ -412,6 +412,7 @@
             }
 
             var isVisible = isActiveType && isEnabled && withinRadius && withinPolygon;
+
             if (isVisible) {
                 self.lastVisibleMarkerPids.add(point._pid);
                 if (point.type !== 'center') {
@@ -419,22 +420,31 @@
                 }
             }
 
-            if (!self.showMarkers || !isVisible) {
-                marker.setMap(null);
-                marker.setLabel(null);
+            // Optimization: Only call setMap when state changes or for center point
+            if (point.type === 'center') {
+                if (isVisible && !marker.getMap()) {
+                    marker.setMap(self.map);
+                    self.setMarkerLabel(marker);
+                } else if (!isVisible && marker.getMap()) {
+                    marker.setMap(null);
+                    marker.setLabel(null);
+                }
                 return;
             }
 
-            if (!marker.getMap()) {
-                marker.setMap(self.map);
+            // For POI markers, if not visible, ensure they are off the map.
+            // If visible, DON'T call setMap(map) here, let MarkerClusterer handle it.
+            if (!isVisible || !self.showMarkers) {
+                if (marker.getMap()) {
+                    marker.setMap(null);
+                }
+                marker.setLabel(null);
+            } else {
+                // Marker is visible and we want to show markers, it will be added to buckets
+                var list = self.markersByType[point.type] || [];
+                list.push(marker);
+                self.markersByType[point.type] = list;
             }
-            self.setMarkerLabel(marker);
-            if (point.type === 'center') {
-                return;
-            }
-            var list = self.markersByType[point.type] || [];
-            list.push(marker);
-            self.markersByType[point.type] = list;
         });
 
         if (!this.showMarkers) {
@@ -442,43 +452,37 @@
             return;
         }
 
-        var buckets = {};
-        Object.keys(this.markersByType).forEach(function (typeKey) {
-            var list = self.markersByType[typeKey] || [];
-            buckets[typeKey] = buckets[typeKey] || [];
-            list.forEach(function (marker) {
-                var point = marker.__data;
-                if (!point) return;
-                var isActive = self.activeTypes.has(point.type);
-                var isEnabled = self.isPointEnabled(point);
-                var inRadius = true;
-                if (self.mapCore.mapMode === 'around' && self.mapCore.currentRadius) {
-                    inRadius = MapUtils.isWithinRadius(point, self.mapCore.center, self.mapCore.currentRadius);
-                }
-                var inPolygon = true;
-                if (self.spatialFilter) {
-                    inPolygon = self.spatialFilter(point);
-                }
-                var canShow = isActive && isEnabled && inRadius && inPolygon;
-                if (canShow) {
-                    buckets[typeKey].push(marker);
-                }
-            });
-        });
-
         var clusterMaxZoom = 17;
         if (this.map.getMaxZoom) {
             clusterMaxZoom = Math.max(3, this.map.getMaxZoom() - 1);
         }
 
-        Object.keys(buckets).forEach(function (typeKey) {
-            var list = buckets[typeKey];
-            self.typeClusterers[typeKey] = new AMap.MarkerClusterer(self.map, list, {
-                gridSize: 80,
-                maxZoom: clusterMaxZoom,
-                minClusterSize: 2,
-                renderClusterMarker: self.getClusterRenderer(typeKey)
-            });
+        Object.keys(self.markersByType).forEach(function (typeKey) {
+            var list = self.markersByType[typeKey];
+            var clusterer = self.typeClusterers[typeKey];
+
+            if (clusterer) {
+                clusterer.setMarkers(list);
+            } else {
+                self.typeClusterers[typeKey] = new AMap.MarkerClusterer(self.map, list, {
+                    gridSize: 80,
+                    maxZoom: clusterMaxZoom,
+                    minClusterSize: 2,
+                    renderClusterMarker: self.getClusterRenderer(typeKey)
+                });
+            }
+        });
+
+        // Clear clusterers for types that are no longer active or have no points
+        Object.keys(this.typeClusterers).forEach(function (typeKey) {
+            if (!self.markersByType[typeKey] || self.markersByType[typeKey].length === 0) {
+                var c = self.typeClusterers[typeKey];
+                if (c) {
+                    c.clearMarkers();
+                    c.setMap(null);
+                    delete self.typeClusterers[typeKey];
+                }
+            }
         });
 
         this.mapCore.updateCityCirclesVisibility(this.lastVisibleMarkerPids);

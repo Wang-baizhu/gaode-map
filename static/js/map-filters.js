@@ -366,14 +366,20 @@
         }
 
         if (this.radiusSlider) {
+            var radiusThrottleTimer = null;
             this.radiusSlider.addEventListener('input', function () {
                 var radius = Number(self.radiusSlider.value);
-                self.mapCore.setRadius(radius);
-                self.updateRadiusDisplay();
-                self.markerManager.applyFilters();
-                self.updateTypeCountDisplay();
-                self.mapCore.updateFitView(self.markerManager.getVisibleMarkers());
-                self.refreshHeatmap();
+                self.updateRadiusDisplay(); // UI update is fast
+
+                if (radiusThrottleTimer) return;
+                radiusThrottleTimer = setTimeout(function () {
+                    self.mapCore.setRadius(radius);
+                    self.markerManager.applyFilters();
+                    self.updateTypeCountDisplay();
+                    self.mapCore.updateFitView(self.markerManager.getVisibleMarkers());
+                    self.refreshHeatmap();
+                    radiusThrottleTimer = null;
+                }, 50); // 50ms throttle
             });
         }
     };

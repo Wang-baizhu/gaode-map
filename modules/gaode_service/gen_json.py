@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 # Default token used by the demo service.
 DEFAULT_AUTH_HEADER = "gaode-map-plugin-2025-dev-only"
-DEFAULT_CONCURRENCY =  1
+DEFAULT_CONCURRENCY = 2
 # 类型切换时的请求间隔（秒），避免连续命中频控
 TYPE_SWITCH_DELAY = 0.3
 

@@ -18,7 +18,7 @@ import asyncio
 
 # ==================== 配置日志 ====================
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(name)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -52,6 +52,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+from fastapi.middleware.gzip import GZipMiddleware
+
 # 配置CORS
 app.add_middleware(
     CORSMiddleware,
@@ -60,6 +62,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 开启Gzip压缩
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
