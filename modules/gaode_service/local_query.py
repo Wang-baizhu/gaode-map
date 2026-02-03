@@ -5,7 +5,7 @@ Local history data query helpers.
 from typing import Dict, List, Optional
 from urllib.parse import urlencode
 
-from config import settings
+from core.config import settings
 
 from .get_position import _request_json
 from .utils.transform_posi import gcj02_to_wgs84

@@ -4,7 +4,7 @@
 """
 
 from pathlib import Path
-from typing import List, Literal
+from typing import List, Literal, Optional
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -30,16 +30,23 @@ class Settings(BaseSettings):
     api_keys: List[str] = ["dev-only-key-change-in-production"]  # API密钥列表，用于访问鉴权
 
     # 文件存储配置
-    static_dir: str = str(Path(__file__).resolve().parent / "static")  # 静态资源根目录
-    templates_dir: str = str(Path(__file__).resolve().parent / "templates")  # Jinja模板目录
+    static_dir: str = str(Path(__file__).resolve().parent.parent / "static")  # 静态资源根目录
+    templates_dir: str = str(Path(__file__).resolve().parent.parent / "templates")  # Jinja模板目录
     template_name: str = "map_with_filters.html"  # 默认模板文件名
-    db_path: str = str(Path(__file__).resolve().parent / "data" / "map.db")  # SQLite 数据文件路径
+    db_path: str = str(Path(__file__).resolve().parent.parent / "data" / "map.db")  # SQLite 数据文件路径
+    db_url: Optional[str] = Field(None, validation_alias="DB_URL", description="数据库连接字符串")
+
+    @property
+    def sqlalchemy_database_uri(self) -> str:
+        if self.db_url:
+            return self.db_url
+        return f"sqlite:///{self.db_path}"
 
     # 高德地图API配置
     amap_web_service_key: str = Field(
         "",
         validation_alias="AMAP_WEB_SERVICE_KEY",
-        description="高德 Web 服务（Web API）Key",
+        description="高德 Web 服务（Web API）Key，支持多个Key用英文逗号分隔",
     )
     amap_js_api_key: str = Field(
         validation_alias= "AMAP_JS_API_KEY",

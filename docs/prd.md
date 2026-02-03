@@ -6,9 +6,10 @@
 
 ### 1. 核心原则 (First Principles)
 1.  **逻辑解耦 (Decoupling)**：核心算法（H3、几何计算）不依赖特定地图厂商 SDK。
-2.  **坐标统一 (Coordinate Standard)**：
-    *   **内部逻辑/存储/前端交互**：统一使用 **WGS84**。
-    *   **高德服务适配**：仅在调用高德 API 的边缘层进行 WGS84 <-> GCJ02 转换。
+2.  **坐标契约 (Coordinate Contract)**：
+    *   **对外/前端交互**：统一使用 **GCJ02**（与高德/AMap 一致）。
+    *   **内部逻辑/存储/分析**：统一使用 **WGS84**。
+    *   仅在边界层进行 WGS84 <-> GCJ02 转换。
 3.  **前端轻量化**：后端仅提供 JSON API，前端负责地图渲染逻辑 (Leaflet/Mapbox/AMap JS)。
 
 ---
@@ -29,13 +30,13 @@
 *   **职责**：提供“给定点在通过某种交通方式一定时间内能到达的区域”计算。
 *   **解耦设计**：
     *   **Core API**：`get_isochrone_polygon(lat, lon, time, mode) -> WGS84 Polygon`
-    *   **Adapter**：负责调用高德/Mapbox/OSRM。在此层处理 WGS84 -> GCJ02 -> 高德API -> GCJ02 -> WGS84 的转换闭环。
+    *   **Adapter**：边界层处理 GCJ02 -> WGS84（调用引擎）-> WGS84 -> GCJ02（返回前端）。
 
 #### C) 网格化服务层 (Grid H3 Service)
 *   **定位**：`gaode-map/modules/grid_h3`
 *   **职责**：纯几何计算，不依赖任何地图 SDK。
 *   **功能**：
-    *   `polygon_to_hexagons(polygon_wgs84, resolution) -> [h3_index]`
+    *   `polygon_to_hexagons(polygon_gcj02, resolution) -> [h3_index]`
     *   `enrich_hexagons(h3_indices, data_features)`
 
 #### D) POI 数据层 (POI Data Service)
@@ -43,8 +44,8 @@
 *   **职责**：负责数据的获取、清洗、**双重落库**。
 *   **工作流 (Workflow)**：
     1.  **Check Cache**: 查询 SQLite 是否有该不同参数(hash)的分析记录。如有，直接返回统计结果。
-    2.  **Fetch & Transform**: 调高德 API -> 获 GCJ02 -> 转 **WGS84**。
-    3.  **Fast Return**: 优先返回数据给前端渲染。
+    2.  **Fetch & Transform**: 调高德 API -> 获 GCJ02 -> 转 **WGS84** 存库。
+    3.  **Fast Return**: 优先返回 **GCJ02** 数据给前端渲染。
     4.  **Async Persistence**: **异步**将 POI 存入 MySQL。
         *   **Rule**: 使用 `amap_id` 进行**去重 (Upsert)**，防止数据冗余。
     5.  **Save Cache**: 计算统计指标 -> 存入 SQLite。

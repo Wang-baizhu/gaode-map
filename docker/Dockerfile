@@ -1,15 +1,17 @@
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies (if any needed for shapely/h3/pysal)
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy configuration files
+COPY pyproject.toml README.md ./
+
+# Install dependencies directly from pyproject.toml
+RUN pip install --no-cache-dir .
 
 # Copy application code
 COPY . .

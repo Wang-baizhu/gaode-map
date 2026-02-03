@@ -12,7 +12,7 @@ from typing import Iterable
 
 from openpyxl import Workbook
 
-from models import MapRequest
+from modules.map_manage.schemas import MapRequest
 
 logger = logging.getLogger(__name__)
 

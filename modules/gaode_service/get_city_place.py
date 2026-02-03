@@ -7,7 +7,7 @@ import time
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlencode
 
-from config import settings
+from core.config import settings
 
 from .get_position import _request_json
 from .utils.filter_result import filter_result

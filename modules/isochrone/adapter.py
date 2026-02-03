@@ -3,9 +3,37 @@ import json
 import logging
 from typing import List, Tuple, Union
 from shapely.geometry import Point, Polygon
-from config import settings
+from shapely.geometry import Point, Polygon
+from core.config import settings
 
 logger = logging.getLogger(__name__)
+
+def _get_fallback_isochrone(center: Point, time_sec: int, mode: str) -> Polygon:
+    """
+    Fallback: Generate a simple buffer polygon (circle) based on estimated speed.
+    Used when Valhalla service is unavailable.
+    """
+    # Speed estimates in km/h
+    speeds = {
+        "walking": 5.0,
+        "bicycling": 15.0,
+        "driving": 30.0
+    }
+    speed_kmh = speeds.get(mode, 5.0)
+    
+    # Distance = Speed * Time
+    # time_sec to hours
+    time_hours = time_sec / 3600.0
+    distance_km = speed_kmh * time_hours
+    
+    # Simple conversion to degrees (approximate)
+    # 1 degree latitude ~= 111 km
+    # This is a rough estimation suitable for visual feedback/testing only.
+    buffer_radius_deg = distance_km / 111.0
+    
+    logger.warning(f"Using Fallback Isochrone: Buffer {distance_km:.2f}km ({buffer_radius_deg:.5f} deg) for {mode}")
+    
+    return center.buffer(buffer_radius_deg)
 
 def fetch_amap_isochrone(center: Point, time_sec: int, mode: str) -> Polygon:
     """
@@ -83,8 +111,5 @@ def fetch_amap_isochrone(center: Point, time_sec: int, mode: str) -> Polygon:
 
     except requests.RequestException as e:
         logger.error(f"Valhalla API connection failed: {e}")
-        # Fallback or re-raise? 
-        # For development, we might want to see the error. 
-        # But to prevent app crash, let's log and return empty (or fallback to mock if we kept it).
-        # We will re-raise to let the caller handle 'Service Unavailable'.
-        raise RuntimeError(f"Failed to fetch isochrone from Valhalla at {url}") from e
+        logger.warning("Valhalla service unavailable. Falling back to simple geometric approximation.")
+        return _get_fallback_isochrone(center, time_sec, mode)

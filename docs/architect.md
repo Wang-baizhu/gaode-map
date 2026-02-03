@@ -8,9 +8,10 @@
 
 ### 核心原则
 1.  **严格解耦 (Strict Decoupling)**：核心业务逻辑（网格/分析）绝不直接依赖地图供应商（高德）。
-2.  **统一坐标系 (Canonical Coordinate System)**：**WGS84** 是系统内部的唯一标准。
-    *   高德 API (GCJ02) 被视为“外部数据源”，在每一步交互时必须立即进行标准化转换。
-    *   前端 (Leaflet/Mapbox/AMap) 接收和处理的均为 WGS84 数据。
+2.  **双坐标系契约 (Coordinate Contract)**：
+    *   **对外/前端**：统一使用 **GCJ02**（与高德/AMap 一致）。
+    *   **内部/存储/分析**：统一使用 **WGS84**。
+    *   在边界层进行转换：进入系统时 GCJ02 → WGS84；返回前端时 WGS84 → GCJ02。
 3.  **无状态后端 (Stateless Backend)**：Web 服务器 (FastAPI) 无状态，数据持久化存储在数据库中。
 
 ## 2. 技术栈标准
@@ -35,10 +36,9 @@
 *   **接口定义**：
     ```python
     def get_isochrone(center: PointWGS84, time_sec: int, mode: str) -> PolygonWGS84:
-        # 1. 适配器: WGS84 -> GCJ02
-        # 2. 调用高德 API
-        # 3. 适配器: GCJ02 -> WGS84
-        # 4. 返回标准多边形
+        # 1. API 输入默认 GCJ02 -> 转 WGS84
+        # 2. 调用等时圈引擎 (Valhalla, WGS84)
+        # 3. 返回 WGS84 多边形，出接口时再转回 GCJ02
     ```
 *   **依赖**：`gaode_service` (仅用于原始 API 调用)。
 
@@ -46,8 +46,8 @@
 *   **职责**：纯几何的空间分箱/填充逻辑。
 *   **接口定义**：
     ```python
-    def polyfill_polygon(polygon: PolygonWGS84, resolution: int) -> List[str]:
-        # 使用 h3-py 将多边形填充为六边形 ID 列表
+    def polyfill_polygon(polygon: PolygonGCJ02, resolution: int) -> List[str]:
+        # 默认输入 GCJ02，多边形先转 WGS84 再做 H3 填充
         pass
     ```
 *   **依赖**：`h3`, `shapely`. **严禁**依赖高德服务。
@@ -56,8 +56,8 @@
 *   **职责**：数据编排与流转。
 *   **工作流**：
     1.  **查缓存**: 检查 SQLite 是否有该参数 Hash 的统计结果。
-    2.  **Fetch & Transform**: 若未命中，调高德 API -> 获 GCJ02 -> **转 WGS84**。
-    3.  **Fast Return**: 优先将 WGS84 POI 返回给前端（保证用户体验）。
+    2.  **Fetch & Transform**: 若未命中，调高德 API -> 获 GCJ02 -> **转 WGS84** 存库。
+    3.  **Fast Return**: 优先将 **GCJ02 POI** 返回给前端（保证用户体验）。
     4.  **Background Task (异步落库)**:
         *   启动后台任务调用 `dao.save_pois_async(pois)`。
         *   **策略**: MySQL `UPSERT` (Insert on Duplicate Key Update)，使用 `amap_id` 作为唯一键进行**去重**。

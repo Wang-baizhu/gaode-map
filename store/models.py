@@ -27,7 +27,7 @@ class MapData(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     data = Column(JSON, nullable=False)
     center = Column(JSON, nullable=False)
-    center_fingerprint = Column(Text, nullable=False, index=True)
+    center_fingerprint = Column(String(512), nullable=False, index=True)
     search_type = Column(String(20), nullable=False)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     expires_at = Column(DateTime, nullable=True)

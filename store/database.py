@@ -10,7 +10,7 @@ from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from config import settings
+from core.config import settings
 from .models import Base
 
 logger = logging.getLogger(__name__)
@@ -20,12 +20,19 @@ def _build_engine():
     """
     构建 SQLAlchemy 引擎并确保数据目录存在。
     """
-    db_path = Path(settings.db_path).resolve()
-    db_path.parent.mkdir(parents=True, exist_ok=True)
+    db_uri = settings.sqlalchemy_database_uri
+    connect_args = {}
+    if "sqlite" in db_uri:
+        db_path = Path(settings.db_path).resolve()
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        connect_args = {"check_same_thread": False}
+
     return create_engine(
-        f"sqlite:///{db_path}",
-        connect_args={"check_same_thread": False},
+        db_uri,
+        connect_args=connect_args,
         future=True,
+        pool_pre_ping=True,  # Auto-reconnect
+        pool_recycle=3600,
     )
 
 

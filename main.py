@@ -11,8 +11,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from config import settings
-from router import admin_router, api_router, misc_router, pages_router, analysis_router
+from core.config import settings
+from router import admin_router, app_router
 from store import init_db
 import asyncio
 
@@ -63,6 +63,7 @@ app.add_middleware(
 
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from core.exceptions import BizError
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc):
@@ -73,12 +74,25 @@ async def validation_exception_handler(request, exc):
         content={"detail": exc.errors(), "body": exc.body},
     )
 
+@app.exception_handler(BizError)
+async def biz_exception_handler(request, exc: BizError):
+    logger.error(f"BizError: {exc.message} | Payload: {exc.payload}")
+    return JSONResponse(
+        status_code=exc.code,
+        content={
+            "status": "error",
+            "message": exc.message,
+            "detail": exc.payload
+        },
+    )
+
 
 # 确保静态目录存在（统一的静态资源根目录）
 STATIC_ROOT = Path(settings.static_dir).resolve()
 os.makedirs(STATIC_ROOT, exist_ok=True)
 
 # 挂载静态资源目录（同时覆盖生成的HTML和拆分的CSS/JS等资源）
+# 改为 /static 路径，防止和API路径冲突
 app.mount(
     "/static",
     StaticFiles(directory=STATIC_ROOT),
@@ -87,11 +101,9 @@ app.mount(
 
 # ==================== API路由 ====================
 
-app.include_router(api_router)
+app.include_router(app_router)
 app.include_router(admin_router)
-app.include_router(pages_router)
-app.include_router(misc_router)
-app.include_router(analysis_router)
+
 # ==================== 主入口 ====================
 
 if __name__ == "__main__":

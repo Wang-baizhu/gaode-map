@@ -1,7 +1,4 @@
-from .api import router as api_router
+from .app import router as app_router
 from .admin import router as admin_router
-from .misc import router as misc_router
-from .pages import router as pages_router
-from .analysis import router as analysis_router
 
-__all__ = ["api_router", "admin_router", "pages_router", "misc_router", "analysis_router"]
+__all__ = ["app_router", "admin_router"]

@@ -11,7 +11,7 @@ from pathlib import Path
 from fastapi import HTTPException, status
 from jinja2 import Environment, FileSystemLoader, TemplateNotFound
 
-from config import settings
+from core.config import settings
 
 logger = logging.getLogger(__name__)
 

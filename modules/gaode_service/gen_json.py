@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, Dict, List, Literal, Optional, Sequence, Tuple, Union
 import time
 
-from config import settings
+from core.config import settings
 
 from .get_around_place import get_around_place
 from .get_city_place import get_city_place
