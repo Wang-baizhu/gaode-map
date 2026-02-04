@@ -12,12 +12,14 @@ from .map_repo import (
     list_maps_with_polygons,
     save_map_data,
 )
-from .models import MapData, MapPolygonLink, PolygonData
+from .models import AnalysisHistory, MapData, MapPolygonLink, PoiResult, PolygonData
 from .polygon_repo import delete_polygon, list_polygons_for_map, save_polygon
 
 __all__ = [
+    "AnalysisHistory",
     "MapData",
     "MapPolygonLink",
+    "PoiResult",
     "PolygonData",
     "build_center_fingerprint",
     "delete_polygon",

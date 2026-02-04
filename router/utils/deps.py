@@ -4,8 +4,8 @@ import logging
 from fastapi import HTTPException, Security, status
 from fastapi.security import APIKeyHeader
 
-from config import settings
-from models import MapRequest
+from core.config import settings
+from modules.map_manage.schemas import MapRequest
 from store import get_map_data
 
 logger = logging.getLogger(__name__)

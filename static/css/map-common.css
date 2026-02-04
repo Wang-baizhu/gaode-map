@@ -1,4 +1,5 @@
-html, body {
+html,
+body {
     height: 100%;
     margin: 0;
     padding: 0;
@@ -186,4 +187,10 @@ html, body {
     border-radius: 50%;
     border: 2px solid #fff;
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+/* Remove default AMap label border and background */
+.amap-marker-label {
+    border: 0 !important;
+    background-color: transparent !important;
 }

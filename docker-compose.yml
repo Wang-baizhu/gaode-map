@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: gaode-map-app
+    ports:
+      - "8000:8000"
+    environment:
+      - VALHALLA_BASE_URL=http://valhalla:8002
+      - AMAP_WEB_SERVICE_KEY
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - valhalla
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - .:/app
+      - ./data:/app/data
+      - /app/.venv
+      - /app/__pycache__
+
+  valhalla:
+    image: ghcr.io/gis-ops/docker-valhalla/valhalla:latest
+    container_name: gaode-map-valhalla
+    ports:
+      - "8002:8002"
+    volumes:
+      - D:\ValhallaTiles\custom_files:/custom_files
+      - ./docker/valhalla_tiles:/valhalla/tiles
+    environment:
+      - build_elevation=False
+      - build_admins=False
+      - build_time_zones=False
+      - server_threads=8
+      - use_tiles_ignore_pbf=False
+      - use_default_speeds_config=True
+      - default_speeds_config_url=https://raw.githubusercontent.com/OpenStreetMapSpeeds/schema/master/default_speeds.json
+    # Note: Valhalla needs a 'tiles.tar' or PBF files in the mapped volume to start effectively.
+    # Without data, it will start but return empty results for routing.

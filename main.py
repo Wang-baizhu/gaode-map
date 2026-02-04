@@ -11,14 +11,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from config import settings
-from router import admin_router, api_router, misc_router, pages_router
+from core.config import settings
+from router import admin_router, app_router
 from store import init_db
 import asyncio
 
 # ==================== 配置日志 ====================
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(name)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -52,6 +52,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+from fastapi.middleware.gzip import GZipMiddleware
+
 # 配置CORS
 app.add_middleware(
     CORSMiddleware,
@@ -61,12 +63,41 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 开启Gzip压缩
+app.add_middleware(GZipMiddleware, minimum_size=500)
+
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from core.exceptions import BizError
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc):
+    logger.error(f"Validation Error: {exc.body}")
+    logger.error(f"Errors: {exc.errors()}")
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors(), "body": exc.body},
+    )
+
+@app.exception_handler(BizError)
+async def biz_exception_handler(request, exc: BizError):
+    logger.error(f"BizError: {exc.message} | Payload: {exc.payload}")
+    return JSONResponse(
+        status_code=exc.code,
+        content={
+            "status": "error",
+            "message": exc.message,
+            "detail": exc.payload
+        },
+    )
+
 
 # 确保静态目录存在（统一的静态资源根目录）
 STATIC_ROOT = Path(settings.static_dir).resolve()
 os.makedirs(STATIC_ROOT, exist_ok=True)
 
 # 挂载静态资源目录（同时覆盖生成的HTML和拆分的CSS/JS等资源）
+# 改为 /static 路径，防止和API路径冲突
 app.mount(
     "/static",
     StaticFiles(directory=STATIC_ROOT),
@@ -75,10 +106,9 @@ app.mount(
 
 # ==================== API路由 ====================
 
-app.include_router(api_router)
+app.include_router(app_router)
 app.include_router(admin_router)
-app.include_router(pages_router)
-app.include_router(misc_router)
+
 # ==================== 主入口 ====================
 
 if __name__ == "__main__":

@@ -1,0 +1,1026 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title>高德地图空间分析</title>
+    <link rel="stylesheet" href="/static/css/map-common.css">
+    <link rel="stylesheet" href="/static/css/filter-panel.css">
+    <link rel="stylesheet" href="/static/css/analysis-page.css">
+</head>
+
+<body>
+    <!-- 立即显示的全局加载状态 -->
+    <div id="loading-overlay" class="page-loading-global">
+        <div class="spinner"></div>
+        <div style="font-size: 14px; font-weight: 500;">正在启动工作台...</div>
+    </div>
+
+    <!-- Vue App 挂载点 -->
+    <div id="app" style="display: flex; width: 100%; height: 100%;" v-cloak>
+
+        <div v-if="loadingConfig" class="page-loading">正在加载配置...</div>
+
+        <!-- Left Sidebar: Wizard Dashboard -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h2 v-if="sidebarView === 'start'">欢迎使用</h2>
+
+                <div v-if="sidebarView === 'wizard'" class="step-header-nav" style="margin:0; width:100%;">
+                    <button v-if="step === 1" class="btn-text-back" @click="backToHome">← 返回主页</button>
+                    <h2 v-else style="margin:0;">分析控制台</h2>
+                </div>
+
+                <div v-if="sidebarView === 'wizard' && step > 1" class="step-indicator">
+                    Step {% raw %}{{ step }}{% endraw %}/3
+                </div>
+
+                <div v-if="sidebarView === 'history'" class="step-header-nav"
+                    style="margin:0; width:100%; display:flex; justify-content:space-between; align-items:center;">
+                    <button class="btn-text-back"
+                        @click="isSelectionMode ? toggleSelectionMode(false) : backToHome()"
+                        style="margin:0;">
+                        {% raw %}{{ isSelectionMode ? '取消' : '← 返回主页' }}{% endraw %}
+                    </button>
+                    <h3 style="margin:0;">历史记录</h3>
+                    <button class="btn-text-back" @click="toggleSelectionMode(!isSelectionMode)" style="margin:0;">
+                        {% raw %}{{ isSelectionMode ? '完成' : '管理' }}{% endraw %}
+                    </button>
+                </div>
+            </div>
+
+            <div class="sidebar-content">
+
+                <!-- Start Screen -->
+                <div v-show="sidebarView === 'start'" class="home-menu">
+                    <div class="home-card" @click="confirmNavigation(() => resetAnalysis())">
+                        <div class="home-icon">
+                            <img src="/static/images/search.svg" alt="探索">
+                        </div>
+                        <div class="home-text">
+                            <h3>实时探索</h3>
+                            <p>Real-time Explore</p>
+                            <p style="margin-top:4px; color:#999;">基于高德实时数据分析</p>
+                        </div>
+                    </div>
+
+                    <div class="home-card"
+                        @click="confirmNavigation(() => { sidebarView='history'; loadHistoryList(); })">
+                        <div class="home-icon">
+                            <img src="/static/images/history.svg" alt="档案">
+                        </div>
+                        <div class="home-text">
+                            <h3>本地档案</h3>
+                            <p>Local Archives</p>
+                            <p style="margin-top:4px; color:#999;">查看往期分析记录</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- History View -->
+                <div v-show="sidebarView === 'history'" class="history-list" style="padding-bottom: 80px;">
+                    <div v-for="item in historyList" :key="item.id" class="history-card"
+                        @click="handleHistoryItemClick(item)"
+                        :class="{'selection-mode': isSelectionMode, 'selected': selectedHistoryIds.includes(item.id)}">
+
+                        <!-- Checkbox for Selection Mode -->
+                        <div v-if="isSelectionMode" class="checkbox-wrapper">
+                            <div class="custom-checkbox" :class="{checked: selectedHistoryIds.includes(item.id)}">
+                                <svg v-if="selectedHistoryIds.includes(item.id)" viewBox="0 0 24 24" fill="none"
+                                    stroke="currentColor" stroke-width="3">
+                                    <polyline points="20 6 9 17 4 12"></polyline>
+                                </svg>
+                            </div>
+                        </div>
+
+                        <div style="flex:1;">
+                            <div class="card-header">
+                                <span class="card-title">{% raw %}{{ formatHistoryTitle(item.description) }}{% endraw
+                                    %}</span>
+                            </div>
+                            <div class="card-meta">
+                                <div class="meta-row">
+                                    <span class="meta-tag mode-tag">
+                                        <span v-if="item.params && item.params.mode === 'driving'">
+                                            <img src="/static/images/driving.svg"> 驾车
+                                        </span>
+                                        <span v-else-if="item.params && item.params.mode === 'bicycling'">
+                                            <img src="/static/images/cycling.svg"> 骑行
+                                        </span>
+                                        <span v-else>
+                                            <img src="/static/images/walking.svg"> 步行
+                                        </span>
+                                    </span>
+                                    <span v-if="item.params && item.params.time_min" class="meta-tag time-tag">
+                                        <img src="/static/images/time.svg"> {% raw %}{{ item.params.time_min }}{% endraw
+                                        %}分
+                                    </span>
+                                </div>
+                                <span class="meta-date">
+                                    {% raw %}{{ new Date(item.created_at).toLocaleDateString() }}{% endraw %}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Batch Delete Footer -->
+                    <div v-if="isSelectionMode"
+                        style="position:fixed; bottom:0; left:0; width:var(--sidebar-width); background:#fff; padding:15px; border-top:1px solid #eee; box-shadow:0 -2px 10px rgba(0,0,0,0.05); z-index:100; box-sizing:border-box; display:flex; gap:10px;">
+                        <button class="btn-black" :disabled="selectedHistoryIds.length === 0"
+                            @click="deleteSelectedHistory" style="background: #ff4d4f; border:none; width:100%;">
+                            删除选中 ({% raw %}{{ selectedHistoryIds.length }}{% endraw %})
+                        </button>
+                    </div>
+
+                    <div v-if="historyList.length === 0"
+                        style="text-align:center; padding:40px 20px; color:#999; display:flex; flex-direction:column; align-items:center;">
+                        <img src="/static/images/empty.svg"
+                            style="width:48px; height:48px; opacity:0.3; margin-bottom:10px;">
+                        <span>暂无历史记录</span>
+                    </div>
+                </div>
+
+                <!-- Wizard View Wrapper -->
+                <div v-show="sidebarView === 'wizard'" style="display:contents;">
+
+                    <!-- Step 1: Location & Analysis -->
+                    <div v-show="step === 1" class="wizard-step">
+                        <div class="step-title">
+                            <h3>1. 地点与范围</h3>
+                        </div>
+
+                        <div class="form-group search-group">
+                            <input type="text" id="keyword" class="minimal-input" placeholder="搜索地点..."
+                                @keyup.enter="triggerSearch">
+                            <button class="btn-icon" @click="triggerSearch">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <circle cx="11" cy="11" r="8"></circle>
+                                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                                </svg>
+                            </button>
+                        </div>
+
+                        <div class="form-group">
+                            <div v-if="selectedPoint" class="status-badge success">
+                                已选: {% raw %}{{ selectedPoint.lng.toFixed(4) }}, {{ selectedPoint.lat.toFixed(4) }}{%
+                                endraw
+                                %}
+                            </div>
+                            <div v-else class="status-badge warning">请在地图上点击或搜索选择起点</div>
+                        </div>
+
+                        <div class="form-group">
+                            <label>出行方式</label>
+                            <div class="mode-select">
+                                <div class="mode-select">
+                                    <div class="mode-option" :class="{active: transportMode==='walking'}"
+                                        @click="transportMode='walking'">步行 <img src="/static/images/walking.svg"></div>
+                                    <div class="mode-option" :class="{active: transportMode==='bicycling'}"
+                                        @click="transportMode='bicycling'">骑行 <img src="/static/images/cycling.svg">
+                                    </div>
+                                    <div class="mode-option" :class="{active: transportMode==='driving'}"
+                                        @click="transportMode='driving'">驾车 <img src="/static/images/driving.svg"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label>时间范围: {% raw %}{{ timeHorizon }}{% endraw %} 分钟</label>
+                            <input type="range" v-model.number="timeHorizon" class="minimal-range" min="5" max="60"
+                                step="5">
+                        </div>
+
+
+                        <button class="btn-black" :disabled="!selectedPoint || isCalculating" @click="startAnalysis">
+                            {% raw %}{{ isCalculating ? '计算中...' : '下一步: 生成等时圈' }}{% endraw %}
+                        </button>
+                        <div v-if="errorMessage" class="error-msg">{% raw %}{{ errorMessage }}{% endraw %}</div>
+                    </div>
+
+                    <!-- Step 2: POI Categories -->
+                    <div v-show="step === 2" class="wizard-step">
+                        <div class="step-header-nav">
+                            <button class="btn-text-back" @click="goToStep(1)">← 返回</button>
+                            <h3>2. 选择业态</h3>
+                        </div>
+                        <p class="step-desc">选择需要在等时圈内抓取的设施类型</p>
+
+                        <div class="category-grid">
+                            <div v-for="cat in poiCategories" :key="cat.code" class="cat-card"
+                                :class="{checked: cat.checked}" @click="cat.checked = !cat.checked">
+                                <div class="cat-color" :style="{background: cat.color}"></div>
+                                <span>{% raw %}{{ cat.name }}{% endraw %}</span>
+                                <input type="checkbox" v-model="cat.checked" style="display:none;">
+                            </div>
+                        </div>
+
+                        <button class="btn-black" :disabled="isFetchingPois" @click="fetchPois">
+                            {% raw %}{{ isFetchingPois ? '数据抓取中 ' + fetchProgress + '%' : '下一步: 抓取数据' }}{% endraw %}
+                        </button>
+
+                        <div v-if="isFetchingPois"
+                            style="margin-top:10px; background:#f0f0f0; height:6px; border-radius:3px; overflow:hidden;">
+                            <div
+                                :style="{width: fetchProgress + '%', background:'#000', height:'100%', transition:'width 0.3s ease'}">
+                            </div>
+                        </div>
+
+                        <div v-if="poiStatus" class="status-text">{% raw %}{{ poiStatus }}{% endraw %}</div>
+                    </div>
+
+                    <!-- Step 3: Results & Filter -->
+                    <div v-show="step === 3" class="wizard-step">
+                        <div class="step-header-nav">
+                            <button class="btn-text-back" @click="goToStep(2)">← 返回</button>
+                            <h3>3. 结果分析</h3>
+                        </div>
+
+                        <!-- Copied from map_with_filters.html -->
+                        <div class="filter-section">
+                            <h4><span>半径调节</span></h4>
+                            <div class="filter-group">
+                                <div class="filter-option range-control">
+                                    <input type="range" id="radiusSlider" min="0" max="10000" step="100"
+                                        class="minimal-range">
+                                    <span id="radiusValue" class="range-value">—</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="filter-section">
+                            <button id="toggleExpandAll" class="btn-outline"
+                                style="padding:5px; font-size:12px;">全部展开</button>
+                        </div>
+
+                        <div class="filter-section" style="display:flex; gap:10px;">
+                            <button id="toggleAll" class="btn-outline"
+                                style="padding:5px; font-size:12px;">全部显示/隐藏</button>
+                            <button id="toggleNames" class="btn-outline"
+                                style="padding:5px; font-size:12px;">隐藏名称</button>
+                        </div>
+
+                        <div class="filter-section">
+                            <button id="toggleHeatmap" class="btn-outline"
+                                style="padding:5px; font-size:12px;">开启热力图</button>
+                            <div class="filter-group" style="margin-top:10px;">
+                                <div class="filter-option range-control">
+                                    <input type="range" id="heatmapCountSlider" min="1" max="100" step="1" value="10"
+                                        class="minimal-range">
+                                    <span id="heatmapCountValue" class="range-value">10</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Legacy Filter Container -->
+                        <div id="filtersContainer" class="legacy-filters-wrapper"></div>
+
+                        <button class="btn-outline" @click="saveAndRestart">
+                            保存并开始新分析
+                        </button>
+                    </div>
+                </div> <!-- End Wizard View Wrapper -->
+
+            </div> <!-- End of sidebar-content -->
+
+            <!-- Fixed History Footer -->
+            <!-- Sidebar Footer (Only in Wizard Mode) -->
+            <div v-if="sidebarView === 'wizard'" class="sidebar-footer"
+                style="padding: 20px; border-top: 1px solid #f0f0f0; background: #fff;">
+                <button class="btn-outline"
+                    style="margin-top:0; border:1px solid #eee; display:flex; justify-content:center; align-items:center;"
+                    @click="sidebarView = 'history'">
+                    <img src="/static/images/history.svg" class="icon-svg-small" style="margin-right:8px;"> 查看历史记录 ({%
+                    raw %}{{
+                    historyList.length }}{% endraw %})
+                </button>
+            </div>
+        </aside>
+
+        <!-- Middle: Map -->
+        <main class="main-content">
+            <div id="container"></div>
+        </main>
+    </div>
+
+    <!-- 依赖库 -->
+    <!-- 引入 Vue 3 (CDN) -->
+    <script src="https://cdn.staticfile.org/vue/3.3.4/vue.global.prod.min.js"></script>
+    <script src="https://cdn.bootcdn.net/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="/static/js/map-utils.js"></script>
+    <script src="/static/js/map-core.js"></script>
+    <script src="/static/js/map-heatmap.js"></script>
+    <script src="/static/js/map-markers.js"></script>
+    <script src="/static/js/map-filters.js"></script>
+    <!-- 引入 analysis.js 也可以，但我们大部分逻辑移入 Vue methods 更好，这里依然引入以兼容 MapCore 依赖 -->
+
+    <script>
+        const { createApp } = Vue;
+
+        createApp({
+            data() {
+                return {
+                    loadingConfig: true,
+                    config: null,
+
+                    // State
+                    step: 1, // Wizard Step
+                    sidebarView: 'start', // 'start', 'wizard', 'history'
+                    selectedPoint: null, // {lng, lat}
+                    transportMode: 'walking',
+                    timeHorizon: 15,
+                    isCalculating: false,
+                    errorMessage: '',
+
+                    // POI Data
+                    poiKeywords: '', // Not used if using categories, but kept for custom
+                    poiCategories: [
+                        { name: '餐饮', code: '050000', checked: true, color: '#f44336' }, // Red
+                        { name: '购物', code: '060000', checked: true, color: '#2196f3' }, // Blue
+                        { name: '生活', code: '070000', checked: true, color: '#ff9800' }, // Orange
+                        { name: '交通', code: '150000', checked: true, color: '#4caf50' }, // Green
+                        { name: '风景', code: '110000', checked: true, color: '#9c27b0' }, // Purple
+                        { name: '科教', code: '140000', checked: true, color: '#00bcd4' }, // Cyan
+                        { name: '医疗', code: '090000', checked: true, color: '#e91e63' }  // Pink
+                    ],
+                    isFetchingPois: false,
+                    fetchProgress: 0,
+                    poiStatus: '',
+                    lastIsochroneGeoJSON: null,
+                    poiMarkers: [],
+                    allPoisDetails: [], // Store full fetched data for client-side filtering
+
+                    // Instances
+
+                    // History
+                    historyList: [],
+                    isSelectionMode: false,
+                    selectedHistoryIds: [],
+
+                    // Control
+                    abortController: null,
+                }
+            },
+            async mounted() {
+                try {
+                    // 1. Initialize config from server-injected variables directly to save an RTT
+                    this.config = {
+                        amap_js_api_key: "{{ amap_js_api_key }}",
+                        amap_js_security_code: "{{ amap_js_security_code }}"
+                    };
+
+                    // 2. Load AMap script and fetch history in parallel
+                    // Don't block the initial UI on history loading
+                    this.loadHistoryList().catch(err => console.warn("History load failed", err));
+
+                    // AMap load with timeout to avoid long blocking
+                    const amapTimeoutMs = 8000;
+                    await Promise.race([
+                        this.loadAMapScript(this.config.amap_js_api_key, this.config.amap_js_security_code),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error("AMap 加载超时，请检查网络或 Key")), amapTimeoutMs))
+                    ]);
+
+                    // 3. Initialize Map after script is ready
+                    this.initMap();
+                } catch (e) {
+                    console.error("Initialization Failed:", e);
+                    this.errorMessage = "系统初始化失败: " + e.message;
+                } finally {
+                    this.loadingConfig = false;
+                    const overlay = document.getElementById('loading-overlay');
+                    if (overlay) overlay.style.display = 'none';
+                }
+            },
+            methods: {
+                clearAnalysisLayers() {
+                    if (this.abortController) {
+                        this.abortController.abort();
+                        this.abortController = null;
+                    }
+                    this.isFetchingPois = false;
+                    this.fetchProgress = 0;
+                    this.poiStatus = '';
+                    this.allPoisDetails = [];
+                    this.lastIsochroneGeoJSON = null;
+
+                    if (this.markerManager) {
+                        if (this.markerManager.markers) {
+                            this.markerManager.markers.forEach(m => m.setMap(null));
+                        }
+                        if (this.markerManager.destroyClusterers) {
+                            this.markerManager.destroyClusterers();
+                        }
+                        this.markerManager = null;
+                    }
+                    if (this.poiMarkers) {
+                        this.poiMarkers.forEach(m => m.setMap(null));
+                        this.poiMarkers = [];
+                    }
+
+                    const filterContainer = document.getElementById('filtersContainer');
+                    if (filterContainer) filterContainer.innerHTML = '';
+
+                    if (this.mapCore) {
+                        this.mapCore.clearCustomPolygons();
+                        this.mapCore.setRadius(0);
+                    }
+                },
+                goToStep(targetStep) {
+                    this.confirmNavigation(() => {
+                        if (targetStep < this.step) {
+                            // Backwards navigation cleanup
+                            if (this.step === 3 && targetStep <= 2) {
+                                // Clear POI markers & data
+                                if (this.markerManager) {
+                                    if (this.markerManager.markers) {
+                                        this.markerManager.markers.forEach(m => m.setMap(null));
+                                    }
+                                    if (this.markerManager.destroyClusterers) {
+                                        this.markerManager.destroyClusterers();
+                                    }
+                                    this.markerManager = null;
+                                }
+                                if (this.poiMarkers) {
+                                    this.poiMarkers.forEach(m => m.setMap(null));
+                                    this.poiMarkers = [];
+                                }
+                                // Clear Legacy Filter Panel
+                                const filterContainer = document.getElementById('filtersContainer');
+                                if (filterContainer) filterContainer.innerHTML = '';
+
+                                this.poiStatus = '';
+                            }
+
+                            if (this.step >= 2 && targetStep <= 1) {
+                                // Clear Isochrone Polygon
+                                this.mapCore.clearCustomPolygons();
+                                this.lastIsochroneGeoJSON = null;
+                            }
+                        }
+                        this.step = targetStep;
+                    });
+                },
+                confirmNavigation(callback) {
+                    if (this.isFetchingPois) {
+                        if (confirm('数据抓取正在进行中，离开将取消未完成的任务。确定要离开吗？')) {
+                            this.cancelFetch();
+                            callback();
+                        }
+                    } else {
+                        callback();
+                    }
+                },
+                cancelFetch() {
+                    if (this.abortController) {
+                        this.abortController.abort();
+                        this.abortController = null;
+                    }
+                    this.isFetchingPois = false;
+                    this.poiStatus = "任务已取消";
+                },
+                backToHome() {
+                    this.confirmNavigation(() => {
+                        this.clearAnalysisLayers();
+                        this.sidebarView = 'start';
+                        this.step = 1;
+                        this.selectedPoint = null;
+                        if (this.marker) {
+                            this.marker.setMap(null);
+                            this.marker = null;
+                        }
+                        this.errorMessage = '';
+                    });
+                },
+                loadAMapScript(key, securityCode) {
+                    return new Promise((resolve, reject) => {
+                        window._AMapSecurityConfig = { securityJsCode: securityCode };
+                        const script = document.createElement('script');
+                        script.src = `https://webapi.amap.com/maps?v=1.4.15&key=${key}&plugin=AMap.Autocomplete,AMap.PlaceSearch`;
+                        script.onload = resolve;
+                        script.onerror = reject;
+                        document.head.appendChild(script);
+                    });
+                },
+                initMap() {
+                    const mapCore = new MapCore('container', {
+                        center: { lng: 112.9388, lat: 28.2282 },
+                        zoom: 13,
+                        zooms: [3, 20],
+                        mapData: {}
+                    });
+                    mapCore.initMap();
+                    this.mapCore = mapCore;
+
+                    mapCore.map.on('click', (e) => {
+                        // Limit marker adjustment to Step 1 in Wizard mode
+                        if (this.sidebarView !== 'wizard' || this.step !== 1) return;
+                        this.setSelectedPoint(e.lnglat);
+                    });
+
+                    this.initSearch(mapCore.map);
+                },
+                initSearch(map) {
+                    const autoOptions = { input: "keyword" };
+                    const autocomplete = new AMap.Autocomplete(autoOptions);
+                    const placeSearch = new AMap.PlaceSearch({ map: map });
+                    this.placeSearch = placeSearch; // Save instance
+
+                    // 监听搜索结果标记点击事件
+                    AMap.event.addListener(placeSearch, "markerClick", (e) => {
+                        if (e.data && e.data.location) {
+                            // 选中点击的这个点
+                            this.setSelectedPoint(e.data.location);
+                            // 清除地图上其他搜索结果
+                            placeSearch.clear();
+                        }
+                    });
+
+                    AMap.event.addListener(autocomplete, "select", (e) => {
+                        if (e.poi && e.poi.location) {
+                            map.setZoomAndCenter(15, e.poi.location);
+                            this.setSelectedPoint(e.poi.location);
+                        }
+                    });
+                },
+                setSelectedPoint(lnglat) {
+                    this.selectedPoint = { lng: lnglat.lng, lat: lnglat.lat };
+                    if (this.mapCore) {
+                        this.mapCore.center = { lng: lnglat.lng, lat: lnglat.lat };
+                    }
+                    this.errorMessage = '';
+                    if (this.marker) {
+                        this.marker.setPosition(lnglat);
+                        return;
+                    }
+                    this.marker = new AMap.Marker({ position: lnglat });
+                    this.mapCore.map.add(this.marker);
+                },
+                async startAnalysis() {
+                    if (!this.selectedPoint || this.isCalculating) return;
+                    this.isCalculating = true;
+                    this.errorMessage = '';
+
+                    try {
+                        const payload = {
+                            lat: this.selectedPoint.lat,
+                            lon: this.selectedPoint.lng,
+                            time_min: parseInt(this.timeHorizon),
+                            mode: this.transportMode,
+                            coord_type: 'gcj02'
+                        };
+
+                        const res = await fetch('/api/v1/analysis/isochrone', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+
+                        if (!res.ok) throw new Error("API 请求失败");
+                        const geojson = await res.json();
+
+                        this.lastIsochroneGeoJSON = geojson;
+                        this.renderResult(geojson);
+                        this.step = 2; // Advance to Step 2
+
+                    } catch (e) {
+                        console.error(e);
+                        this.errorMessage = "计算失败: " + e.message;
+                    } finally {
+                        this.isCalculating = false;
+                    }
+                },
+                async fetchPois() {
+                    if (!this.lastIsochroneGeoJSON) return;
+                    this.isFetchingPois = true;
+                    this.fetchProgress = 0;
+                    this.poiStatus = "准备抓取...";
+
+                    if (this.poiMarkers) this.poiMarkers.forEach(m => m.setMap(null));
+                    this.poiMarkers = [];
+                    this.allPoisDetails = [];
+
+                    try {
+                        const geometry = this.lastIsochroneGeoJSON.geometry;
+                        let rawPoly = (geometry.type === 'Polygon') ? geometry.coordinates[0] : geometry.coordinates[0][0];
+                        const polygon = rawPoly.map(pt => {
+                            if (Array.isArray(pt)) return [pt[0], pt[1]];
+                            if (pt && typeof pt.lng === 'number') return [pt.lng, pt.lat];
+                            return pt;
+                        });
+
+                        // Get selected categories
+                        const selectedCats = this.poiCategories.filter(c => c.checked);
+                        if (selectedCats.length === 0) {
+                            alert("请至少选择一个分类");
+                            this.isFetchingPois = false;
+                            return;
+                        }
+
+                        let totalFetched = 0;
+                        const totalCats = selectedCats.length;
+
+                        // Parallel Fetching: process in batches (2 categories at a time)
+                        this.abortController = new AbortController();
+                        const batchSize = 2;
+                        this.poiStatus = `正在并行抓取 ${totalCats} 个分类（每批 ${batchSize} 个）...`;
+
+                        const fetchOneCategory = async (cat) => {
+                            const payload = {
+                                polygon: polygon,
+                                keywords: "",
+                                types: cat.code,
+                                max_count: 500, // Per category limit
+                                save_history: false, // Don't save individual batches
+                                center: [this.selectedPoint.lng, this.selectedPoint.lat],
+                                time_min: parseInt(this.timeHorizon),
+                                mode: this.transportMode,
+                                location_name: this.selectedPoint.name || (this.selectedPoint.lng.toFixed(4) + ',' + this.selectedPoint.lat.toFixed(4))
+                            };
+
+                            try {
+                                const res = await fetch('/api/v1/analysis/pois', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify(payload),
+                                    signal: this.abortController.signal
+                                });
+
+                                if (res.ok) {
+                                    const data = await res.json();
+                                    return data.pois || [];
+                                }
+                            } catch (err) {
+                                if (err.name !== 'AbortError') {
+                                    console.warn(`Failed to fetch category ${cat.name}`, err);
+                                }
+                            }
+                            return [];
+                        };
+
+                        for (let i = 0; i < selectedCats.length; i += batchSize) {
+                            if (this.abortController.signal.aborted) return;
+                            const batch = selectedCats.slice(i, i + batchSize);
+                            const resultsArray = await Promise.all(batch.map(fetchOneCategory));
+                            resultsArray.forEach(list => {
+                                if (list && list.length) this.allPoisDetails.push(...list);
+                            });
+
+                            totalFetched = this.allPoisDetails.length;
+                            const done = Math.min(i + batch.length, totalCats);
+                            this.fetchProgress = Math.round((done / totalCats) * 100);
+                            this.poiStatus = `已完成 ${done}/${totalCats} 分类，累计 ${totalFetched} 个结果`;
+                        }
+
+                        if (this.abortController.signal.aborted) return;
+
+                        this.fetchProgress = 100;
+                        this.poiStatus = `完成！共找到 ${totalFetched} 个结果`;
+
+                        // Save Complete History Aggregated
+                        try {
+                            const typesLabel = selectedCats.map(c => c.name).join(',');
+                            await fetch('/api/v1/analysis/history/save', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    center: [this.selectedPoint.lng, this.selectedPoint.lat],
+                                    polygon: polygon,
+                                    pois: this.allPoisDetails,
+                                    keywords: typesLabel,
+                                    location_name: this.selectedPoint.lng.toFixed(4) + "," + this.selectedPoint.lat.toFixed(4),
+                                    mode: this.transportMode,
+                                    time_min: parseInt(this.timeHorizon)
+                                }),
+                                signal: this.abortController.signal
+                            });
+                            console.log("History saved successfully.");
+                        } catch (histErr) {
+                            if (histErr.name !== 'AbortError') {
+                                console.error("Failed to save history", histErr);
+                            }
+                        }
+
+                        // Final Render
+                        this.renderPois(this.allPoisDetails);
+
+                        // Integration with Legacy Filter Panel
+                        if (this.updateLegacySystem) {
+                            this.updateLegacySystem(this.allPoisDetails);
+                        }
+
+                        setTimeout(() => {
+                            this.step = 3; // Advance to Step 3 after short delay to see 100%
+                            this.loadHistoryList();
+                        }, 500);
+
+                    } catch (e) {
+                        if (e.name !== 'AbortError') {
+                            console.error(e);
+                            this.poiStatus = "失败: " + e.message;
+                        }
+                    } finally {
+                        this.isFetchingPois = false;
+                        this.abortController = null;
+                    }
+                },
+                // Updated Render Logic
+                renderPois(pois) {
+                    if (this.poiMarkers) this.poiMarkers.forEach(m => m.setMap(null));
+                    this.poiMarkers = [];
+
+                    // Filter client-side based on current checkboxes (in case user toggles after fetch)
+                    // Note: For now, we render what we fetched.
+                    // Future enhancement: dynamic toggle without re-fetch.
+
+                    const markers = pois.map(p => {
+                        // Find category color
+                        let color = '#999';
+                        const typeCode = p.type ? p.type.substring(0, 6) : '';
+                        const cat = this.poiCategories.find(c => typeCode.startsWith(c.code.substring(0, 2)));
+                        if (cat) color = cat.color;
+
+                        // Create CircleMarker
+                        const marker = new AMap.CircleMarker({
+                            center: p.location,
+                            radius: 4, // px
+                            strokeColor: 'white',
+                            strokeWeight: 1,
+                            fillColor: color,
+                            fillOpacity: 0.9,
+                            zIndex: 100,
+                            bubble: true,
+                            cursor: 'pointer',
+                        });
+
+                        // Info Window
+                        marker.on('click', () => {
+                            const info = [];
+                            info.push(`<div style="padding:5px;"><b>${p.name}</b>`);
+                            info.push(`<div style="font-size:12px;color:#666;">${p.type || '未知类型'}</div>`);
+                            info.push(`<div style="font-size:12px;color:#666;">${p.address || ''}</div>`);
+                            info.push(`</div>`);
+
+                            new AMap.InfoWindow({
+                                content: info.join(""),
+                                offset: new AMap.Pixel(0, -5)
+                            }).open(this.mapCore.map, p.location);
+                        });
+
+                        marker.setMap(this.mapCore.map);
+                        return marker;
+                    });
+                    this.poiMarkers = markers;
+                },
+                // Toggle visibility client-side
+                toggleCategory() {
+                    if (this.allPoisDetails.length > 0) {
+                        // Filter logic
+                        const activeCodes = this.poiCategories.filter(c => c.checked).map(c => c.code.substring(0, 2));
+                        const filtered = this.allPoisDetails.filter(p => {
+                            const pCode = p.type ? p.type.substring(0, 2) : '99';
+                            return activeCodes.includes(pCode);
+                        });
+                        this.renderPois(filtered);
+                    }
+                },
+                renderResult(geojson) {
+                    if (!geojson || !geojson.geometry) {
+                        this.errorMessage = "未获取到有效数据";
+                        return;
+                    }
+                    const coords = geojson.geometry.coordinates;
+                    const type = geojson.geometry.type;
+                    let paths = [];
+                    if (type === 'Polygon') {
+                        paths.push(coords[0]);
+                    } else if (type === 'MultiPolygon') {
+                        coords.forEach(poly => paths.push(poly[0]));
+                    }
+                    this.mapCore.setCustomPolygons(paths);
+                },
+                async loadHistoryList() {
+                    try {
+                        console.log("Loading history list...");
+                        const res = await fetch('/api/v1/analysis/history');
+                        const data = await res.json();
+                        console.log("History list loaded:", data);
+                        this.historyList = data;
+                    } catch (e) { console.error("History Load Error:", e); }
+                },
+                toggleSelectionMode(active) {
+                    this.isSelectionMode = active;
+                    this.selectedHistoryIds = [];
+                },
+                handleHistoryItemClick(item) {
+                    if (this.isSelectionMode) {
+                        const idx = this.selectedHistoryIds.indexOf(item.id);
+                        if (idx > -1) {
+                            this.selectedHistoryIds.splice(idx, 1);
+                        } else {
+                            this.selectedHistoryIds.push(item.id);
+                        }
+                    } else {
+                        this.loadHistoryDetail(item.id);
+                    }
+                },
+                async deleteSelectedHistory() {
+                    const count = this.selectedHistoryIds.length;
+                    if (count === 0) return;
+
+                    if (!confirm(`确定要删除选中的 ${count} 条记录吗？`)) return;
+
+                    try {
+                        // Parallel delete (simple implementation)
+                        // Ideally backend should support bulk delete
+                        const deletePromises = this.selectedHistoryIds.map(id =>
+                            fetch(`/api/v1/analysis/history/${id}`, { method: 'DELETE' })
+                        );
+
+                        await Promise.all(deletePromises);
+
+                        this.selectedHistoryIds = [];
+                        this.isSelectionMode = false;
+                        await this.loadHistoryList();
+
+                    } catch (e) {
+                        console.error("Batch delete failed", e);
+                        alert("批量删除失败");
+                    }
+                },
+                async deleteHistory(id) {
+                    if (!confirm('确定要删除这条记录吗？')) return;
+                    try {
+                        await fetch(`/api/v1/analysis/history/${id}`, { method: 'DELETE' });
+                        this.loadHistoryList();
+                    } catch (e) { console.error(e); }
+                },
+                async loadHistoryDetail(id) {
+                    try {
+                        const res = await fetch(`/api/v1/analysis/history/${id}`);
+                        const data = await res.json();
+                        if (!data) return;
+
+                        // Cleanup previous state
+                        if (this.marker) this.marker.setMap(null);
+                        this.marker = null;
+                        this.mapCore.clearCustomPolygons();
+                        if (this.markerManager) {
+                            // Ensure old markers are removed from map
+                            if (this.markerManager.markers) {
+                                this.markerManager.markers.forEach(m => m.setMap(null));
+                            }
+                            // Destroy clusterers if method exists
+                            if (this.markerManager.destroyClusterers) {
+                                this.markerManager.destroyClusterers();
+                            }
+                            // Clear internal references
+                            this.markerManager.markers = [];
+                            this.markerManager.points = [];
+                            this.markerManager = null;
+                        }
+                        // Clear simplified poiMarkers array if used
+                        if (this.poiMarkers) {
+                            this.poiMarkers.forEach(m => m.setMap(null));
+                            this.poiMarkers = [];
+                        }
+
+                        // Clear FilterPanel content to ensure clean rebuild
+                        const filterContainer = document.getElementById('filtersContainer');
+                        if (filterContainer) filterContainer.innerHTML = '';
+
+                        if (data.params && data.params.center) {
+                            this.selectedPoint = { lng: data.params.center[0], lat: data.params.center[1] };
+                            this.mapCore.map.setCenter(data.params.center);
+                            this.mapCore.center = { lng: data.params.center[0], lat: data.params.center[1] }; // Sync MapCore center
+                            this.mapCore.setRadius(0); // Reset radius to avoid ghost circle at old location
+                            // Restore time horizon if available
+                            if (data.params.time_min) this.timeHorizon = data.params.time_min;
+                        }
+
+                        if (data.polygon) {
+                            this.mapCore.setCustomPolygons([data.polygon]);
+                            this.lastIsochroneGeoJSON = { geometry: { type: 'Polygon', coordinates: [data.polygon] } };
+                        }
+                        if (data.pois) {
+                            this.allPoisDetails = data.pois;
+                            // Integration with Legacy Filter Panel
+                            if (this.updateLegacySystem) {
+                                this.updateLegacySystem(data.pois);
+                            } else {
+                                this.renderPois(data.pois);
+                            }
+                            this.poiStatus = `已加载历史: ${data.pois.length} 条`;
+                        }
+
+
+                        // Switch to Results Step
+                        this.step = 3;
+                        this.sidebarView = 'wizard'; // Return to wizard 
+                        // this.showHistory = false; // Deprecated
+
+                    } catch (e) {
+                        console.error(e);
+                        alert("加载失败");
+                    }
+                },
+                formatHistoryTitle(desc) {
+                    if (!desc) return '无标题分析';
+                    // Remove "15min Analysis - " prefix if present to avoid redundancy with tags
+                    return desc.replace(/^\d+min Analysis - /, '');
+                },
+                resetAnalysis() {
+                    this.step = 1;
+                    this.sidebarView = 'wizard';
+                    this.selectedPoint = null;
+                    this.errorMessage = '';
+                    if (this.marker) {
+                        this.marker.setMap(null);
+                        this.marker = null;
+                    }
+                    this.clearAnalysisLayers();
+                    this.mapCore.map.setFitView();
+                },
+                triggerSearch() {
+                    const input = document.getElementById('keyword');
+                    if (input && input.value && this.placeSearch) {
+                        this.placeSearch.search(input.value);
+                    }
+                },
+                saveAndRestart() {
+                    this.step = 1;
+                    this.selectedPoint = null;
+                    this.errorMessage = '';
+                    this.poiStatus = '';
+                    if (this.marker) this.marker.setMap(null);
+                    this.marker = null;
+                    this.mapCore.clearCustomPolygons();
+                    if (this.markerManager) {
+                        this.markerManager.markers.forEach(m => m.setMap(null));
+                        this.markerManager.destroyClusterers();
+                    }
+                },
+                updateLegacySystem(pois) {
+                    const points = pois.map((p, idx) => {
+                        let matchedType = '990000';
+                        for (let cat of this.poiCategories) {
+                            if (p.type && p.type.startsWith(cat.code.substring(0, 2))) {
+                                matchedType = cat.code;
+                                break;
+                            }
+                        }
+                        return {
+                            lng: p.location[0],
+                            lat: p.location[1],
+                            name: p.name,
+                            type: matchedType,
+                            address: p.address,
+                            lines: p.lines,
+                            _pid: p.id || ('p-' + idx)
+                        };
+                    });
+
+                    const mapTypeConfig = {
+                        groups: [{
+                            id: 'poi_group',
+                            title: 'POI 分类',
+                            toggleId: 'toggle_poi',
+                            filtersId: 'filters_poi',
+                            items: this.poiCategories.map(c => ({
+                                id: c.code,
+                                label: c.name,
+                                color: c.color,
+                                defaultChecked: c.checked
+                            }))
+                        }]
+                    };
+
+                    const centerObj = this.selectedPoint ? {
+                        lng: this.selectedPoint.lng,
+                        lat: this.selectedPoint.lat,
+                        name: '中心点',
+                        type: 'center'
+                    } : null;
+
+                    this.markerManager = new MarkerManager(this.mapCore, {
+                        mapData: { points: points, center: centerObj },
+                        mapTypeConfig: mapTypeConfig
+                    });
+                    this.markerManager.init();
+                    this.markerManager.renderMarkers();
+
+                    // Filter Panel
+                    const heatmapManager = new HeatmapManager(this.mapCore, { radius: 35, maxCount: 100 });
+                    this.filterPanel = new FilterPanel(this.markerManager, {
+                        mapData: { points: points },
+                        mapTypeConfig: mapTypeConfig,
+                        heatmapManager: heatmapManager
+                    });
+                    this.filterPanel.init();
+                    this.markerManager.applyFilters();
+                }
+            }
+        }).mount('#app');
+    </script>
+</body>
+
+</html>

@@ -9,7 +9,7 @@ from typing import Dict, Optional
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from config import settings
+from core.config import settings
 
 logger = logging.getLogger(__name__)
 

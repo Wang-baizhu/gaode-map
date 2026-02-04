@@ -6,8 +6,9 @@ from urllib.parse import urlencode
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from config import settings
-from models import AdminMapListResponse, AdminMapRecord, PolygonRecord
+from core.config import settings
+from modules.admin.schemas import AdminMapRecord, AdminMapListResponse
+from modules.map_manage.schemas import PolygonRecord
 from store import delete_map, list_maps_with_polygons
 
 logger = logging.getLogger(__name__)

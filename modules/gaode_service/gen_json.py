@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, Dict, List, Literal, Optional, Sequence, Tuple, Union
 import time
 
-from config import settings
+from core.config import settings
 
 from .get_around_place import get_around_place
 from .get_city_place import get_city_place
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 # Default token used by the demo service.
 DEFAULT_AUTH_HEADER = "gaode-map-plugin-2025-dev-only"
-DEFAULT_CONCURRENCY =  1
+DEFAULT_CONCURRENCY = 2
 # 类型切换时的请求间隔（秒），避免连续命中频控
 TYPE_SWITCH_DELAY = 0.3
 
@@ -221,7 +221,8 @@ def _local_poi_to_point(poi: Dict, year: Optional[int] = None) -> Dict:
     location = poi.get("location", "0,0")
     lng_str, lat_str = (location.split(",") + ["0", "0"])[:2]
     lng, lat = float(lng_str), float(lat_str)
-    # lng, lat = wgs84_to_gcj02(float(lng_str), float(lat_str))
+    if settings.local_query_coord_system == "wgs84":
+        lng, lat = wgs84_to_gcj02(lng, lat)
     point_type = map_typecode_to_point_type(poi.get("typecode", ""), "poi")
 
     point = {
