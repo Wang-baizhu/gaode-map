@@ -7,14 +7,16 @@ import logging
 import os
 from pathlib import Path
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 from core.config import settings
 from router import admin_router, app_router
 from store import init_db
 import asyncio
+from modules.charting import build_svg, get_chart_path, pick_numeric_table, save_svg
 
 # ==================== 配置日志 ====================
 logging.basicConfig(
@@ -108,6 +110,41 @@ app.mount(
 
 app.include_router(app_router)
 app.include_router(admin_router)
+
+# ==================== 图表接口 ====================
+
+@app.post("/bar_chart")
+async def bar_chart(request: Request):
+    text = (await request.body()).decode("utf-8")
+    x_title, labels, series, values = pick_numeric_table(text)
+    svg_content = build_svg(labels, series, values, x_title=x_title)
+
+    chart_id, filename = save_svg(svg_content)
+    base_url = str(request.base_url).rstrip("/")
+    return {
+        "chart_id": chart_id,
+        "url": f"{base_url}/download/{filename}",
+        "series": series,
+        "labels": labels,
+        "x_title": x_title,
+        "chart": {
+            "labels": labels,
+            "series": series,
+            "values": values,
+        },
+    }
+
+
+@app.get("/download/{filename}")
+def download_chart(filename: str):
+    filepath = get_chart_path(filename)
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="Chart not found.")
+    return FileResponse(
+        filepath,
+        media_type="image/svg+xml",
+        filename=os.path.basename(filepath),
+    )
 
 # ==================== 主入口 ====================
 
