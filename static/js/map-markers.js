@@ -17,7 +17,7 @@
         this.pointStateMap = {};
         this.typeLabelMap = {};
         this.markerClassMap = {};
-        this.labelsVisible = true;
+        this.labelsVisible = false;
         this.activeTypes = new Set();
         this.existingTypes = new Set();
         this.lastVisibleMarkerPids = new Set();
@@ -226,6 +226,38 @@
         if (point.type === 'center') {
             typeLabel = '中心点';
         }
+        var typeId = point.type || '';
+        var typeLabelText = typeLabel || '';
+        var nameText = point.name || '';
+        var isTraffic = false;
+        if (typeof typeId === 'string') {
+            if (typeId.startsWith('15') || typeId.startsWith('type-15')) {
+                isTraffic = true;
+            }
+        }
+        if (!isTraffic && /交通|公交|地铁|车站|站|机场|港口|码头|出租|轻轨|轮渡|停车/.test(typeLabelText)) {
+            isTraffic = true;
+        }
+
+        var isParking = false;
+        if (typeof typeId === 'string' && (typeId === '150900' || typeId === 'type-150900' || typeId.indexOf('1509') !== -1)) {
+            isParking = true;
+        }
+        if (!isParking && /停车/.test(typeLabelText + nameText)) {
+            isParking = true;
+        }
+
+        var addressText = point.address || '';
+        var lines = Array.isArray(point.lines) ? point.lines.slice() : [];
+        if (isTraffic && !isParking && addressText) {
+            if (!lines.length) {
+                lines = [addressText];
+            } else if (lines.indexOf(addressText) === -1) {
+                lines.push(addressText);
+            }
+        }
+        var showAddress = !isTraffic || isParking;
+        var showLines = isTraffic && !isParking;
         var coordLng = typeof point.lng === 'number' ? point.lng : marker.getPosition().getLng();
         var coordLat = typeof point.lat === 'number' ? point.lat : marker.getPosition().getLat();
         var coordText = coordLng.toFixed(6) + ', ' + coordLat.toFixed(6);
@@ -261,12 +293,7 @@
         infoContainer.appendChild(typeEl);
 
         // 3. Address
-        if (point.address) {
-            var addressEl = document.createElement('div');
-            addressEl.style.marginBottom = '4px';
-            addressEl.innerHTML = '<span style="color:#888;">地址：</span>' + point.address;
-            infoContainer.appendChild(addressEl);
-        }
+        // 地址/途经线路统一放在最后
 
         // 4. Coordinates
         var coordEl = document.createElement('div');
@@ -284,11 +311,19 @@
         }
 
         // Lines (Traffic)
-        if (point.lines && point.lines.length > 0) {
+        if (showAddress && addressText) {
+            var addressEl = document.createElement('div');
+            addressEl.style.marginBottom = '4px';
+            addressEl.style.color = '#666';
+            addressEl.innerHTML = '<span style="color:#666;">地址：</span>' + addressText;
+            infoContainer.appendChild(addressEl);
+        }
+
+        if (showLines && lines && lines.length > 0) {
             var linesEl = document.createElement('div');
-            linesEl.style.marginTop = '4px';
-            linesEl.style.color = '#1976d2';
-            linesEl.textContent = '途经：' + point.lines.join('，');
+            linesEl.style.marginBottom = '4px';
+            linesEl.style.color = '#666';
+            linesEl.innerHTML = '<span style="color:#666;">途经线路：</span>' + lines.join('，');
             infoContainer.appendChild(linesEl);
         } else {
             // DEBUG: Temporary check why lines are missing

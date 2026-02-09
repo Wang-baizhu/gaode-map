@@ -28,11 +28,6 @@
 
                 <div v-if="sidebarView === 'wizard'" class="step-header-nav" style="margin:0; width:100%;">
                     <button v-if="step === 1" class="btn-text-back" @click="backToHome">← 返回主页</button>
-                    <h2 v-else style="margin:0;">分析控制台</h2>
-                </div>
-
-                <div v-if="sidebarView === 'wizard' && step > 1" class="step-indicator">
-                    Step {% raw %}{{ step }}{% endraw %}/3
                 </div>
 
                 <div v-if="sidebarView === 'history'" class="step-header-nav"
@@ -236,48 +231,96 @@
                             <h3>3. 结果分析</h3>
                         </div>
 
-                        <!-- Copied from map_with_filters.html -->
-                        <div class="filter-section">
-                            <h4><span>半径调节</span></h4>
-                            <div class="filter-group">
-                                <div class="filter-option range-control">
-                                    <input type="range" id="radiusSlider" min="0" max="10000" step="100"
-                                        class="minimal-range">
-                                    <span id="radiusValue" class="range-value">—</span>
+                        <div class="step3-layout">
+                            <div class="nav-rail">
+                                <div v-for="(item, index) in step3NavItems" :key="item.id"
+                                    class="nav-item"
+                                    :class="{
+                                        active: activeStep3Panel === item.id,
+                                        dragging: dragIndex === index,
+                                        'insert-before': isDraggingNav && dragOverIndex === index && dragInsertPosition === 'before',
+                                        'insert-after': isDraggingNav && dragOverIndex === index && dragInsertPosition === 'after'
+                                    }"
+                                    :title="item.title"
+                                    draggable="true"
+                                    @click="selectStep3Panel(item.id)"
+                                    @dragstart="onStep3DragStart(index, $event)"
+                                    @dragover="onStep3DragOver(index, $event)"
+                                    @drop="onStep3Drop(index)"
+                                    @dragend="onStep3DragEnd">
+                                    {% raw %}{{ item.label }}{% endraw %}
                                 </div>
                             </div>
-                        </div>
 
-                        <div class="filter-section">
-                            <button id="toggleExpandAll" class="btn-outline"
-                                style="padding:5px; font-size:12px;">全部展开</button>
-                        </div>
-
-                        <div class="filter-section" style="display:flex; gap:10px;">
-                            <button id="toggleAll" class="btn-outline"
-                                style="padding:5px; font-size:12px;">全部显示/隐藏</button>
-                            <button id="toggleNames" class="btn-outline"
-                                style="padding:5px; font-size:12px;">隐藏名称</button>
-                        </div>
-
-                        <div class="filter-section">
-                            <button id="toggleHeatmap" class="btn-outline"
-                                style="padding:5px; font-size:12px;">开启热力图</button>
-                            <div class="filter-group" style="margin-top:10px;">
-                                <div class="filter-option range-control">
-                                    <input type="range" id="heatmapCountSlider" min="1" max="100" step="1" value="10"
-                                        class="minimal-range">
-                                    <span id="heatmapCountValue" class="range-value">10</span>
+                            <div class="panel-area">
+                                <div class="panel poi-panel" v-show="activeStep3Panel === 'poi'">
+                                    <div class="poi-panel-header">
+                                        <h4>POI 分类</h4>
+                                        <div class="poi-panel-actions">
+                                            <span id="poiTotalCount" class="count-badge">总数 0</span>
+                                            <button id="toggleAllPoi" type="button" class="btn-outline btn-compact">全部隐藏</button>
+                                            <button id="toggleExpandAll" class="btn-outline btn-compact">全部展开</button>
+                                        </div>
+                                    </div>
+                                    <div id="filtersContainer" class="legacy-filters-wrapper"></div>
                                 </div>
+
+                                <div class="panel" v-show="activeStep3Panel === 'parcel'">
+                                    <h4>地块指标</h4>
+                                    <div class="panel-placeholder">待接入数据/开发中</div>
+                                </div>
+
+                                <div class="panel" v-show="activeStep3Panel === 'h3'">
+                                    <h4>H3 结构</h4>
+                                    <div class="panel-placeholder">待接入数据/开发中</div>
+                                </div>
+
+                                <div class="panel" v-show="activeStep3Panel === 'view'">
+                                    <h4>视图切换</h4>
+                                    <div class="panel-placeholder">待接入数据/开发中</div>
+                                </div>
+
+                                <div class="panel" v-show="activeStep3Panel === 'layer'">
+                                    <h4>图层控制</h4>
+                                    <div class="filter-section" style="display:flex; gap:10px;">
+                                        <button id="toggleAll" class="btn-outline"
+                                            style="padding:5px; font-size:12px;">全部显示/隐藏</button>
+                                        <button id="toggleNames" class="btn-outline"
+                                            style="padding:5px; font-size:12px;">显示名称</button>
+                                    </div>
+                                </div>
+
+                                <div class="panel" v-show="activeStep3Panel === 'heatmap'">
+                                    <h4>热力图</h4>
+                                    <div class="filter-section">
+                                        <button id="toggleHeatmap" class="btn-outline"
+                                            style="padding:5px; font-size:12px;">开启热力图</button>
+                                        <div class="filter-group" style="margin-top:10px;">
+                                            <div class="filter-option range-control">
+                                                <input type="range" id="heatmapCountSlider" min="1" max="100" step="1"
+                                                    value="10" class="minimal-range">
+                                                <span id="heatmapCountValue" class="range-value">10</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="panel" v-show="activeStep3Panel === 'radius'">
+                                    <h4>半径调节</h4>
+                                    <div class="filter-group">
+                                        <div class="filter-option range-control">
+                                            <input type="range" id="radiusSlider" min="0" max="10000" step="100"
+                                                class="minimal-range">
+                                            <span id="radiusValue" class="range-value">—</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <button class="btn-outline" @click="saveAndRestart">
+                                    保存并开始新分析
+                                </button>
                             </div>
                         </div>
-
-                        <!-- Legacy Filter Container -->
-                        <div id="filtersContainer" class="legacy-filters-wrapper"></div>
-
-                        <button class="btn-outline" @click="saveAndRestart">
-                            保存并开始新分析
-                        </button>
                     </div>
                 </div> <!-- End Wizard View Wrapper -->
 
@@ -343,6 +386,20 @@
                         { name: '科教', code: '140000', checked: true, color: '#00bcd4' }, // Cyan
                         { name: '医疗', code: '090000', checked: true, color: '#e91e63' }  // Pink
                     ],
+                    step3NavItems: [
+                        { id: 'poi', label: 'POI', title: 'POI 分类' },
+                        { id: 'parcel', label: '地块', title: '地块指标' },
+                        { id: 'h3', label: 'H3', title: 'H3 结构' },
+                        { id: 'view', label: '视图', title: '视图切换' },
+                        { id: 'layer', label: '图层', title: '图层控制' },
+                        { id: 'heatmap', label: '热力', title: '热力图' },
+                        { id: 'radius', label: '半径', title: '半径调节' }
+                    ],
+                    activeStep3Panel: 'poi',
+                    dragIndex: null,
+                    dragOverIndex: null,
+                    dragInsertPosition: null,
+                    isDraggingNav: false,
                     isFetchingPois: false,
                     fetchProgress: 0,
                     poiStatus: '',
@@ -424,6 +481,54 @@
                         this.mapCore.clearCustomPolygons();
                         this.mapCore.setRadius(0);
                     }
+                },
+                selectStep3Panel(panelId) {
+                    if (this.isDraggingNav) return;
+                    this.activeStep3Panel = panelId;
+                },
+                onStep3DragStart(index, event) {
+                    this.dragIndex = index;
+                    this.dragOverIndex = index;
+                    this.dragInsertPosition = 'before';
+                    this.isDraggingNav = true;
+                    if (event && event.dataTransfer) {
+                        event.dataTransfer.effectAllowed = 'move';
+                    }
+                },
+                onStep3DragOver(index, event) {
+                    if (event) event.preventDefault();
+                    this.dragOverIndex = index;
+                    const bounds = event.currentTarget.getBoundingClientRect();
+                    const midY = bounds.top + bounds.height / 2;
+                    this.dragInsertPosition = event.clientY < midY ? 'before' : 'after';
+                },
+                onStep3Drop(index) {
+                    if (this.dragIndex === null) {
+                        this.dragOverIndex = null;
+                        this.dragInsertPosition = null;
+                        return;
+                    }
+                    const items = this.step3NavItems.slice();
+                    const moved = items.splice(this.dragIndex, 1)[0];
+                    let insertIndex = index;
+                    if (this.dragInsertPosition === 'after') {
+                        insertIndex = index + 1;
+                    }
+                    if (this.dragIndex < insertIndex) {
+                        insertIndex -= 1;
+                    }
+                    items.splice(insertIndex, 0, moved);
+                    this.step3NavItems = items;
+                    this.dragIndex = null;
+                    this.dragOverIndex = null;
+                    this.dragInsertPosition = null;
+                    this.isDraggingNav = false;
+                },
+                onStep3DragEnd() {
+                    this.dragIndex = null;
+                    this.dragOverIndex = null;
+                    this.dragInsertPosition = null;
+                    this.isDraggingNav = false;
                 },
                 goToStep(targetStep) {
                     this.confirmNavigation(() => {
@@ -754,10 +859,30 @@
 
                         // Info Window
                         marker.on('click', () => {
+                            const typeText = (p.type || '').toString();
+                            const nameText = p.name || '';
+                            const isTraffic = typeText.startsWith('15') || typeText.startsWith('type-15');
+                            const isParking = typeText.includes('1509') || /停车/.test(nameText);
+                            const addressText = p.address || '';
+                            let lines = Array.isArray(p.lines) ? p.lines.slice() : [];
+                            if (isTraffic && !isParking && addressText) {
+                                if (lines.length === 0) {
+                                    lines = [addressText];
+                                } else if (!lines.includes(addressText)) {
+                                    lines.push(addressText);
+                                }
+                            }
+                            const showAddress = !isTraffic || isParking;
+                            const showLines = isTraffic && !isParking;
                             const info = [];
                             info.push(`<div style="padding:5px;"><b>${p.name}</b>`);
                             info.push(`<div style="font-size:12px;color:#666;">${p.type || '未知类型'}</div>`);
-                            info.push(`<div style="font-size:12px;color:#666;">${p.address || ''}</div>`);
+                            if (showAddress && addressText) {
+                                info.push(`<div style="font-size:12px;color:#666;"><span style="color:#666;">地址：</span>${addressText}</div>`);
+                            }
+                            if (showLines && lines.length) {
+                                info.push(`<div style="font-size:12px;color:#666;"><span style="color:#666;">途经线路：</span>${lines.join('，')}</div>`);
+                            }
                             info.push(`</div>`);
 
                             new AMap.InfoWindow({
@@ -1013,7 +1138,8 @@
                     this.filterPanel = new FilterPanel(this.markerManager, {
                         mapData: { points: points },
                         mapTypeConfig: mapTypeConfig,
-                        heatmapManager: heatmapManager
+                        heatmapManager: heatmapManager,
+                        flatMode: true
                     });
                     this.filterPanel.init();
                     this.markerManager.applyFilters();

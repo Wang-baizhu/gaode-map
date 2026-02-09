@@ -1,5 +1,5 @@
 :root {
-    --sidebar-width: 320px;
+    --sidebar-width: clamp(360px, 28vw, 460px);
     --bg-color: #f7f7f8;
     --card-bg: #ffffff;
     --text-primary: #111111;
@@ -49,6 +49,7 @@ body {
     flex: 1;
     padding: 0 20px 20px 20px;
     overflow-y: auto;
+    scrollbar-gutter: stable;
     display: flex;
     flex-direction: column;
 }
@@ -195,6 +196,128 @@ label {
     margin: 0;
     font-size: 16px;
     font-weight: 600;
+}
+
+/* Step 3: Left Nav + Panel Layout */
+.step3-layout {
+    display: flex;
+    gap: 12px;
+    min-height: 200px;
+}
+
+.nav-rail {
+    width: 56px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: center;
+}
+
+.nav-item {
+    width: 48px;
+    height: 48px;
+    border-radius: 10px;
+    border: 1px solid #e6e6e6;
+    background: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 600;
+    color: #444;
+    cursor: grab;
+    transition: transform 0.18s ease, margin 0.18s ease, box-shadow 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+    user-select: none;
+}
+
+.nav-item:hover {
+    border-color: #bbb;
+    color: #000;
+}
+
+.nav-item.active {
+    border-color: #000;
+    box-shadow: 0 0 0 1px #000 inset;
+    color: #000;
+    background: #fafafa;
+}
+
+.nav-item.drag-over {
+    border-style: dashed;
+    background: #f5f5f5;
+}
+
+.nav-item.dragging {
+    opacity: 0.6;
+}
+
+.nav-item.insert-before {
+    margin-top: 12px;
+}
+
+.nav-item.insert-after {
+    margin-bottom: 12px;
+}
+
+.panel-area {
+    flex: 1;
+    min-width: 0;
+}
+
+.panel {
+    border: 1px solid #eee;
+    border-radius: 12px;
+    padding: 12px;
+    background: #fff;
+    margin-bottom: 12px;
+}
+
+.panel h4 {
+    margin: 0 0 8px 0;
+    font-size: 13px;
+    color: #333;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.poi-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+}
+
+.poi-panel-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.count-badge {
+    background: #f5f5f5;
+    color: #555;
+    padding: 4px 8px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.btn-compact {
+    width: auto;
+    padding: 6px 10px;
+    font-size: 12px;
+    border-radius: 20px;
+    margin-top: 0;
+}
+
+.panel-placeholder {
+    font-size: 12px;
+    color: #777;
+    background: #fafafa;
+    border: 1px dashed #ddd;
+    padding: 10px;
+    border-radius: 8px;
 }
 
 /* Mode Selection Pills */
