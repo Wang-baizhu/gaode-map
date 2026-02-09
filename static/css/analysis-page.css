@@ -311,6 +311,14 @@ label {
     margin-top: 0;
 }
 
+.poi-chart {
+    height: 220px;
+    margin-top: 12px;
+    border: 1px solid #eee;
+    border-radius: 12px;
+    background: #fff;
+}
+
 .panel-placeholder {
     font-size: 12px;
     color: #777;
@@ -666,4 +674,11 @@ label {
     100% {
         transform: rotate(360deg);
     }
+}
+
+.sidebar-footer {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    flex-shrink: 0;
 }

@@ -32,8 +32,7 @@
 
                 <div v-if="sidebarView === 'history'" class="step-header-nav"
                     style="margin:0; width:100%; display:flex; justify-content:space-between; align-items:center;">
-                    <button class="btn-text-back"
-                        @click="isSelectionMode ? toggleSelectionMode(false) : backToHome()"
+                    <button class="btn-text-back" @click="isSelectionMode ? toggleSelectionMode(false) : backToHome()"
                         style="margin:0;">
                         {% raw %}{{ isSelectionMode ? '取消' : '← 返回主页' }}{% endraw %}
                     </button>
@@ -233,20 +232,14 @@
 
                         <div class="step3-layout">
                             <div class="nav-rail">
-                                <div v-for="(item, index) in step3NavItems" :key="item.id"
-                                    class="nav-item"
-                                    :class="{
+                                <div v-for="(item, index) in step3NavItems" :key="item.id" class="nav-item" :class="{
                                         active: activeStep3Panel === item.id,
                                         dragging: dragIndex === index,
                                         'insert-before': isDraggingNav && dragOverIndex === index && dragInsertPosition === 'before',
                                         'insert-after': isDraggingNav && dragOverIndex === index && dragInsertPosition === 'after'
-                                    }"
-                                    :title="item.title"
-                                    draggable="true"
-                                    @click="selectStep3Panel(item.id)"
+                                    }" :title="item.title" draggable="true" @click="selectStep3Panel(item.id)"
                                     @dragstart="onStep3DragStart(index, $event)"
-                                    @dragover="onStep3DragOver(index, $event)"
-                                    @drop="onStep3Drop(index)"
+                                    @dragover="onStep3DragOver(index, $event)" @drop="onStep3Drop(index)"
                                     @dragend="onStep3DragEnd">
                                     {% raw %}{{ item.label }}{% endraw %}
                                 </div>
@@ -258,11 +251,13 @@
                                         <h4>POI 分类</h4>
                                         <div class="poi-panel-actions">
                                             <span id="poiTotalCount" class="count-badge">总数 0</span>
-                                            <button id="toggleAllPoi" type="button" class="btn-outline btn-compact">全部隐藏</button>
+                                            <button id="toggleAllPoi" type="button"
+                                                class="btn-outline btn-compact">全部隐藏</button>
                                             <button id="toggleExpandAll" class="btn-outline btn-compact">全部展开</button>
                                         </div>
                                     </div>
                                     <div id="filtersContainer" class="legacy-filters-wrapper"></div>
+                                    <div id="poiChart" class="poi-chart"></div>
                                 </div>
 
                                 <div class="panel" v-show="activeStep3Panel === 'parcel'">
@@ -271,23 +266,19 @@
                                 </div>
 
                                 <div class="panel" v-show="activeStep3Panel === 'h3'">
-                                    <h4>H3 结构</h4>
+                                    <h4>网络</h4>
                                     <div class="panel-placeholder">待接入数据/开发中</div>
                                 </div>
 
                                 <div class="panel" v-show="activeStep3Panel === 'view'">
                                     <h4>视图切换</h4>
-                                    <div class="panel-placeholder">待接入数据/开发中</div>
-                                </div>
-
-                                <div class="panel" v-show="activeStep3Panel === 'layer'">
-                                    <h4>图层控制</h4>
                                     <div class="filter-section" style="display:flex; gap:10px;">
                                         <button id="toggleAll" class="btn-outline"
                                             style="padding:5px; font-size:12px;">全部显示/隐藏</button>
                                         <button id="toggleNames" class="btn-outline"
                                             style="padding:5px; font-size:12px;">显示名称</button>
                                     </div>
+                                    <div class="panel-placeholder" style="margin-top:10px;">待接入数据/开发中</div>
                                 </div>
 
                                 <div class="panel" v-show="activeStep3Panel === 'heatmap'">
@@ -306,7 +297,7 @@
                                 </div>
 
                                 <div class="panel" v-show="activeStep3Panel === 'radius'">
-                                    <h4>半径调节</h4>
+                                    <h4>范围控制</h4>
                                     <div class="filter-group">
                                         <div class="filter-option range-control">
                                             <input type="range" id="radiusSlider" min="0" max="10000" step="100"
@@ -316,8 +307,6 @@
                                     </div>
                                 </div>
 
-                                <button class="btn-outline" @click="saveAndRestart">
-                                    保存并开始新分析
                                 </button>
                             </div>
                         </div>
@@ -329,7 +318,10 @@
             <!-- Fixed History Footer -->
             <!-- Sidebar Footer (Only in Wizard Mode) -->
             <div v-if="sidebarView === 'wizard'" class="sidebar-footer"
-                style="padding: 20px; border-top: 1px solid #f0f0f0; background: #fff;">
+                style="padding: 20px; border-top: 1px solid #f0f0f0; background: #fff; display: flex; flex-direction: column; gap: 10px;">
+                <button v-if="step === 3" class="btn-black" @click="saveAndRestart">
+                    保存并开启新分析
+                </button>
                 <button class="btn-outline"
                     style="margin-top:0; border:1px solid #eee; display:flex; justify-content:center; align-items:center;"
                     @click="sidebarView = 'history'">
@@ -350,6 +342,7 @@
     <!-- 引入 Vue 3 (CDN) -->
     <script src="https://cdn.staticfile.org/vue/3.3.4/vue.global.prod.min.js"></script>
     <script src="https://cdn.bootcdn.net/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
     <script src="/static/js/map-utils.js"></script>
     <script src="/static/js/map-core.js"></script>
     <script src="/static/js/map-heatmap.js"></script>
@@ -389,11 +382,10 @@
                     step3NavItems: [
                         { id: 'poi', label: 'POI', title: 'POI 分类' },
                         { id: 'parcel', label: '地块', title: '地块指标' },
-                        { id: 'h3', label: 'H3', title: 'H3 结构' },
+                        { id: 'h3', label: '网络', title: '网络' },
                         { id: 'view', label: '视图', title: '视图切换' },
-                        { id: 'layer', label: '图层', title: '图层控制' },
                         { id: 'heatmap', label: '热力', title: '热力图' },
-                        { id: 'radius', label: '半径', title: '半径调节' }
+                        { id: 'radius', label: '范围', title: '范围控制' }
                     ],
                     activeStep3Panel: 'poi',
                     dragIndex: null,
@@ -406,6 +398,8 @@
                     lastIsochroneGeoJSON: null,
                     poiMarkers: [],
                     allPoisDetails: [], // Store full fetched data for client-side filtering
+                    poiChart: null,
+                    poiChartResizeHandler: null,
 
                     // Instances
 
@@ -481,10 +475,14 @@
                         this.mapCore.clearCustomPolygons();
                         this.mapCore.setRadius(0);
                     }
+                    this.disposePoiChart();
                 },
                 selectStep3Panel(panelId) {
                     if (this.isDraggingNav) return;
                     this.activeStep3Panel = panelId;
+                    if (panelId === 'poi') {
+                        setTimeout(() => this.resizePoiChart(), 0);
+                    }
                 },
                 onStep3DragStart(index, event) {
                     this.dragIndex = index;
@@ -816,6 +814,8 @@
                         setTimeout(() => {
                             this.step = 3; // Advance to Step 3 after short delay to see 100%
                             this.loadHistoryList();
+                            this.updatePoiCharts();
+                            this.resizePoiChart();
                         }, 500);
 
                     } catch (e) {
@@ -1026,6 +1026,13 @@
                             this.mapCore.setCustomPolygons([data.polygon]);
                             this.lastIsochroneGeoJSON = { geometry: { type: 'Polygon', coordinates: [data.polygon] } };
                         }
+
+                        // Switch to Results Step before building panels
+                        this.step = 3;
+                        this.sidebarView = 'wizard'; // Return to wizard
+                        this.activeStep3Panel = 'poi';
+                        await this.$nextTick();
+
                         if (data.pois) {
                             this.allPoisDetails = data.pois;
                             // Integration with Legacy Filter Panel
@@ -1037,11 +1044,7 @@
                             this.poiStatus = `已加载历史: ${data.pois.length} 条`;
                         }
 
-
-                        // Switch to Results Step
-                        this.step = 3;
-                        this.sidebarView = 'wizard'; // Return to wizard 
-                        // this.showHistory = false; // Deprecated
+                        setTimeout(() => this.resizePoiChart(), 0);
 
                     } catch (e) {
                         console.error(e);
@@ -1083,6 +1086,117 @@
                         this.markerManager.markers.forEach(m => m.setMap(null));
                         this.markerManager.destroyClusterers();
                     }
+                    this.disposePoiChart();
+                },
+                initPoiChart() {
+                    const el = document.getElementById('poiChart');
+                    if (!el || !window.echarts || el.clientWidth === 0) return null;
+
+                    let chart = echarts.getInstanceByDom(el);
+                    if (!chart) {
+                        chart = echarts.init(el);
+                        if (!this.poiChartResizeHandler) {
+                            this.poiChartResizeHandler = () => this.resizePoiChart();
+                            window.addEventListener('resize', this.poiChartResizeHandler);
+                        }
+                    }
+                    this.poiChart = chart;
+                    return chart;
+                },
+                resizePoiChart() {
+                    if (this.poiChart) this.poiChart.resize();
+                },
+                disposePoiChart() {
+                    if (this.poiChart) {
+                        this.poiChart.dispose();
+                        this.poiChart = null;
+                    }
+                    if (this.poiChartResizeHandler) {
+                        window.removeEventListener('resize', this.poiChartResizeHandler);
+                        this.poiChartResizeHandler = null;
+                    }
+                },
+                computePoiStats(points) {
+                    const labels = this.poiCategories.map(c => c.name);
+                    const colors = this.poiCategories.map(c => c.color || '#888');
+                    const values = this.poiCategories.map(() => 0);
+                    (points || []).forEach(p => {
+                        const typeStr = p && p.type ? String(p.type) : '';
+                        if (!typeStr) return;
+                        for (let i = 0; i < this.poiCategories.length; i++) {
+                            const prefix = this.poiCategories[i].code.substring(0, 2);
+                            if (typeStr.startsWith(prefix)) {
+                                values[i] += 1;
+                                return;
+                            }
+                        }
+                    });
+                    return { labels, colors, values };
+                },
+                updatePoiCharts() {
+                    if (!this.markerManager || !this.markerManager.getVisiblePoints) return;
+
+                    const el = document.getElementById('poiChart');
+                    if (!el || !window.echarts) return;
+
+                    // If chart already exists and is visible, update immediately for smooth animation (restores transition)
+                    const existingChart = echarts.getInstanceByDom(el);
+                    if (existingChart && el.clientWidth > 0) {
+                        this.poiChart = existingChart;
+                        const points = this.markerManager.getVisiblePoints();
+                        const stats = this.computePoiStats(points);
+                        const safeValues = stats.values.map(v => (Number.isFinite(v) ? v : 0));
+
+                        const option = {
+                            yAxis: { data: stats.labels },
+                            series: [{
+                                data: safeValues,
+                                itemStyle: {
+                                    color: (params) => stats.colors[params.dataIndex] || '#888'
+                                }
+                            }]
+                        };
+                        existingChart.setOption(option, false); // Merge for animation
+                        return;
+                    }
+
+                    // Otherwise, delay slightly for initial rendering (Step 3 panels use v-show)
+                    setTimeout(() => {
+                        const chart = this.initPoiChart();
+                        if (!chart) return;
+
+                        const points = this.markerManager.getVisiblePoints();
+                        const stats = this.computePoiStats(points);
+                        const safeValues = stats.values.map(v => (Number.isFinite(v) ? v : 0));
+
+                        const option = {
+                            grid: { left: 50, right: 20, top: 10, bottom: 10, containLabel: true },
+                            xAxis: {
+                                type: 'value',
+                                axisLine: { show: false }, axisTick: { show: false },
+                                splitLine: { lineStyle: { color: '#eee' } }
+                            },
+                            yAxis: {
+                                type: 'category',
+                                data: stats.labels,
+                                axisLine: { show: false }, axisTick: { show: false }
+                            },
+                            series: [{
+                                type: 'bar',
+                                data: safeValues,
+                                barWidth: 12,
+                                itemStyle: {
+                                    color: (params) => stats.colors[params.dataIndex] || '#888'
+                                }
+                            }]
+                        };
+                        try {
+                            chart.setOption(option, true);
+                            chart.resize();
+                        } catch (err) {
+                            console.error("ECharts setOption error:", err);
+                        }
+                    }, 100);
                 },
                 updateLegacySystem(pois) {
                     const points = pois.map((p, idx) => {
@@ -1143,6 +1257,8 @@
                     });
                     this.filterPanel.init();
                     this.markerManager.applyFilters();
+                    this.filterPanel.onFiltersChange = () => this.updatePoiCharts();
+                    this.updatePoiCharts();
                 }
             }
         }).mount('#app');

@@ -14,6 +14,7 @@
         this.groupExpandState = {};
         this.typeExpandState = {};
         this.heatmapEnabled = false;
+        this.onFiltersChange = null;
 
         this.poiTotalCountEl = document.getElementById('poiTotalCount');
         this.toggleAllPoiBtn = document.getElementById('toggleAllPoi');
@@ -690,6 +691,9 @@
         this.mapCore.updateFitView(this.markerManager.getVisibleMarkers());
         this.updateTypeCountDisplay();
         this.refreshHeatmap();
+        if (typeof this.onFiltersChange === 'function') {
+            this.onFiltersChange();
+        }
     };
 
     FilterPanel.prototype.updateHeatmapCountDisplay = function () {

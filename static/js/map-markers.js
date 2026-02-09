@@ -416,6 +416,10 @@
         });
     };
 
+    MarkerManager.prototype.getVisiblePoints = function () {
+        return (this.lastFilteredPoints || []).slice();
+    };
+
     MarkerManager.prototype.applyFilters = function () {
         var self = this;
         var needCluster = this.showMarkers;
