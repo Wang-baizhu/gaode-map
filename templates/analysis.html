@@ -30,16 +30,19 @@
                     <button v-if="step === 1" class="btn-text-back" @click="backToHome">← 返回主页</button>
                 </div>
 
-                <div v-if="sidebarView === 'history'" class="step-header-nav"
-                    style="margin:0; width:100%; display:flex; justify-content:space-between; align-items:center;">
-                    <button class="btn-text-back" @click="isSelectionMode ? toggleSelectionMode(false) : backToHome()"
-                        style="margin:0;">
-                        {% raw %}{{ isSelectionMode ? '取消' : '← 返回主页' }}{% endraw %}
-                    </button>
-                    <h3 style="margin:0;">历史记录</h3>
-                    <button class="btn-text-back" @click="toggleSelectionMode(!isSelectionMode)" style="margin:0;">
-                        {% raw %}{{ isSelectionMode ? '完成' : '管理' }}{% endraw %}
-                    </button>
+                <div v-if="sidebarView === 'history'" class="step-header-nav history-header-nav">
+                    <div class="history-header-slot left">
+                        <button class="btn-text-back"
+                            @click="isSelectionMode ? toggleSelectionMode(false) : backToHome()" style="margin:0;">
+                            {% raw %}{{ isSelectionMode ? '取消' : '← 返回主页' }}{% endraw %}
+                        </button>
+                    </div>
+                    <h3 class="history-header-title">历史记录</h3>
+                    <div class="history-header-slot right">
+                        <button class="btn-text-back" @click="toggleSelectionMode(!isSelectionMode)" style="margin:0;">
+                            {% raw %}{{ isSelectionMode ? '完成' : '管理' }}{% endraw %}
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -267,7 +270,278 @@
 
                                 <div class="panel" v-show="activeStep3Panel === 'h3'">
                                     <h4>网络</h4>
-                                    <div class="panel-placeholder">待接入数据/开发中</div>
+                                    <div class="filter-section" style="display:flex; gap:10px; flex-wrap:wrap;">
+                                        <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#666;">
+                                            网格级别
+                                            <select v-model.number="h3GridResolution" @change="onH3ResolutionChange"
+                                                style="padding:4px 6px; border:1px solid #ddd; border-radius:6px; font-size:12px;">
+                                                <option :value="8">8</option>
+                                                <option :value="9">9</option>
+                                                <option :value="10">10</option>
+                                                <option :value="11">11</option>
+                                            </select>
+                                        </label>
+                                        <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#666;">
+                                            包含模式
+                                            <select v-model="h3GridIncludeMode" @change="onH3GridSettingsChange"
+                                                style="padding:4px 6px; border:1px solid #ddd; border-radius:6px; font-size:12px;">
+                                                <option value="intersects">相交优先（边缘保留）</option>
+                                                <option value="inside">完全包含（严格）</option>
+                                            </select>
+                                        </label>
+                                        <button class="btn-outline" style="padding:5px; font-size:12px;"
+                                            :disabled="isGeneratingGrid || !lastIsochroneGeoJSON"
+                                            @click="generateH3Grid">
+                                            {% raw %}{{ isGeneratingGrid ? '生成中...' : '生成网络' }}{% endraw %}
+                                        </button>
+                                        <button class="btn-black" style="padding:5px 10px; font-size:12px;"
+                                            :disabled="isComputingH3Analysis || !lastIsochroneGeoJSON"
+                                            @click="computeH3Analysis">
+                                            {% raw %}{{ isComputingH3Analysis ? '分析中...' : '计算分析' }}{% endraw %}
+                                        </button>
+                                        <button class="btn-outline" style="padding:5px; font-size:12px;"
+                                            :disabled="h3GridCount === 0" @click="clearH3Grid">
+                                            清空网络
+                                        </button>
+                                        <span class="count-badge">网格数 {% raw %}{{ h3GridCount }}{% endraw %}</span>
+                                    </div>
+                                    <div class="filter-section" v-if="h3GridIncludeMode === 'intersects'"
+                                        style="margin-top:8px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                                        <label style="font-size:12px; color:#666; min-width:120px;">
+                                            最小重叠比例
+                                        </label>
+                                        <input type="range" min="0" max="0.9" step="0.05"
+                                            v-model.number="h3GridMinOverlapRatio" @change="onH3GridSettingsChange"
+                                            class="minimal-range" style="max-width:180px;">
+                                        <span class="range-value">{% raw %}{{ h3GridMinOverlapRatio.toFixed(2) }}{% endraw %}</span>
+                                    </div>
+                                    <div class="h3-subtabs" v-if="h3AnalysisGridFeatures.length > 0">
+                                        <button type="button" class="h3-subtab-pill"
+                                            :class="{ active: h3SubTab === 'metric_map' }"
+                                            @click="onH3SubTabChange('metric_map')">热度分布</button>
+                                        <button type="button" class="h3-subtab-pill"
+                                            :class="{ active: h3SubTab === 'typing' }"
+                                            @click="onH3SubTabChange('typing')">业态结构</button>
+                                        <button type="button" class="h3-subtab-pill"
+                                            :class="{ active: h3SubTab === 'lq' }"
+                                            @click="onH3SubTabChange('lq')">相对优势</button>
+                                        <button type="button" class="h3-subtab-pill"
+                                            :class="{ active: h3SubTab === 'gap' }"
+                                            @click="onH3SubTabChange('gap')">补位机会</button>
+                                    </div>
+                                    <div class="filter-section" v-if="h3AnalysisGridFeatures.length > 0 && h3SubTab === 'metric_map'"
+                                        style="margin-top:8px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                                        <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#666;">
+                                            地图指标
+                                            <select v-model="h3MetricView" @change="onH3MetricViewChange"
+                                                style="padding:4px 6px; border:1px solid #ddd; border-radius:6px; font-size:12px;">
+                                                <option value="density">密度</option>
+                                                <option value="entropy">局部熵</option>
+                                                <option value="neighbor_delta">邻域差值（本格-邻域）</option>
+                                            </select>
+                                        </label>
+                                    </div>
+                                    <div class="filter-section" v-if="h3AnalysisGridFeatures.length > 0 && h3SubTab !== 'metric_map'"
+                                        style="margin-top:8px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                                        <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#666;">
+                                            TopN
+                                            <input type="number" min="3" max="30" step="1"
+                                                v-model.number="h3DecisionTopN" @change="onH3DecisionSettingsChange"
+                                                style="width:68px; padding:4px 6px; border:1px solid #ddd; border-radius:6px; font-size:12px;">
+                                        </label>
+                                        <label v-if="h3SubTab === 'lq' || h3SubTab === 'gap'"
+                                            style="display:flex; align-items:center; gap:6px; font-size:12px; color:#666;">
+                                            目标业态
+                                            <select v-model="h3TargetCategory" @change="onH3DecisionSettingsChange"
+                                                style="padding:4px 6px; border:1px solid #ddd; border-radius:6px; font-size:12px;">
+                                                <option value="dining">餐饮</option>
+                                                <option value="shopping">购物</option>
+                                                <option value="life">生活</option>
+                                                <option value="transport">交通</option>
+                                                <option value="scenic">风景</option>
+                                                <option value="education">科教</option>
+                                                <option value="medical">医疗</option>
+                                            </select>
+                                        </label>
+                                    </div>
+                                    <div v-if="h3SubTab === 'metric_map' && h3AnalysisSummary"
+                                        style="margin-top:10px; display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                                        <div class="count-badge">POI总数 {% raw %}{{ h3AnalysisSummary.poi_count }}{% endraw %}</div>
+                                        <div class="count-badge">平均密度 {% raw %}{{ h3AnalysisSummary.avg_density_poi_per_km2.toFixed(2) }}{% endraw %}</div>
+                                        <div class="count-badge">平均熵 {% raw %}{{ h3AnalysisSummary.avg_local_entropy.toFixed(3) }}{% endraw %}</div>
+                                        <div class="count-badge">莫兰指数 {% raw %}{{ h3AnalysisSummary.global_moran_i_density ?? 'N/A' }}{% endraw %}</div>
+                                    </div>
+                                    <div v-if="h3SubTab === 'metric_map' && h3AnalysisSummary" class="h3-analysis-hint">
+                                        看密度、混合度和邻域差值，优先找“高密且邻域为正”的连续片区。
+                                    </div>
+                                    <div v-if="h3Legend && h3Legend.items && h3Legend.items.length"
+                                        style="margin-top:10px; border:1px solid #eef1f4; border-radius:8px; padding:8px 10px; background:#fafbfc;">
+                                        <div style="font-size:12px; color:#374151; font-weight:600; margin-bottom:6px;">
+                                            {% raw %}{{ h3Legend.title }}{% endraw %}
+                                            <span style="color:#6b7280; font-weight:400;">
+                                                {% raw %}{{ h3Legend.unit ? `（${h3Legend.unit}）` : '' }}{% endraw %}
+                                            </span>
+                                        </div>
+                                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px 10px;">
+                                            <div v-for="(item, idx) in h3Legend.items" :key="`legend-${idx}`"
+                                                style="display:flex; align-items:center; gap:6px; font-size:11px; color:#4b5563;">
+                                                <span :style="{display:'inline-block', width:'12px', height:'12px', borderRadius:'2px', background:item.color, border:'1px solid #d1d5db'}"></span>
+                                                <span>{% raw %}{{ item.label }}{% endraw %}</span>
+                                            </div>
+                                        </div>
+                                        <div v-if="h3Legend.noDataLabel"
+                                            style="margin-top:6px; font-size:11px; color:#6b7280; display:flex; align-items:center; gap:6px;">
+                                            <span :style="{display:'inline-block', width:'12px', height:'12px', borderRadius:'2px', background:h3Legend.noDataColor || '#d1d5db', border:'1px solid #d1d5db'}"></span>
+                                            <span>{% raw %}{{ h3Legend.noDataLabel }}{% endraw %}</span>
+                                        </div>
+                                    </div>
+                                    <div v-if="h3SubTab === 'metric_map' && h3AnalysisSummary" style="margin-top:10px;">
+                                        <div id="h3CategoryChart" style="height:180px;"></div>
+                                        <div id="h3DensityChart" style="height:180px; margin-top:8px;"></div>
+                                    </div>
+                                    <div v-if="h3SubTab === 'typing' && h3DerivedStats.typingSummary" style="margin-top:10px;">
+                                        <div class="h3-analysis-hint">
+                                            看四象限结构：高密高混合偏成熟，高密低混合偏单核，低密高混合偏潜力，低密低混合偏薄弱；同时参考可信度。
+                                        </div>
+                                        <div class="h3-decision-cards">
+                                            <div class="h3-decision-card">
+                                                <div class="label">机会网格数</div>
+                                                <div class="value">{% raw %}{{ h3DerivedStats.typingSummary.opportunityCount }}{% endraw %}</div>
+                                            </div>
+                                            <div class="h3-decision-card">
+                                                <div class="label">最高密度</div>
+                                                <div class="value">{% raw %}{{ h3DerivedStats.typingSummary.maxDensity.toFixed(2) }}{% endraw %}</div>
+                                            </div>
+                                            <div class="h3-decision-card">
+                                                <div class="label">建议动作</div>
+                                                <div class="value small">{% raw %}{{ h3DerivedStats.typingSummary.recommendation }}{% endraw %}</div>
+                                            </div>
+                                        </div>
+                                        <table class="h3-mini-table">
+                                            <thead>
+                                                <tr>
+                                                    <th>H3</th><th>POI</th><th>密度</th><th>熵</th><th>可信度</th><th>分型</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr v-for="row in h3DerivedStats.typingSummary.rows.slice(0, h3DecisionTopN)"
+                                                    :key="`typing-${row.h3_id}`"
+                                                    :class="{ 'h3-row-active': row.h3_id === selectedH3Id }">
+                                                    <td>
+                                                        <button type="button" class="h3-id-btn" :title="row.h3_id"
+                                                            @click="focusGridByH3Id(row.h3_id)">
+                                                            {% raw %}{{ shortH3Id(row.h3_id) }}{% endraw %}
+                                                        </button>
+                                                    </td>
+                                                    <td>{% raw %}{{ row.poi_count }}{% endraw %}</td>
+                                                    <td>{% raw %}{{ row.density.toFixed(2) }}{% endraw %}</td>
+                                                    <td>{% raw %}{{ row.entropy_norm === null ? '-' : row.entropy_norm.toFixed(2) }}{% endraw %}</td>
+                                                    <td>{% raw %}{{ (row.confidence && row.confidence.label) || '低' }}{% endraw %}</td>
+                                                    <td>{% raw %}{{ row.type_label }}{% endraw %}</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <div v-if="h3SubTab === 'lq' && h3DerivedStats.lqSummary" style="margin-top:10px;">
+                                        <div class="h3-analysis-hint">
+                                            看目标业态相对本分析区是否更强：大于1偏强，小于1偏弱；已做小样本平滑。
+                                        </div>
+                                        <div class="h3-decision-cards">
+                                            <div class="h3-decision-card">
+                                                <div class="label">优势网格数</div>
+                                                <div class="value">{% raw %}{{ h3DerivedStats.lqSummary.opportunityCount }}{% endraw %}</div>
+                                            </div>
+                                            <div class="h3-decision-card">
+                                                <div class="label">最高优势值</div>
+                                                <div class="value">{% raw %}{{ h3DerivedStats.lqSummary.maxLq.toFixed(2) }}{% endraw %}</div>
+                                            </div>
+                                            <div class="h3-decision-card">
+                                                <div class="label">建议业态</div>
+                                                <div class="value small">{% raw %}{{ h3DerivedStats.lqSummary.recommendation }}{% endraw %}</div>
+                                            </div>
+                                        </div>
+                                        <div id="h3LqChart" style="height:180px;"></div>
+                                        <table class="h3-mini-table" style="margin-top:8px;">
+                                            <thead>
+                                                <tr>
+                                                    <th>H3</th><th>POI</th><th>密度</th><th>熵</th><th>可信度</th><th>优势值</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr v-for="row in h3DerivedStats.lqSummary.rows.slice(0, h3DecisionTopN)"
+                                                    :key="`lq-${row.h3_id}`"
+                                                    :class="{ 'h3-row-active': row.h3_id === selectedH3Id }">
+                                                    <td>
+                                                        <button type="button" class="h3-id-btn" :title="row.h3_id"
+                                                            @click="focusGridByH3Id(row.h3_id)">
+                                                            {% raw %}{{ shortH3Id(row.h3_id) }}{% endraw %}
+                                                        </button>
+                                                    </td>
+                                                    <td>{% raw %}{{ row.poi_count }}{% endraw %}</td>
+                                                    <td>{% raw %}{{ row.density.toFixed(2) }}{% endraw %}</td>
+                                                    <td>{% raw %}{{ row.entropy_norm === null ? '-' : row.entropy_norm.toFixed(2) }}{% endraw %}</td>
+                                                    <td>{% raw %}{{ (row.confidence && row.confidence.label) || '低' }}{% endraw %}</td>
+                                                    <td>{% raw %}{{ row.lq_target === null ? '-' : row.lq_target.toFixed(2) }}{% endraw %}</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <div v-if="h3SubTab === 'gap' && h3DerivedStats.gapSummary" style="margin-top:10px;">
+                                        <div class="h3-analysis-hint">
+                                            看需求百分位与供给百分位差值：分数越高越值得优先补位。
+                                        </div>
+                                        <div class="h3-decision-cards">
+                                            <div class="h3-decision-card">
+                                                <div class="label">高缺口网格</div>
+                                                <div class="value">{% raw %}{{ h3DerivedStats.gapSummary.opportunityCount }}{% endraw %}</div>
+                                            </div>
+                                            <div class="h3-decision-card">
+                                                <div class="label">最高缺口分</div>
+                                                <div class="value">{% raw %}{{ h3DerivedStats.gapSummary.maxGap.toFixed(2) }}{% endraw %}</div>
+                                            </div>
+                                            <div class="h3-decision-card">
+                                                <div class="label">建议优先区</div>
+                                                <div class="value small">{% raw %}{{ h3DerivedStats.gapSummary.recommendation }}{% endraw %}</div>
+                                            </div>
+                                        </div>
+                                        <div class="panel-placeholder" style="margin-top:8px;">
+                                            缺口分 = 需求百分位 - 目标业态供给百分位（越高越可能供给偏弱）
+                                        </div>
+                                        <div id="h3GapChart" style="height:180px; margin-top:8px;"></div>
+                                        <table class="h3-mini-table" style="margin-top:8px;">
+                                            <thead>
+                                                <tr>
+                                                    <th>H3</th><th>POI</th><th>密度</th><th>熵</th><th>可信度</th><th>缺口分</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr v-for="row in h3DerivedStats.gapSummary.rows.slice(0, h3DecisionTopN)"
+                                                    :key="`gap-${row.h3_id}`"
+                                                    :class="{ 'h3-row-active': row.h3_id === selectedH3Id }">
+                                                    <td>
+                                                        <button type="button" class="h3-id-btn" :title="row.h3_id"
+                                                            @click="focusGridByH3Id(row.h3_id)">
+                                                            {% raw %}{{ shortH3Id(row.h3_id) }}{% endraw %}
+                                                        </button>
+                                                    </td>
+                                                    <td>{% raw %}{{ row.poi_count }}{% endraw %}</td>
+                                                    <td>{% raw %}{{ row.density.toFixed(2) }}{% endraw %}</td>
+                                                    <td>{% raw %}{{ row.entropy_norm === null ? '-' : row.entropy_norm.toFixed(2) }}{% endraw %}</td>
+                                                    <td>{% raw %}{{ (row.confidence && row.confidence.label) || '低' }}{% endraw %}</td>
+                                                    <td>{% raw %}{{ row.gap_score === null ? '-' : row.gap_score.toFixed(2) }}{% endraw %}</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <div v-if="h3GridStatus" class="status-text"
+                                        style="margin-top:10px; display:flex; align-items:center; gap:8px; justify-content:flex-start;">
+                                        <span>{% raw %}{{ h3GridStatus }}{% endraw %}</span>
+                                        <button v-if="selectedH3Id" type="button"
+                                            style="border:1px solid #d9dee7; background:#fff; color:#4b5563; border-radius:999px; padding:2px 8px; font-size:11px; cursor:pointer;"
+                                            @click="clearGridLock">
+                                            取消锁定
+                                        </button>
+                                    </div>
                                 </div>
 
                                 <div class="panel" v-show="activeStep3Panel === 'view'">
@@ -307,7 +581,6 @@
                                     </div>
                                 </div>
 
-                                </button>
                             </div>
                         </div>
                     </div>
@@ -410,6 +683,48 @@
 
                     // Control
                     abortController: null,
+
+                    // H3 Grid
+                    isGeneratingGrid: false,
+                    h3GridStatus: '',
+                    h3GridCount: 0,
+                    h3GridResolution: 10,
+                    h3GridIncludeMode: 'intersects',
+                    h3GridMinOverlapRatio: 0.15,
+                    h3GridFeatures: [],
+                    selectedH3Id: null,
+                    isComputingH3Analysis: false,
+                    h3AnalysisSummary: null,
+                    h3AnalysisCharts: null,
+                    h3AnalysisGridFeatures: [],
+                    h3MetricView: 'density',
+                    h3Legend: null,
+                    h3EntropyMinPoi: 3,
+                    h3SubTab: 'metric_map',
+                    h3TargetCategory: 'dining',
+                    h3DecisionTopN: 10,
+                    h3LqSmoothingAlpha: 0.5,
+                    h3CategoryMeta: [
+                        { key: 'dining', label: '餐饮' },
+                        { key: 'shopping', label: '购物' },
+                        { key: 'life', label: '生活' },
+                        { key: 'transport', label: '交通' },
+                        { key: 'scenic', label: '风景' },
+                        { key: 'education', label: '科教' },
+                        { key: 'medical', label: '医疗' },
+                    ],
+                    h3GapWeights: { transport: 0.4, life: 0.25, education: 0.2, medical: 0.15 },
+                    h3DerivedStats: {
+                        typingSummary: null,
+                        lqSummary: null,
+                        gapSummary: null,
+                        topCells: {},
+                    },
+                    h3CategoryChart: null,
+                    h3DensityChart: null,
+                    h3LqChart: null,
+                    h3GapChart: null,
+                    h3ChartsResizeHandler: null,
                 }
             },
             async mounted() {
@@ -442,6 +757,10 @@
                     if (overlay) overlay.style.display = 'none';
                 }
             },
+            beforeUnmount() {
+                this.disposePoiChart();
+                this.disposeH3Charts();
+            },
             methods: {
                 clearAnalysisLayers() {
                     if (this.abortController) {
@@ -453,6 +772,11 @@
                     this.poiStatus = '';
                     this.allPoisDetails = [];
                     this.lastIsochroneGeoJSON = null;
+                    this.h3GridStatus = '';
+                    this.h3GridCount = 0;
+                    this.h3GridFeatures = [];
+                    this.isGeneratingGrid = false;
+                    this.resetH3AnalysisState();
 
                     if (this.markerManager) {
                         if (this.markerManager.markers) {
@@ -472,16 +796,913 @@
                     if (filterContainer) filterContainer.innerHTML = '';
 
                     if (this.mapCore) {
+                        if (this.mapCore.clearGridPolygons) {
+                            this.mapCore.clearGridPolygons();
+                        }
                         this.mapCore.clearCustomPolygons();
                         this.mapCore.setRadius(0);
                     }
                     this.disposePoiChart();
+                },
+                resetH3AnalysisState() {
+                    this.isComputingH3Analysis = false;
+                    this.h3AnalysisSummary = null;
+                    this.h3AnalysisCharts = null;
+                    this.h3AnalysisGridFeatures = [];
+                    this.selectedH3Id = null;
+                    this.h3MetricView = 'density';
+                    this.h3SubTab = 'metric_map';
+                    this.h3TargetCategory = 'dining';
+                    this.h3DecisionTopN = 10;
+                    this.h3Legend = null;
+                    this.h3DerivedStats = {
+                        typingSummary: null,
+                        lqSummary: null,
+                        gapSummary: null,
+                        topCells: {},
+                    };
+                    this.disposeH3Charts();
+                },
+                getIsochronePolygonRing() {
+                    if (!this.lastIsochroneGeoJSON || !this.lastIsochroneGeoJSON.geometry) return null;
+                    const geometry = this.lastIsochroneGeoJSON.geometry;
+                    if (geometry.type === 'Polygon') {
+                        return geometry.coordinates[0] || null;
+                    }
+                    if (geometry.type === 'MultiPolygon') {
+                        return geometry.coordinates[0] ? geometry.coordinates[0][0] : null;
+                    }
+                    return null;
+                },
+                clearH3Grid() {
+                    this.h3GridFeatures = [];
+                    this.h3GridCount = 0;
+                    this.h3GridStatus = '';
+                    this.resetH3AnalysisState();
+                    if (this.mapCore && this.mapCore.clearGridPolygons) {
+                        this.mapCore.clearGridPolygons();
+                    }
+                },
+                onH3ResolutionChange() {
+                    this.clearH3Grid();
+                    this.h3GridStatus = `已切换到 res=${this.h3GridResolution}，请点击“生成网络”`;
+                },
+                onH3GridSettingsChange() {
+                    this.clearH3Grid();
+                    if (this.h3GridIncludeMode === 'inside') {
+                        this.h3GridStatus = `已切换到“完全包含（严格）”，请点击“生成网络”`;
+                    } else {
+                        this.h3GridStatus = `已切换到“相交优先（边缘保留）”，最小重叠比例=${this.h3GridMinOverlapRatio.toFixed(2)}，请点击“生成网络”`;
+                    }
+                },
+                async generateH3Grid() {
+                    const rawRing = this.getIsochronePolygonRing();
+                    if (!rawRing || this.isGeneratingGrid) return;
+
+                    this.isGeneratingGrid = true;
+                    this.resetH3AnalysisState();
+                    this.h3GridStatus = '正在生成网络...';
+                    try {
+                        const polygon = rawRing.map(pt => {
+                            if (Array.isArray(pt)) return [pt[0], pt[1]];
+                            if (pt && typeof pt.lng === 'number') return [pt.lng, pt.lat];
+                            return pt;
+                        }).filter(pt => Array.isArray(pt) && pt.length >= 2);
+
+                        const res = await fetch('/api/v1/analysis/h3-grid', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                polygon: polygon,
+                                resolution: this.h3GridResolution,
+                                coord_type: 'gcj02',
+                                include_mode: this.h3GridIncludeMode,
+                                min_overlap_ratio: this.h3GridIncludeMode === 'intersects'
+                                    ? this.h3GridMinOverlapRatio
+                                    : 0
+                            })
+                        });
+                        if (!res.ok) {
+                            let detail = '';
+                            try {
+                                detail = await res.text();
+                            } catch (_) { }
+                            throw new Error(detail || '网络生成失败');
+                        }
+
+                        const data = await res.json();
+                        this.h3GridFeatures = data.features || [];
+                        this.h3GridCount = Number.isFinite(data.count) ? data.count : this.h3GridFeatures.length;
+
+                        if (this.mapCore && this.mapCore.setGridFeatures) {
+                            this.mapCore.setGridFeatures(this.h3GridFeatures);
+                        }
+                        this.h3GridStatus = this.h3GridCount > 0
+                            ? `已生成 ${this.h3GridCount} 个 H3 网格`
+                            : '已生成网络，但当前范围无可用网格';
+                    } catch (e) {
+                        console.error(e);
+                        this.h3GridStatus = '网络生成失败: ' + e.message;
+                    } finally {
+                        this.isGeneratingGrid = false;
+                    }
+                },
+                _toNumber(value, fallback = 0) {
+                    const n = Number(value);
+                    return Number.isFinite(n) ? n : fallback;
+                },
+                shortH3Id(h3Id) {
+                    const id = h3Id ? String(h3Id) : '';
+                    if (!id) return '-';
+                    if (id.length <= 12) return id;
+                    return `${id.slice(0, 5)}...${id.slice(-4)}`;
+                },
+                focusGridByH3Id(h3Id) {
+                    const id = h3Id ? String(h3Id) : '';
+                    if (!id || !this.mapCore || !this.mapCore.focusGridCellById) return;
+                    this.selectedH3Id = id;
+                    const found = this.mapCore.focusGridCellById(id, {
+                        fitView: true,
+                        zoomMin: 16,
+                        animate: true,
+                        strokeColor: '#22d3ee',
+                        pulseColor: '#ecfeff'
+                    });
+                    if (!found) {
+                        this.h3GridStatus = `未找到对应网格：${id}`;
+                        return;
+                    }
+                    this.h3GridStatus = `已定位网格：${id}`;
+                },
+                clearGridLock() {
+                    if (this.mapCore && this.mapCore.clearGridFocus) {
+                        this.mapCore.clearGridFocus({ restoreView: true });
+                    }
+                    this.selectedH3Id = null;
+                    this.h3GridStatus = '已取消网格锁定';
+                },
+                tryRefocusSelectedGrid() {
+                    if (!this.selectedH3Id || !this.mapCore || !this.mapCore.focusGridCellById) return;
+                    this.mapCore.focusGridCellById(this.selectedH3Id, { panTo: false, animate: false });
+                },
+                _quantile(sortedValues, q) {
+                    if (!Array.isArray(sortedValues) || sortedValues.length === 0) return 0;
+                    if (sortedValues.length === 1) return sortedValues[0];
+                    const qq = Math.max(0, Math.min(1, q));
+                    const pos = qq * (sortedValues.length - 1);
+                    const lower = Math.floor(pos);
+                    const upper = Math.min(sortedValues.length - 1, lower + 1);
+                    const ratio = pos - lower;
+                    return sortedValues[lower] + (sortedValues[upper] - sortedValues[lower]) * ratio;
+                },
+                _buildQuantileBreaks(values, binCount = 5) {
+                    const sorted = (values || [])
+                        .map(v => this._toNumber(v, NaN))
+                        .filter(v => Number.isFinite(v))
+                        .sort((a, b) => a - b);
+                    if (!sorted.length || sorted[0] === sorted[sorted.length - 1]) {
+                        return [];
+                    }
+                    const breaks = [];
+                    for (let i = 1; i < binCount; i += 1) {
+                        breaks.push(this._quantile(sorted, i / binCount));
+                    }
+                    for (let i = 1; i < breaks.length; i += 1) {
+                        if (breaks[i] < breaks[i - 1]) {
+                            breaks[i] = breaks[i - 1];
+                        }
+                    }
+                    const deduped = [];
+                    const eps = 1e-9;
+                    for (const value of breaks) {
+                        if (!deduped.length || Math.abs(value - deduped[deduped.length - 1]) > eps) {
+                            deduped.push(value);
+                        }
+                    }
+                    return deduped;
+                },
+                _buildDivergingBreaks(values) {
+                    const valid = (values || [])
+                        .map(v => this._toNumber(v, NaN))
+                        .filter(v => Number.isFinite(v))
+                        .sort((a, b) => a - b);
+                    if (!valid.length) return [];
+                    const negatives = valid.filter(v => v < 0);
+                    const positives = valid.filter(v => v > 0);
+                    if (!negatives.length || !positives.length) {
+                        return this._buildQuantileBreaks(valid, 5);
+                    }
+                    const breaks = [
+                        this._quantile(negatives, 1 / 3),
+                        this._quantile(negatives, 2 / 3),
+                        this._quantile(positives, 1 / 3),
+                        this._quantile(positives, 2 / 3),
+                    ];
+                    for (let i = 1; i < breaks.length; i += 1) {
+                        if (breaks[i] < breaks[i - 1]) {
+                            breaks[i] = breaks[i - 1];
+                        }
+                    }
+                    const deduped = [];
+                    const eps = 1e-9;
+                    for (const value of breaks) {
+                        if (!deduped.length || Math.abs(value - deduped[deduped.length - 1]) > eps) {
+                            deduped.push(value);
+                        }
+                    }
+                    return deduped;
+                },
+                _getMetricSpec(metricKey) {
+                    if (metricKey === 'entropy') {
+                        return {
+                            key: 'entropy',
+                            label: '局部熵（归一化）',
+                            unit: '0~1',
+                            diverging: false,
+                            palette: ['#f4fbe8', '#d6efbe', '#a5d88a', '#6bb65d', '#2f7e39'],
+                            noDataColor: '#d1d5db',
+                            noDataOpacity: 0.18,
+                            fillOpacity: 0.34,
+                            noDataLabel: `无数据（样本<${this.h3EntropyMinPoi}）`,
+                        };
+                    }
+                    if (metricKey === 'neighbor_delta') {
+                        return {
+                            key: 'neighbor_delta',
+                            label: '邻域差值（本格-邻域）',
+                            unit: 'POI/km²',
+                            diverging: true,
+                            palette: ['#2b6cb0', '#90cdf4', '#f7f7f7', '#f6ad55', '#c53030'],
+                            noDataColor: '#d1d5db',
+                            noDataOpacity: 0.18,
+                            fillOpacity: 0.34,
+                            noDataLabel: '',
+                        };
+                    }
+                    return {
+                        key: 'density',
+                        label: '密度',
+                        unit: 'POI/km²',
+                        diverging: false,
+                        palette: ['#e8f1ff', '#b7d2ff', '#7eaef9', '#3f82e0', '#1f4f9a'],
+                        noDataColor: '#d1d5db',
+                        noDataOpacity: 0.18,
+                        fillOpacity: 0.34,
+                        noDataLabel: '',
+                    };
+                },
+                _getH3MetricValue(props, metricKey) {
+                    if (!props) return { value: null, noData: true };
+                    const density = this._toNumber(props.density_poi_per_km2, 0);
+                    if (metricKey === 'entropy') {
+                        const poiCount = this._toNumber(props.poi_count, 0);
+                        if (poiCount < this.h3EntropyMinPoi) {
+                            return { value: null, noData: true };
+                        }
+                        const rawEntropy = this._toNumber(props.local_entropy, 0);
+                        const normalized = rawEntropy / Math.log(7);
+                        const bounded = Math.max(0, Math.min(1, normalized));
+                        return { value: bounded, noData: false };
+                    }
+                    if (metricKey === 'neighbor_delta') {
+                        const neighbor = this._toNumber(props.neighbor_mean_density, 0);
+                        return { value: density - neighbor, noData: false };
+                    }
+                    return { value: density, noData: false };
+                },
+                _colorByBreaks(value, breaks, palette) {
+                    if (!Number.isFinite(value)) return '#d1d5db';
+                    if (!Array.isArray(breaks) || !breaks.length) {
+                        return palette[Math.max(0, Math.floor((palette.length - 1) / 2))] || '#dbe9ff';
+                    }
+                    let idx = breaks.findIndex(bound => value <= bound);
+                    if (idx < 0) idx = palette.length - 1;
+                    return palette[Math.max(0, Math.min(idx, palette.length - 1))] || '#dbe9ff';
+                },
+                _formatLegendValue(value, metricKey) {
+                    if (!Number.isFinite(value)) return '-';
+                    if (metricKey === 'entropy') return value.toFixed(2);
+                    const abs = Math.abs(value);
+                    if (abs >= 100) return value.toFixed(0);
+                    if (abs >= 10) return value.toFixed(1);
+                    return value.toFixed(2);
+                },
+                _buildLegend(metricSpec, breaks, validValues) {
+                    const palette = metricSpec.palette || [];
+                    const legend = {
+                        title: metricSpec.label,
+                        unit: metricSpec.unit,
+                        items: [],
+                        noDataLabel: metricSpec.noDataLabel || '',
+                        noDataColor: metricSpec.noDataColor || '#d1d5db',
+                    };
+                    if (!palette.length) return legend;
+                    if (!Array.isArray(validValues) || !validValues.length) {
+                        legend.items = [{ color: palette[0], label: '无有效数据' }];
+                        return legend;
+                    }
+                    if (!breaks.length) {
+                        const minV = Math.min(...validValues);
+                        const maxV = Math.max(...validValues);
+                        legend.items = [{
+                            color: palette[palette.length - 1],
+                            label: `${this._formatLegendValue(minV, metricSpec.key)} ~ ${this._formatLegendValue(maxV, metricSpec.key)}`
+                        }];
+                        return legend;
+                    }
+                    const classCount = Math.min(palette.length, breaks.length + 1);
+                    for (let i = 0; i < classCount; i += 1) {
+                        let label = '';
+                        if (i === 0) {
+                            label = `≤ ${this._formatLegendValue(breaks[0], metricSpec.key)}`;
+                        } else if (i === classCount - 1) {
+                            label = `> ${this._formatLegendValue(breaks[breaks.length - 1], metricSpec.key)}`;
+                        } else {
+                            label = `${this._formatLegendValue(breaks[i - 1], metricSpec.key)} ~ ${this._formatLegendValue(breaks[i], metricSpec.key)}`;
+                        }
+                        legend.items.push({ color: palette[i], label: label });
+                    }
+                    return legend;
+                },
+                _percentileFromSorted(sortedValues, value) {
+                    if (!Array.isArray(sortedValues) || !sortedValues.length || !Number.isFinite(value)) return 0;
+                    const n = sortedValues.length;
+                    if (n === 1) return 0.5;
+                    let lower = 0;
+                    while (lower < n && sortedValues[lower] < value) lower += 1;
+                    let upper = lower;
+                    while (upper < n && sortedValues[upper] <= value) upper += 1;
+                    const midRank = (lower + upper - 1) / 2;
+                    return Math.max(0, Math.min(1, midRank / (n - 1)));
+                },
+                _getConfidenceInfo(poiCount) {
+                    const count = this._toNumber(poiCount, 0);
+                    if (count >= 10) return { score: 2, label: '高' };
+                    if (count >= 5) return { score: 1, label: '中' };
+                    return { score: 0, label: '低' };
+                },
+                _getH3CategoryLabel(key) {
+                    const hit = (this.h3CategoryMeta || []).find(item => item.key === key);
+                    return hit ? hit.label : key;
+                },
+                classifyGridType(featureProps, thresholds = {}) {
+                    const density = this._toNumber(featureProps.density, 0);
+                    const entropyNorm = Number.isFinite(featureProps.entropy_norm) ? featureProps.entropy_norm : null;
+                    const neighborDelta = this._toNumber(featureProps.neighbor_delta, 0);
+                    if (entropyNorm === null) {
+                        return {
+                            type_key: 'no_data',
+                            type_label: '样本不足',
+                            is_opportunity: false,
+                        };
+                    }
+                    const highDensity = density >= this._toNumber(thresholds.densityP70, 0);
+                    const highEntropy = entropyNorm >= this._toNumber(thresholds.entropyP70, 0);
+                    let typeKey = 'low_density_low_mix';
+                    let typeLabel = '低密-低混合';
+                    if (highDensity && highEntropy) {
+                        typeKey = 'high_density_high_mix';
+                        typeLabel = '高密-高混合';
+                    } else if (highDensity && !highEntropy) {
+                        typeKey = 'high_density_low_mix';
+                        typeLabel = '高密-低混合';
+                    } else if (!highDensity && highEntropy) {
+                        typeKey = 'low_density_high_mix';
+                        typeLabel = '低密-高混合';
+                    }
+                    const isOpportunity = typeKey === 'high_density_high_mix' && neighborDelta > 0;
+                    return {
+                        type_key: typeKey,
+                        type_label: typeLabel,
+                        is_opportunity: isOpportunity,
+                    };
+                },
+                computeCellLQ(featureProps, globalCategoryCounts, globalTotal) {
+                    const poiCount = this._toNumber(featureProps.poi_count, 0);
+                    if (poiCount < this.h3EntropyMinPoi) return null;
+                    const categoryCounts = featureProps.category_counts || {};
+                    const categorySize = Math.max(1, (this.h3CategoryMeta || []).length);
+                    const alpha = Math.max(0, this._toNumber(this.h3LqSmoothingAlpha, 0.5));
+                    const result = {};
+                    (this.h3CategoryMeta || []).forEach(item => {
+                        const key = item.key;
+                        const gCount = this._toNumber(globalCategoryCounts[key], 0);
+                        const cCount = this._toNumber(categoryCounts[key], 0);
+                        const gShare = (gCount + alpha) / (Math.max(0, globalTotal) + alpha * categorySize);
+                        const cShare = (cCount + alpha) / (Math.max(0, poiCount) + alpha * categorySize);
+                        result[key] = gShare > 0 ? (cShare / gShare) : null;
+                    });
+                    return result;
+                },
+                computeGapScore(featureProps, targetCategory) {
+                    const density = this._toNumber(featureProps.density, 0);
+                    const poiCount = this._toNumber(featureProps.poi_count, 0);
+                    const categoryCounts = featureProps.category_counts || {};
+                    const densityByCategory = {};
+                    (this.h3CategoryMeta || []).forEach(item => {
+                        const count = this._toNumber(categoryCounts[item.key], 0);
+                        densityByCategory[item.key] = poiCount > 0 ? density * (count / poiCount) : 0;
+                    });
+                    const weights = this.h3GapWeights || {};
+                    const demandProxy =
+                        this._toNumber(weights.transport, 0) * this._toNumber(densityByCategory.transport, 0) +
+                        this._toNumber(weights.life, 0) * this._toNumber(densityByCategory.life, 0) +
+                        this._toNumber(weights.education, 0) * this._toNumber(densityByCategory.education, 0) +
+                        this._toNumber(weights.medical, 0) * this._toNumber(densityByCategory.medical, 0);
+                    const supplyTargetDensity = this._toNumber(densityByCategory[targetCategory], 0);
+                    return {
+                        demand_proxy: demandProxy,
+                        supply_target_density: supplyTargetDensity,
+                    };
+                },
+                computeH3DerivedStats() {
+                    const features = this.h3AnalysisGridFeatures || [];
+                    const topN = Math.max(3, Math.min(30, Math.round(this._toNumber(this.h3DecisionTopN, 10))));
+                    this.h3DecisionTopN = topN;
+                    if (!features.length) {
+                        this.h3DerivedStats = {
+                            typingSummary: null,
+                            lqSummary: null,
+                            gapSummary: null,
+                            topCells: {},
+                        };
+                        return;
+                    }
+
+                    const rowsBase = features.map((feature) => {
+                        const props = feature.properties || {};
+                        const entropyRaw = this._getH3MetricValue(props, 'entropy');
+                        const density = this._toNumber(props.density_poi_per_km2, 0);
+                        const neighborDensity = this._toNumber(props.neighbor_mean_density, 0);
+                        return {
+                            h3_id: props.h3_id || '',
+                            poi_count: this._toNumber(props.poi_count, 0),
+                            density: density,
+                            entropy_norm: entropyRaw.noData ? null : entropyRaw.value,
+                            neighbor_delta: density - neighborDensity,
+                            category_counts: Object.assign({}, props.category_counts || {}),
+                            confidence: this._getConfidenceInfo(props.poi_count),
+                        };
+                    });
+
+                    const densitySorted = rowsBase.map(r => r.density).filter(v => Number.isFinite(v)).sort((a, b) => a - b);
+                    const entropySorted = rowsBase.map(r => r.entropy_norm).filter(v => Number.isFinite(v)).sort((a, b) => a - b);
+                    const densityP70 = densitySorted.length ? this._quantile(densitySorted, 0.7) : 0;
+                    const entropyP70 = entropySorted.length ? this._quantile(entropySorted, 0.7) : 0;
+
+                    const typingRows = rowsBase.map((row) => {
+                        const typed = this.classifyGridType(row, { densityP70, entropyP70 });
+                        return Object.assign({}, row, typed);
+                    }).sort((a, b) => {
+                        if ((b.is_opportunity ? 1 : 0) !== (a.is_opportunity ? 1 : 0)) {
+                            return (b.is_opportunity ? 1 : 0) - (a.is_opportunity ? 1 : 0);
+                        }
+                        if (b.density !== a.density) return b.density - a.density;
+                        const confidenceDiff = this._toNumber(b.confidence && b.confidence.score, 0)
+                            - this._toNumber(a.confidence && a.confidence.score, 0);
+                        if (confidenceDiff !== 0) return confidenceDiff;
+                        return this._toNumber(b.entropy_norm, -1) - this._toNumber(a.entropy_norm, -1);
+                    });
+                    const typingCountByType = {};
+                    typingRows.forEach(row => {
+                        const key = row.type_key || 'unknown';
+                        typingCountByType[key] = (typingCountByType[key] || 0) + 1;
+                    });
+                    const typingOpportunityCount = typingRows.filter(r => r.is_opportunity).length;
+                    const typingMaxDensity = typingRows.length ? Math.max(...typingRows.map(r => this._toNumber(r.density, 0))) : 0;
+
+                    const globalCategoryCounts = {};
+                    (this.h3CategoryMeta || []).forEach(item => { globalCategoryCounts[item.key] = 0; });
+                    rowsBase.forEach(row => {
+                        (this.h3CategoryMeta || []).forEach(item => {
+                            globalCategoryCounts[item.key] += this._toNumber(row.category_counts[item.key], 0);
+                        });
+                    });
+                    const globalTotal = Object.values(globalCategoryCounts).reduce((s, v) => s + this._toNumber(v, 0), 0);
+                    const lqRows = rowsBase.map(row => {
+                        const lqMap = this.computeCellLQ(row, globalCategoryCounts, globalTotal);
+                        let dominantKey = null;
+                        let dominantValue = null;
+                        if (lqMap) {
+                            (this.h3CategoryMeta || []).forEach(item => {
+                                const v = lqMap[item.key];
+                                if (!Number.isFinite(v)) return;
+                                if (!Number.isFinite(dominantValue) || v > dominantValue) {
+                                    dominantValue = v;
+                                    dominantKey = item.key;
+                                }
+                            });
+                        }
+                        return Object.assign({}, row, {
+                            lq_map: lqMap,
+                            lq_target: lqMap ? lqMap[this.h3TargetCategory] : null,
+                            dominant_key: dominantKey,
+                            dominant_value: dominantValue,
+                        });
+                    }).sort((a, b) => {
+                        const lqDiff = this._toNumber(b.lq_target, -1) - this._toNumber(a.lq_target, -1);
+                        if (lqDiff !== 0) return lqDiff;
+                        return this._toNumber(b.confidence && b.confidence.score, 0)
+                            - this._toNumber(a.confidence && a.confidence.score, 0);
+                    });
+                    const lqOpportunityCount = lqRows.filter(r => Number.isFinite(r.lq_target) && r.lq_target >= 1.2).length;
+                    const lqMax = lqRows.length ? Math.max(...lqRows.map(r => this._toNumber(r.lq_target, 0))) : 0;
+                    const dominantCounts = {};
+                    (this.h3CategoryMeta || []).forEach(item => { dominantCounts[item.key] = 0; });
+                    lqRows.forEach(row => {
+                        if (row.dominant_key && Number.isFinite(row.dominant_value) && row.dominant_value > 1) {
+                            dominantCounts[row.dominant_key] += 1;
+                        }
+                    });
+
+                    const gapRowsRaw = rowsBase.map(row => Object.assign({}, row, this.computeGapScore(row, this.h3TargetCategory)));
+                    const demandValues = gapRowsRaw.map(r => r.demand_proxy).filter(v => Number.isFinite(v));
+                    const supplyValues = gapRowsRaw.map(r => r.supply_target_density).filter(v => Number.isFinite(v));
+                    const demandSorted = demandValues.slice().sort((a, b) => a - b);
+                    const supplySorted = supplyValues.slice().sort((a, b) => a - b);
+                    const gapRows = gapRowsRaw.map(row => {
+                        const demandPct = this._percentileFromSorted(demandSorted, row.demand_proxy);
+                        const supplyPct = this._percentileFromSorted(supplySorted, row.supply_target_density);
+                        return Object.assign({}, row, {
+                            demand_pct: demandPct,
+                            supply_pct: supplyPct,
+                            gap_score: demandPct - supplyPct,
+                        });
+                    }).sort((a, b) => {
+                        const gapDiff = this._toNumber(b.gap_score, -999) - this._toNumber(a.gap_score, -999);
+                        if (gapDiff !== 0) return gapDiff;
+                        return this._toNumber(b.confidence && b.confidence.score, 0)
+                            - this._toNumber(a.confidence && a.confidence.score, 0);
+                    });
+                    const gapOpportunityCount = gapRows.filter(r => this._toNumber(r.gap_score, 0) > 0.25).length;
+                    const gapMax = gapRows.length ? Math.max(...gapRows.map(r => this._toNumber(r.gap_score, 0))) : 0;
+
+                    this.h3DerivedStats = {
+                        typingSummary: {
+                            counts: typingCountByType,
+                            rows: typingRows,
+                            densityP70: densityP70,
+                            entropyP70: entropyP70,
+                            opportunityCount: typingOpportunityCount,
+                            maxDensity: typingMaxDensity,
+                            recommendation: typingOpportunityCount > 0
+                                ? '优先排查高密-高混合且邻域为正的网格'
+                                : '当前高密高混合机会有限，可结合相对优势和补位机会复核',
+                        },
+                        lqSummary: {
+                            rows: lqRows,
+                            dominantCounts: dominantCounts,
+                            opportunityCount: lqOpportunityCount,
+                            maxLq: lqMax,
+                            recommendation: `${this._getH3CategoryLabel(this.h3TargetCategory)}相对优势格可优先巩固`,
+                        },
+                        gapSummary: {
+                            rows: gapRows,
+                            opportunityCount: gapOpportunityCount,
+                            maxGap: gapMax,
+                            recommendation: `${this._getH3CategoryLabel(this.h3TargetCategory)}优先投放到高缺口网格`,
+                        },
+                        topCells: {
+                            typing: typingRows.slice(0, topN),
+                            lq: lqRows.slice(0, topN),
+                            gap: gapRows.slice(0, topN),
+                        },
+                    };
+                },
+                _renderTypingMap() {
+                    const typing = this.h3DerivedStats && this.h3DerivedStats.typingSummary;
+                    if (!typing || !this.mapCore || !this.mapCore.setGridFeatures) return;
+                    const colorByType = {
+                        high_density_high_mix: '#0f766e',
+                        high_density_low_mix: '#b45309',
+                        low_density_high_mix: '#2563eb',
+                        low_density_low_mix: '#64748b',
+                        no_data: '#d1d5db',
+                    };
+                    const rowMap = {};
+                    (typing.rows || []).forEach(row => { rowMap[row.h3_id] = row; });
+                    const styled = (this.h3AnalysisGridFeatures || []).map(feature => {
+                        const props = Object.assign({}, feature.properties || {});
+                        const row = rowMap[props.h3_id] || {};
+                        const typeKey = row.type_key || 'no_data';
+                        props.fillColor = colorByType[typeKey] || '#d1d5db';
+                        props.fillOpacity = typeKey === 'no_data' ? 0.18 : 0.34;
+                        props.strokeColor = '#2c6ecb';
+                        props.strokeWeight = 1;
+                        return { type: feature.type, geometry: feature.geometry, properties: props };
+                    });
+                    this.h3Legend = {
+                        title: '业态结构',
+                        unit: '分类',
+                        items: [
+                            { color: colorByType.high_density_high_mix, label: '高密-高混合' },
+                            { color: colorByType.high_density_low_mix, label: '高密-低混合' },
+                            { color: colorByType.low_density_high_mix, label: '低密-高混合' },
+                            { color: colorByType.low_density_low_mix, label: '低密-低混合' },
+                        ],
+                        noDataLabel: `无数据（样本<${this.h3EntropyMinPoi}）`,
+                        noDataColor: '#d1d5db',
+                    };
+                    this.mapCore.setGridFeatures(styled, { fillOpacity: 0.34, strokeWeight: 1 });
+                    this.tryRefocusSelectedGrid();
+                },
+                _renderLqMap() {
+                    const lq = this.h3DerivedStats && this.h3DerivedStats.lqSummary;
+                    if (!lq || !this.mapCore || !this.mapCore.setGridFeatures) return;
+                    const metricSpec = {
+                        key: 'lq',
+                        label: `${this._getH3CategoryLabel(this.h3TargetCategory)} 相对优势`,
+                        unit: '相对值',
+                        palette: ['#edf7ed', '#c4e3c4', '#8ccb8c', '#4ea95d', '#1b6e33'],
+                        noDataColor: '#d1d5db',
+                        noDataOpacity: 0.18,
+                        fillOpacity: 0.34,
+                        noDataLabel: `无数据（样本<${this.h3EntropyMinPoi}）`,
+                    };
+                    const rowMap = {};
+                    (lq.rows || []).forEach(row => { rowMap[row.h3_id] = row; });
+                    const validValues = (lq.rows || []).map(r => r.lq_target).filter(v => Number.isFinite(v));
+                    const breaks = this._buildQuantileBreaks(validValues, 5);
+                    this.h3Legend = this._buildLegend(metricSpec, breaks, validValues);
+                    const styled = (this.h3AnalysisGridFeatures || []).map(feature => {
+                        const props = Object.assign({}, feature.properties || {});
+                        const row = rowMap[props.h3_id] || {};
+                        const value = row.lq_target;
+                        if (!Number.isFinite(value)) {
+                            props.fillColor = metricSpec.noDataColor;
+                            props.fillOpacity = metricSpec.noDataOpacity;
+                        } else {
+                            props.fillColor = this._colorByBreaks(value, breaks, metricSpec.palette);
+                            props.fillOpacity = metricSpec.fillOpacity;
+                        }
+                        props.strokeColor = '#2c6ecb';
+                        props.strokeWeight = 1;
+                        return { type: feature.type, geometry: feature.geometry, properties: props };
+                    });
+                    this.mapCore.setGridFeatures(styled, { fillOpacity: 0.34, strokeWeight: 1 });
+                    this.tryRefocusSelectedGrid();
+                },
+                _renderGapMap() {
+                    const gap = this.h3DerivedStats && this.h3DerivedStats.gapSummary;
+                    if (!gap || !this.mapCore || !this.mapCore.setGridFeatures) return;
+                    const metricSpec = {
+                        key: 'gap',
+                        label: `${this._getH3CategoryLabel(this.h3TargetCategory)} 缺口分`,
+                        unit: '百分位差值',
+                        palette: ['#2b6cb0', '#90cdf4', '#f7f7f7', '#f6ad55', '#c53030'],
+                        noDataColor: '#d1d5db',
+                        noDataOpacity: 0.18,
+                        fillOpacity: 0.34,
+                        noDataLabel: '',
+                    };
+                    const rowMap = {};
+                    (gap.rows || []).forEach(row => { rowMap[row.h3_id] = row; });
+                    const validValues = (gap.rows || []).map(r => r.gap_score).filter(v => Number.isFinite(v));
+                    const breaks = this._buildDivergingBreaks(validValues);
+                    this.h3Legend = this._buildLegend(metricSpec, breaks, validValues);
+                    const styled = (this.h3AnalysisGridFeatures || []).map(feature => {
+                        const props = Object.assign({}, feature.properties || {});
+                        const row = rowMap[props.h3_id] || {};
+                        const value = row.gap_score;
+                        if (!Number.isFinite(value)) {
+                            props.fillColor = metricSpec.noDataColor;
+                            props.fillOpacity = metricSpec.noDataOpacity;
+                        } else {
+                            props.fillColor = this._colorByBreaks(value, breaks, metricSpec.palette);
+                            props.fillOpacity = metricSpec.fillOpacity;
+                        }
+                        props.strokeColor = '#2c6ecb';
+                        props.strokeWeight = 1;
+                        return { type: feature.type, geometry: feature.geometry, properties: props };
+                    });
+                    this.mapCore.setGridFeatures(styled, { fillOpacity: 0.34, strokeWeight: 1 });
+                    this.tryRefocusSelectedGrid();
+                },
+                renderH3BySubTab() {
+                    if (!this.h3AnalysisGridFeatures || !this.h3AnalysisGridFeatures.length) {
+                        this.h3Legend = null;
+                        return;
+                    }
+                    if ((this.h3SubTab === 'typing' || this.h3SubTab === 'lq' || this.h3SubTab === 'gap')
+                        && (!this.h3DerivedStats || !this.h3DerivedStats.typingSummary)) {
+                        this.computeH3DerivedStats();
+                    }
+                    if (this.h3SubTab === 'typing') {
+                        this._renderTypingMap();
+                    } else if (this.h3SubTab === 'lq') {
+                        this._renderLqMap();
+                    } else if (this.h3SubTab === 'gap') {
+                        this._renderGapMap();
+                    } else {
+                        this.renderH3AnalysisGrid(this.h3MetricView);
+                    }
+                },
+                updateDecisionCards() {
+                    if (!window.echarts || !this.h3DerivedStats) return;
+                    const lqEl = document.getElementById('h3LqChart');
+                    const gapEl = document.getElementById('h3GapChart');
+                    if (!this.h3ChartsResizeHandler) {
+                        this.h3ChartsResizeHandler = () => {
+                            if (this.h3CategoryChart) this.h3CategoryChart.resize();
+                            if (this.h3DensityChart) this.h3DensityChart.resize();
+                            if (this.h3LqChart) this.h3LqChart.resize();
+                            if (this.h3GapChart) this.h3GapChart.resize();
+                        };
+                        window.addEventListener('resize', this.h3ChartsResizeHandler);
+                    }
+
+                    if (lqEl && this.h3SubTab === 'lq') {
+                        let chart = echarts.getInstanceByDom(lqEl);
+                        if (!chart) chart = echarts.init(lqEl);
+                        this.h3LqChart = chart;
+                        const summary = this.h3DerivedStats.lqSummary || {};
+                        const labels = (this.h3CategoryMeta || []).map(item => item.label);
+                        const values = (this.h3CategoryMeta || []).map(item => this._toNumber((summary.dominantCounts || {})[item.key], 0));
+                        chart.setOption({
+                            title: { text: '主导优势类别分布', left: 'center', top: 2, textStyle: { fontSize: 12 } },
+                            grid: { left: 44, right: 14, top: 28, bottom: 24, containLabel: true },
+                            xAxis: { type: 'value', minInterval: 1, splitLine: { lineStyle: { color: '#eceff3' } } },
+                            yAxis: { type: 'category', data: labels, axisTick: { show: false }, axisLine: { show: false } },
+                            series: [{ type: 'bar', data: values, barWidth: 12, itemStyle: { color: '#4f8ad9' } }]
+                        }, true);
+                    }
+
+                    if (gapEl && this.h3SubTab === 'gap') {
+                        let chart = echarts.getInstanceByDom(gapEl);
+                        if (!chart) chart = echarts.init(gapEl);
+                        this.h3GapChart = chart;
+                        const rows = ((this.h3DerivedStats.gapSummary || {}).rows || []).slice(0, this.h3DecisionTopN);
+                        chart.setOption({
+                            title: { text: `Top${this.h3DecisionTopN} 缺口网格`, left: 'center', top: 2, textStyle: { fontSize: 12 } },
+                            grid: { left: 50, right: 14, top: 28, bottom: 36, containLabel: true },
+                            xAxis: {
+                                type: 'category',
+                                data: rows.map(r => (r.h3_id || '').slice(-6)),
+                                axisLabel: { rotate: 30, fontSize: 10, color: '#6b7280' }
+                            },
+                            yAxis: { type: 'value', splitLine: { lineStyle: { color: '#eceff3' } } },
+                            series: [{
+                                type: 'bar',
+                                data: rows.map(r => this._toNumber(r.gap_score, 0)),
+                                itemStyle: {
+                                    color: (params) => (params.value >= 0 ? '#d8573f' : '#3f7fd8')
+                                }
+                            }]
+                        }, true);
+                    }
+                },
+                renderH3AnalysisGrid(metricKey) {
+                    const source = this.h3AnalysisGridFeatures;
+                    if (!Array.isArray(source) || source.length === 0 || !this.mapCore || !this.mapCore.setGridFeatures) {
+                        this.h3Legend = null;
+                        return;
+                    }
+
+                    const metricSpec = this._getMetricSpec(metricKey);
+                    const measured = source.map((feature) => {
+                        const datum = this._getH3MetricValue((feature && feature.properties) || {}, metricKey);
+                        return {
+                            feature: feature,
+                            value: datum.value,
+                            noData: datum.noData
+                        };
+                    });
+                    const validValues = measured
+                        .filter(item => !item.noData && Number.isFinite(item.value))
+                        .map(item => item.value);
+                    const breaks = metricSpec.diverging
+                        ? this._buildDivergingBreaks(validValues)
+                        : this._buildQuantileBreaks(validValues, 5);
+                    this.h3Legend = this._buildLegend(metricSpec, breaks, validValues);
+
+                    const styled = measured.map((item) => {
+                        const feature = item.feature;
+                        const props = Object.assign({}, feature.properties || {});
+                        if (item.noData || !Number.isFinite(item.value)) {
+                            props.fillColor = metricSpec.noDataColor;
+                            props.fillOpacity = metricSpec.noDataOpacity;
+                            props.metric_value = null;
+                            props.metric_no_data = true;
+                        } else {
+                            props.fillColor = this._colorByBreaks(item.value, breaks, metricSpec.palette);
+                            props.fillOpacity = metricSpec.fillOpacity;
+                            props.metric_value = item.value;
+                            props.metric_no_data = false;
+                        }
+                        props.strokeColor = '#2c6ecb';
+                        props.strokeWeight = 1;
+                        return {
+                            type: feature.type,
+                            geometry: feature.geometry,
+                            properties: props
+                        };
+                    });
+
+                    this.mapCore.setGridFeatures(styled, { fillOpacity: 0.34, strokeWeight: 1 });
+                    this.tryRefocusSelectedGrid();
+                },
+                onH3MetricViewChange() {
+                    if (!this.h3AnalysisGridFeatures.length) return;
+                    if (this.h3SubTab !== 'metric_map') return;
+                    this.refreshMetricMapView();
+                },
+                async refreshMetricMapView() {
+                    if (!this.h3AnalysisGridFeatures.length) return;
+                    if (this.h3SubTab !== 'metric_map') return;
+                    this.renderH3AnalysisGrid(this.h3MetricView);
+                    await this.$nextTick();
+                    this.updateH3Charts();
+                },
+                onH3SubTabChange(tab) {
+                    this.h3SubTab = tab;
+                    if (!this.h3AnalysisGridFeatures.length) return;
+                    if (tab !== 'metric_map') this.computeH3DerivedStats();
+                    if (tab === 'metric_map') {
+                        this.refreshMetricMapView();
+                    } else {
+                        this.renderH3BySubTab();
+                        this.updateH3Charts();
+                    }
+                    this.updateDecisionCards();
+                },
+                onH3DecisionSettingsChange() {
+                    if (!this.h3AnalysisGridFeatures.length) return;
+                    this.computeH3DerivedStats();
+                    this.renderH3BySubTab();
+                    this.updateDecisionCards();
+                },
+                async computeH3Analysis() {
+                    const rawRing = this.getIsochronePolygonRing();
+                    if (!rawRing || this.isComputingH3Analysis) return;
+
+                    this.isComputingH3Analysis = true;
+                    this.h3GridStatus = '正在计算网格分析...';
+                    try {
+                        const polygon = rawRing.map(pt => {
+                            if (Array.isArray(pt)) return [pt[0], pt[1]];
+                            if (pt && typeof pt.lng === 'number') return [pt.lng, pt.lat];
+                            return pt;
+                        }).filter(pt => Array.isArray(pt) && pt.length >= 2);
+
+                        const payload = {
+                            polygon: polygon,
+                            resolution: this.h3GridResolution,
+                            coord_type: 'gcj02',
+                            include_mode: this.h3GridIncludeMode,
+                            min_overlap_ratio: this.h3GridIncludeMode === 'intersects' ? this.h3GridMinOverlapRatio : 0,
+                            pois: this.allPoisDetails || [],
+                            poi_coord_type: 'gcj02',
+                            neighbor_ring: 1
+                        };
+
+                        const res = await fetch('/api/v1/analysis/h3-metrics', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload),
+                        });
+                        if (!res.ok) {
+                            let detail = '';
+                            try { detail = await res.text(); } catch (_) { }
+                            throw new Error(detail || '网格分析失败');
+                        }
+
+                        const data = await res.json();
+                        const grid = data.grid || {};
+                        this.h3AnalysisGridFeatures = grid.features || [];
+                        this.h3GridFeatures = this.h3AnalysisGridFeatures;
+                        this.h3GridCount = Number.isFinite(grid.count) ? grid.count : this.h3AnalysisGridFeatures.length;
+                        this.h3AnalysisSummary = data.summary || null;
+                        this.h3AnalysisCharts = data.charts || null;
+                        this.computeH3DerivedStats();
+                        this.renderH3BySubTab();
+                        await this.$nextTick();
+                        this.updateH3Charts();
+                        this.updateDecisionCards();
+                        this.h3GridStatus = this.h3GridCount > 0
+                            ? `分析完成：${this.h3GridCount} 个网格，${(this.h3AnalysisSummary && this.h3AnalysisSummary.poi_count) || 0} 个POI`
+                            : '分析完成，但当前范围无可用网格';
+                    } catch (e) {
+                        console.error(e);
+                        this.h3GridStatus = '网格分析失败: ' + e.message;
+                    } finally {
+                        this.isComputingH3Analysis = false;
+                    }
                 },
                 selectStep3Panel(panelId) {
                     if (this.isDraggingNav) return;
                     this.activeStep3Panel = panelId;
                     if (panelId === 'poi') {
                         setTimeout(() => this.resizePoiChart(), 0);
+                        return;
+                    }
+                    if (panelId === 'h3') {
+                        setTimeout(() => {
+                            if (this.h3AnalysisGridFeatures.length) {
+                                this.renderH3BySubTab();
+                            }
+                            this.updateH3Charts();
+                            this.updateDecisionCards();
+                        }, 0);
                     }
                 },
                 onStep3DragStart(index, event) {
@@ -552,12 +1773,16 @@
                                 if (filterContainer) filterContainer.innerHTML = '';
 
                                 this.poiStatus = '';
+                                this.clearH3Grid();
                             }
 
                             if (this.step >= 2 && targetStep <= 1) {
                                 // Clear Isochrone Polygon
-                                this.mapCore.clearCustomPolygons();
+                                if (this.mapCore && this.mapCore.clearCustomPolygons) {
+                                    this.mapCore.clearCustomPolygons();
+                                }
                                 this.lastIsochroneGeoJSON = null;
+                                this.clearH3Grid();
                             }
                         }
                         this.step = targetStep;
@@ -655,6 +1880,7 @@
                         this.marker.setPosition(lnglat);
                         return;
                     }
+                    if (!this.mapCore || !this.mapCore.map) return;
                     this.marker = new AMap.Marker({ position: lnglat });
                     this.mapCore.map.add(this.marker);
                 },
@@ -681,6 +1907,7 @@
                         if (!res.ok) throw new Error("API 请求失败");
                         const geojson = await res.json();
 
+                        this.clearH3Grid();
                         this.lastIsochroneGeoJSON = geojson;
                         this.renderResult(geojson);
                         this.step = 2; // Advance to Step 2
@@ -981,11 +2208,17 @@
                 },
                 async loadHistoryDetail(id) {
                     try {
+                        if (!this.mapCore || !this.mapCore.map) {
+                            this.errorMessage = '地图尚未初始化，请稍后重试';
+                            return;
+                        }
+
                         const res = await fetch(`/api/v1/analysis/history/${id}`);
                         const data = await res.json();
                         if (!data) return;
 
                         // Cleanup previous state
+                        this.clearH3Grid();
                         if (this.marker) this.marker.setMap(null);
                         this.marker = null;
                         this.mapCore.clearCustomPolygons();
@@ -1043,7 +2276,6 @@
                             }
                             this.poiStatus = `已加载历史: ${data.pois.length} 条`;
                         }
-
                         setTimeout(() => this.resizePoiChart(), 0);
 
                     } catch (e) {
@@ -1066,7 +2298,9 @@
                         this.marker = null;
                     }
                     this.clearAnalysisLayers();
-                    this.mapCore.map.setFitView();
+                    if (this.mapCore && this.mapCore.map) {
+                        this.mapCore.map.setFitView();
+                    }
                 },
                 triggerSearch() {
                     const input = document.getElementById('keyword');
@@ -1081,7 +2315,10 @@
                     this.poiStatus = '';
                     if (this.marker) this.marker.setMap(null);
                     this.marker = null;
-                    this.mapCore.clearCustomPolygons();
+                    this.clearH3Grid();
+                    if (this.mapCore && this.mapCore.clearCustomPolygons) {
+                        this.mapCore.clearCustomPolygons();
+                    }
                     if (this.markerManager) {
                         this.markerManager.markers.forEach(m => m.setMap(null));
                         this.markerManager.destroyClusterers();
@@ -1116,6 +2353,153 @@
                         this.poiChartResizeHandler = null;
                     }
                 },
+                disposeH3Charts() {
+                    if (this.h3CategoryChart) {
+                        this.h3CategoryChart.dispose();
+                        this.h3CategoryChart = null;
+                    }
+                    if (this.h3DensityChart) {
+                        this.h3DensityChart.dispose();
+                        this.h3DensityChart = null;
+                    }
+                    if (this.h3LqChart) {
+                        this.h3LqChart.dispose();
+                        this.h3LqChart = null;
+                    }
+                    if (this.h3GapChart) {
+                        this.h3GapChart.dispose();
+                        this.h3GapChart = null;
+                    }
+                    if (this.h3ChartsResizeHandler) {
+                        window.removeEventListener('resize', this.h3ChartsResizeHandler);
+                        this.h3ChartsResizeHandler = null;
+                    }
+                },
+                _resolveCategoryColors(labels) {
+                    const colorByName = {};
+                    (this.poiCategories || []).forEach((item) => {
+                        colorByName[item.name] = item.color || '#888';
+                    });
+                    return (labels || []).map(label => colorByName[label] || '#5b8ff9');
+                },
+                updateH3Charts() {
+                    if (!window.echarts || !this.h3AnalysisCharts) return;
+                    const categoryEl = document.getElementById('h3CategoryChart');
+                    const densityEl = document.getElementById('h3DensityChart');
+                    if (!categoryEl || !densityEl) return;
+                    if (categoryEl.clientWidth === 0 || densityEl.clientWidth === 0) return;
+
+                    if (!this.h3ChartsResizeHandler) {
+                        this.h3ChartsResizeHandler = () => {
+                            if (this.h3CategoryChart) this.h3CategoryChart.resize();
+                            if (this.h3DensityChart) this.h3DensityChart.resize();
+                            if (this.h3LqChart) this.h3LqChart.resize();
+                            if (this.h3GapChart) this.h3GapChart.resize();
+                        };
+                        window.addEventListener('resize', this.h3ChartsResizeHandler);
+                    }
+
+                    let categoryChart = echarts.getInstanceByDom(categoryEl);
+                    if (!categoryChart) categoryChart = echarts.init(categoryEl);
+                    this.h3CategoryChart = categoryChart;
+
+                    let densityChart = echarts.getInstanceByDom(densityEl);
+                    if (!densityChart) densityChart = echarts.init(densityEl);
+                    this.h3DensityChart = densityChart;
+
+                    const categoryData = this.h3AnalysisCharts.category_distribution || {};
+                    const categoryLabels = categoryData.labels || [];
+                    const categoryValues = (categoryData.values || []).map(v => this._toNumber(v, 0));
+                    const categoryColors = this._resolveCategoryColors(categoryLabels);
+                    categoryChart.setOption(
+                        {
+                            animationDuration: 240,
+                            grid: { left: 48, right: 12, top: 22, bottom: 20, containLabel: true },
+                            xAxis: {
+                                type: 'value',
+                                axisLine: { show: false },
+                                axisTick: { show: false },
+                                splitLine: { lineStyle: { color: '#eceff3' } },
+                                minInterval: 1,
+                            },
+                            yAxis: {
+                                type: 'category',
+                                inverse: true,
+                                data: categoryLabels,
+                                axisLine: { show: false },
+                                axisTick: { show: false },
+                            },
+                            series: [{
+                                type: 'bar',
+                                data: categoryValues,
+                                barWidth: 12,
+                                itemStyle: { color: (params) => categoryColors[params.dataIndex] || '#5b8ff9' },
+                                label: {
+                                    show: true,
+                                    position: 'right',
+                                    formatter: '{c}',
+                                    color: '#555',
+                                    fontSize: 11
+                                }
+                            }]
+                        },
+                        true
+                    );
+
+                    const densityData = this.h3AnalysisCharts.density_histogram || {};
+                    const bins = densityData.bins || [];
+                    const counts = (densityData.counts || []).map(v => this._toNumber(v, 0));
+                    const densitySubtext = this.h3MetricView === 'entropy'
+                        ? '熵已归一化到0~1，低样本格子不参与着色'
+                        : '';
+                    densityChart.setOption(
+                        {
+                            title: {
+                                text: '密度分布（POI/km²）',
+                                subtext: densitySubtext,
+                                left: 'center',
+                                top: 0,
+                                textStyle: { fontSize: 12, fontWeight: 600, color: '#374151' },
+                                subtextStyle: { fontSize: 10, color: '#6b7280' }
+                            },
+                            animationDuration: 240,
+                            grid: { left: 44, right: 16, top: densitySubtext ? 52 : 36, bottom: 40, containLabel: true },
+                            xAxis: {
+                                type: 'category',
+                                data: bins,
+                                name: '密度区间 (POI/km²)',
+                                nameLocation: 'middle',
+                                nameGap: 28,
+                                nameTextStyle: { color: '#6b7280', fontSize: 10 },
+                                axisLabel: {
+                                    color: '#6b7280',
+                                    fontSize: 10,
+                                    interval: 0,
+                                    rotate: bins.length > 6 ? 35 : 0,
+                                },
+                                axisLine: { lineStyle: { color: '#d7dce3' } }
+                            },
+                            yAxis: {
+                                type: 'value',
+                                minInterval: 1,
+                                name: '网格数',
+                                nameLocation: 'middle',
+                                nameGap: 34,
+                                nameTextStyle: { color: '#6b7280', fontSize: 10 },
+                                axisLine: { show: false },
+                                axisTick: { show: false },
+                                splitLine: { lineStyle: { color: '#eceff3' } }
+                            },
+                            series: [{
+                                type: 'bar',
+                                data: counts,
+                                barMaxWidth: 20,
+                                itemStyle: { color: '#4c8bf5' }
+                            }]
+                        },
+                        true
+                    );
+                },
                 computePoiStats(points) {
                     const labels = this.poiCategories.map(c => c.name);
                     const colors = this.poiCategories.map(c => c.color || '#888');
@@ -1148,7 +2532,11 @@
                         const safeValues = stats.values.map(v => (Number.isFinite(v) ? v : 0));
 
                         const option = {
-                            yAxis: { data: stats.labels },
+                            yAxis: {
+                                type: 'category',
+                                inverse: true,
+                                data: stats.labels
+                            },
                             series: [{
                                 data: safeValues,
                                 itemStyle: {
@@ -1178,6 +2566,7 @@
                             },
                             yAxis: {
                                 type: 'category',
+                                inverse: true,
                                 data: stats.labels,
                                 axisLine: { show: false }, axisTick: { show: false }
                             },

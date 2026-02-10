@@ -17,6 +17,11 @@
         this.cityCircleMap = {};
         this.boundaryPolygons = [];
         this.customPolygons = [];
+        this.gridPolygons = [];
+        this.gridPolygonMap = {};
+        this.focusedGridPolygon = null;
+        this._gridFocusAnimTimer = null;
+        this._gridFocusViewBeforeLock = null;
 
         this.clusterPluginReady = false;
         this.heatmapPluginReady = false;
@@ -149,6 +154,18 @@
         this.customPolygons = [];
     };
 
+    MapCore.prototype.clearGridPolygons = function () {
+        if (this._gridFocusAnimTimer) {
+            window.clearInterval(this._gridFocusAnimTimer);
+            this._gridFocusAnimTimer = null;
+        }
+        this.gridPolygons.forEach(function (polygon) { polygon.setMap(null); });
+        this.gridPolygons = [];
+        this.gridPolygonMap = {};
+        this.focusedGridPolygon = null;
+        this._gridFocusViewBeforeLock = null;
+    };
+
     MapCore.prototype.setCustomPolygons = function (pathsList) {
         var self = this;
         this.clearCustomPolygons();
@@ -168,6 +185,218 @@
             self.customPolygons.push(polygon);
         });
         this.updateFitView();
+    };
+
+    MapCore.prototype.setGridFeatures = function (features, style) {
+        var self = this;
+        var cfg = style || {};
+        var strokeColor = cfg.strokeColor || '#1e88e5';
+        var strokeWeight = typeof cfg.strokeWeight === 'number' ? cfg.strokeWeight : 2;
+        var fillColor = cfg.fillColor || '#42a5f5';
+        var fillOpacity = typeof cfg.fillOpacity === 'number' ? cfg.fillOpacity : 0.12;
+
+        this.clearGridPolygons();
+        (features || []).forEach(function (feature) {
+            if (!feature || !feature.geometry || feature.geometry.type !== 'Polygon') return;
+            var rings = feature.geometry.coordinates || [];
+            var path = rings[0];
+            if (!Array.isArray(path) || path.length < 3) return;
+            var props = feature.properties || {};
+            var currentStrokeColor = props.strokeColor || strokeColor;
+            var currentStrokeWeight = typeof props.strokeWeight === 'number' ? props.strokeWeight : strokeWeight;
+            var currentFillColor = props.fillColor || fillColor;
+            var currentFillOpacity = typeof props.fillOpacity === 'number' ? props.fillOpacity : fillOpacity;
+
+            var polygon = new AMap.Polygon({
+                path: path,
+                strokeColor: currentStrokeColor,
+                strokeWeight: currentStrokeWeight,
+                strokeOpacity: 0.85,
+                fillColor: currentFillColor,
+                fillOpacity: currentFillOpacity,
+                zIndex: 80,
+                clickable: false,
+                bubble: true
+            });
+            polygon.__baseStyle = {
+                strokeColor: currentStrokeColor,
+                strokeWeight: currentStrokeWeight,
+                fillColor: currentFillColor,
+                fillOpacity: currentFillOpacity,
+                zIndex: 80,
+            };
+            polygon.__h3Id = props.h3_id || null;
+            polygon.setMap(self.map);
+            self.gridPolygons.push(polygon);
+            if (polygon.__h3Id) {
+                self.gridPolygonMap[polygon.__h3Id] = polygon;
+            }
+        });
+
+        this.updateFitView();
+    };
+
+    MapCore.prototype._restoreGridPolygonStyle = function (polygon) {
+        if (!polygon || !polygon.__baseStyle) return;
+        polygon.setOptions({
+            strokeColor: polygon.__baseStyle.strokeColor,
+            strokeWeight: polygon.__baseStyle.strokeWeight,
+            fillColor: polygon.__baseStyle.fillColor,
+            fillOpacity: polygon.__baseStyle.fillOpacity,
+            zIndex: polygon.__baseStyle.zIndex
+        });
+    };
+
+    MapCore.prototype._stopGridFocusAnimation = function () {
+        if (this._gridFocusAnimTimer) {
+            window.clearInterval(this._gridFocusAnimTimer);
+            this._gridFocusAnimTimer = null;
+        }
+    };
+
+    MapCore.prototype._mixHexColor = function (fromHex, toHex, t) {
+        var f = String(fromHex || '#22d3ee').replace('#', '');
+        var to = String(toHex || '#ffffff').replace('#', '');
+        if (f.length !== 6 || to.length !== 6) return fromHex || '#22d3ee';
+        var clampT = Math.max(0, Math.min(1, t || 0));
+        var fr = parseInt(f.substring(0, 2), 16);
+        var fg = parseInt(f.substring(2, 4), 16);
+        var fb = parseInt(f.substring(4, 6), 16);
+        var tr = parseInt(to.substring(0, 2), 16);
+        var tg = parseInt(to.substring(2, 4), 16);
+        var tb = parseInt(to.substring(4, 6), 16);
+        var rr = Math.round(fr + (tr - fr) * clampT);
+        var rg = Math.round(fg + (tg - fg) * clampT);
+        var rb = Math.round(fb + (tb - fb) * clampT);
+        var hex = '#' + [rr, rg, rb].map(function (v) {
+            var s = v.toString(16);
+            return s.length === 1 ? '0' + s : s;
+        }).join('');
+        return hex;
+    };
+
+    MapCore.prototype._runGridFocusPulse = function (polygon, cfg) {
+        this._stopGridFocusAnimation();
+        if (!polygon) return;
+        var baseStroke = cfg.strokeColor || '#22d3ee';
+        var glowStroke = cfg.pulseColor || '#ecfeff';
+        var baseWeight = typeof cfg.strokeWeight === 'number' ? cfg.strokeWeight : 3;
+        var baseOpacity = typeof cfg.fillOpacity === 'number' ? cfg.fillOpacity : 0.42;
+        var zIndex = typeof cfg.zIndex === 'number' ? cfg.zIndex : 120;
+        var durationMs = typeof cfg.durationMs === 'number' ? cfg.durationMs : 1200;
+        var cycles = typeof cfg.cycles === 'number' ? cfg.cycles : 2;
+        var startAt = Date.now();
+        var totalMs = Math.max(300, durationMs * Math.max(1, cycles));
+        var self = this;
+        this._gridFocusAnimTimer = window.setInterval(function () {
+            var elapsed = Date.now() - startAt;
+            var phase = ((elapsed % durationMs) / durationMs);
+            var energy = 0.5 - 0.5 * Math.cos(phase * 2 * Math.PI); // smooth breathe
+            var strokeColor = self._mixHexColor(baseStroke, glowStroke, energy * 0.7);
+            var strokeWeight = baseWeight + energy * 1.8;
+            var fillOpacity = Math.min(0.86, baseOpacity + energy * 0.16);
+            polygon.setOptions({
+                strokeColor: strokeColor,
+                strokeWeight: strokeWeight,
+                fillOpacity: fillOpacity,
+                zIndex: zIndex
+            });
+            if (elapsed >= totalMs) {
+                self._stopGridFocusAnimation();
+                polygon.setOptions({
+                    strokeColor: baseStroke,
+                    strokeWeight: baseWeight,
+                    fillOpacity: baseOpacity,
+                    zIndex: zIndex
+                });
+            }
+        }, 130);
+    };
+
+    MapCore.prototype.focusGridCellById = function (h3Id, opts) {
+        if (!h3Id || !this.gridPolygonMap) return false;
+        var polygon = this.gridPolygonMap[h3Id];
+        if (!polygon) return false;
+
+        if (this.focusedGridPolygon && this.focusedGridPolygon !== polygon) {
+            this._restoreGridPolygonStyle(this.focusedGridPolygon);
+        }
+
+        var cfg = opts || {};
+        var highlightStroke = cfg.strokeColor || '#22d3ee';
+        var highlightWeight = typeof cfg.strokeWeight === 'number' ? cfg.strokeWeight : 4;
+        var highlightOpacity = typeof cfg.fillOpacity === 'number'
+            ? cfg.fillOpacity
+            : Math.min(0.72, Math.max(0.28, (polygon.__baseStyle && polygon.__baseStyle.fillOpacity || 0.2) + 0.2));
+        var highlightZ = typeof cfg.zIndex === 'number' ? cfg.zIndex : 130;
+
+        if (this.map && cfg.rememberView !== false) {
+            var center = this.map.getCenter ? this.map.getCenter() : null;
+            var zoom = this.map.getZoom ? this.map.getZoom() : null;
+            if (center && center.getLng && center.getLat && typeof zoom === 'number') {
+                this._gridFocusViewBeforeLock = {
+                    center: [center.getLng(), center.getLat()],
+                    zoom: zoom
+                };
+            }
+        }
+
+        polygon.setOptions({
+            strokeColor: highlightStroke,
+            strokeWeight: highlightWeight,
+            fillOpacity: highlightOpacity,
+            zIndex: highlightZ
+        });
+        this.focusedGridPolygon = polygon;
+
+        if (this.map) {
+            if (cfg.fitView) {
+                // Fit only this polygon; avoid mixing in all overlays.
+                this.map.setFitView([polygon]);
+                var zoomMin = typeof cfg.zoomMin === 'number' ? cfg.zoomMin : 16;
+                if (this.map.getZoom && this.map.setZoom) {
+                    var currentZoom = this.map.getZoom();
+                    if (currentZoom < zoomMin) this.map.setZoom(zoomMin);
+                }
+            } else if (cfg.panTo !== false && polygon.getBounds) {
+                var bounds = polygon.getBounds();
+                if (bounds && bounds.getCenter) {
+                    this.map.panTo(bounds.getCenter());
+                }
+            }
+        }
+        if (cfg.animate !== false) {
+            this._runGridFocusPulse(polygon, {
+                strokeColor: highlightStroke,
+                strokeWeight: highlightWeight,
+                fillOpacity: highlightOpacity,
+                zIndex: highlightZ,
+                pulseColor: cfg.pulseColor || '#ecfeff'
+            });
+        } else {
+            this._stopGridFocusAnimation();
+        }
+        return true;
+    };
+
+    MapCore.prototype.clearGridFocus = function (opts) {
+        var cfg = opts || {};
+        this._stopGridFocusAnimation();
+        if (this.focusedGridPolygon) {
+            this._restoreGridPolygonStyle(this.focusedGridPolygon);
+        }
+        this.focusedGridPolygon = null;
+        if (cfg.restoreView && this.map && this._gridFocusViewBeforeLock && Array.isArray(this._gridFocusViewBeforeLock.center)) {
+            var restoreCenter = this._gridFocusViewBeforeLock.center;
+            var restoreZoom = this._gridFocusViewBeforeLock.zoom;
+            if (this.map.setZoomAndCenter && typeof restoreZoom === 'number') {
+                this.map.setZoomAndCenter(restoreZoom, restoreCenter);
+            } else {
+                if (this.map.setCenter) this.map.setCenter(restoreCenter);
+                if (this.map.setZoom && typeof restoreZoom === 'number') this.map.setZoom(restoreZoom);
+            }
+        }
+        this._gridFocusViewBeforeLock = null;
     };
 
     MapCore.prototype.drawCityBoundary = function (cityCodeOrName) {
@@ -226,6 +455,11 @@
             }
         });
         this.customPolygons.forEach(function (polygon) {
+            if (polygon && polygon.getMap) {
+                objects.push(polygon);
+            }
+        });
+        this.gridPolygons.forEach(function (polygon) {
             if (polygon && polygon.getMap) {
                 objects.push(polygon);
             }

@@ -32,6 +32,10 @@ from modules.isochrone import get_isochrone_polygon
 from modules.isochrone.schemas import IsochroneRequest, IsochroneResponse
 from modules.poi.schemas import PoiRequest, PoiResponse, HistorySaveRequest
 from modules.poi.core import fetch_pois_by_polygon
+from modules.grid_h3.analysis import analyze_h3_grid
+from modules.grid_h3.analysis_schemas import H3MetricsRequest, H3MetricsResponse
+from modules.grid_h3.core import build_h3_grid_feature_collection
+from modules.grid_h3.schemas import GridRequest, GridResponse
 from modules.gaode_service.utils.transform_posi import gcj02_to_wgs84, wgs84_to_gcj02
 
 # Stores
@@ -310,6 +314,39 @@ async def calculate_isochrone(payload: IsochroneRequest):
         },
         "geometry": mapping(final_poly)
     }
+
+
+@router.post("/api/v1/analysis/h3-grid", response_model=GridResponse)
+async def build_h3_grid(payload: GridRequest):
+    feature_collection = await asyncio.to_thread(
+        build_h3_grid_feature_collection,
+        payload.polygon,
+        payload.resolution,
+        payload.coord_type,
+        payload.include_mode,
+        payload.min_overlap_ratio,
+    )
+    return feature_collection
+
+
+@router.post("/api/v1/analysis/h3-metrics", response_model=H3MetricsResponse)
+async def analyze_h3_metrics(payload: H3MetricsRequest):
+    poi_payload = [
+        p.model_dump() if hasattr(p, "model_dump") else p.dict()
+        for p in payload.pois
+    ]
+    result = await asyncio.to_thread(
+        analyze_h3_grid,
+        payload.polygon,
+        payload.resolution,
+        payload.coord_type,
+        payload.include_mode,
+        payload.min_overlap_ratio,
+        poi_payload,
+        payload.poi_coord_type,
+        payload.neighbor_ring,
+    )
+    return result
 
 @router.post("/api/v1/analysis/pois", response_model=PoiResponse)
 async def fetch_pois_analysis(payload: PoiRequest):
