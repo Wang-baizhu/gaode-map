@@ -343,6 +343,16 @@
                                                 <option value="neighbor_delta">邻域差值（本格-邻域）</option>
                                             </select>
                                         </label>
+                                        <label v-if="h3MetricView === 'neighbor_delta'"
+                                            style="display:flex; align-items:center; gap:6px; font-size:12px; color:#666;">
+                                            邻域圈层
+                                            <select v-model.number="h3NeighborRing" @change="onH3NeighborRingChange"
+                                                style="padding:4px 6px; border:1px solid #ddd; border-radius:6px; font-size:12px;">
+                                                <option :value="1">ring=1</option>
+                                                <option :value="2">ring=2</option>
+                                                <option :value="3">ring=3</option>
+                                            </select>
+                                        </label>
                                     </div>
                                     <div class="filter-section h3-control-row h3-control-row-tight" v-if="h3AnalysisGridFeatures.length > 0 && h3SubTab !== 'metric_map'"
                                         style="margin-top:8px;">
@@ -366,42 +376,53 @@
                                                 <option value="medical">医疗</option>
                                             </select>
                                         </label>
-                                        <label v-if="h3SubTab === 'significance'"
+                                        <label v-if="h3SubTab !== 'lq' && h3SubTab !== 'gap'"
                                             style="display:flex; align-items:center; gap:6px; font-size:12px; color:#666;">
-                                            置换次数
-                                            <input type="number" min="0" max="5000" step="1"
-                                                v-model.number="h3MoranPermutations" @change="onH3SignificanceParamsChange"
-                                                style="width:92px; padding:4px 6px; border:1px solid #ddd; border-radius:6px; font-size:12px;">
+                                            邻域圈层
+                                            <select v-model.number="h3NeighborRing" @change="onH3NeighborRingChange"
+                                                style="padding:4px 6px; border:1px solid #ddd; border-radius:6px; font-size:12px;">
+                                                <option :value="1">ring=1</option>
+                                                <option :value="2">ring=2</option>
+                                                <option :value="3">ring=3</option>
+                                            </select>
                                         </label>
-                                        <label v-if="h3SubTab === 'significance'"
-                                            style="display:flex; align-items:center; gap:6px; font-size:12px; color:#666;">
-                                            置信度(%)
-                                            <input type="number" min="80" max="99.9" step="0.1"
-                                                v-model.number="h3SignificanceConfidence" @change="onH3SignificanceParamsChange"
-                                                style="width:82px; padding:4px 6px; border:1px solid #ddd; border-radius:6px; font-size:12px;">
-                                        </label>
-                                        <label v-if="h3SubTab === 'significance'" class="h3-check-chip">
-                                            <input type="checkbox" v-model="h3SignificanceFdr" @change="onH3SignificanceParamsChange">
-                                            FDR校正
-                                        </label>
-                                        <label v-if="h3SubTab === 'lq' || h3SubTab === 'gap'" class="h3-check-chip h3-check-chip-compact">
+                                        <label v-if="h3SubTab === 'lq' || h3SubTab === 'gap' || h3SubTab === 'significance'" class="h3-check-chip h3-check-chip-compact">
                                             <input type="checkbox" v-model="h3OnlySignificant" @change="onH3DecisionSettingsChange">
                                             仅显著网格
                                         </label>
                                     </div>
-                                    <div class="filter-section h3-significance-actions"
+                                    <div class="filter-section h3-significance-recalc"
                                         v-if="h3AnalysisGridFeatures.length > 0 && h3SubTab === 'significance'">
-                                        <button
-                                            type="button"
-                                            class="h3-btn h3-btn-secondary"
-                                            :disabled="isComputingH3Analysis || !lastIsochroneGeoJSON || h3GridCount === 0"
-                                            @click="computeH3Analysis">
-                                            {% raw %}{{ isComputingH3Analysis ? '重算中...' : '重新计算显著检验' }}{% endraw %}
-                                        </button>
-                                        <label class="h3-check-chip">
-                                            <input type="checkbox" v-model="h3OnlySignificant" @change="onH3DecisionSettingsChange">
-                                            仅显著网格
-                                        </label>
+                                        <div class="h3-significance-recalc-header">
+                                            <div class="h3-significance-recalc-title">显著检验参数</div>
+                                            <span v-if="h3SignificanceDirty" class="h3-pending-tag">参数已变更，待重算</span>
+                                        </div>
+                                        <div class="h3-significance-recalc-grid">
+                                            <label class="h3-recalc-field">
+                                                置换次数
+                                                <input type="number" min="0" max="5000" step="1"
+                                                    v-model.number="h3MoranPermutations" @change="onH3SignificanceParamsChange">
+                                            </label>
+                                            <label class="h3-recalc-field">
+                                                置信度(%)
+                                                <input type="number" min="80" max="99.9" step="0.1"
+                                                    v-model.number="h3SignificanceConfidence" @change="onH3SignificanceParamsChange">
+                                            </label>
+                                            <label class="h3-check-chip">
+                                                <input type="checkbox" v-model="h3SignificanceFdr" @change="onH3SignificanceParamsChange">
+                                                FDR校正
+                                            </label>
+                                        </div>
+                                        <div class="h3-significance-recalc-actions"
+                                            v-if="isComputingH3Analysis || h3SignificanceDirty">
+                                            <button
+                                                type="button"
+                                                :class="['h3-btn', h3SignificanceDirty ? 'h3-btn-primary' : 'h3-btn-secondary']"
+                                                :disabled="isComputingH3Analysis || !lastIsochroneGeoJSON || h3GridCount === 0"
+                                                @click="computeH3Analysis">
+                                                {% raw %}{{ isComputingH3Analysis ? '重算中...' : '重新计算显著检验' }}{% endraw %}
+                                            </button>
+                                        </div>
                                     </div>
                                     <div v-if="h3SubTab === 'metric_map' && h3AnalysisSummary"
                                         style="margin-top:10px; display:grid; grid-template-columns:1fr 1fr; gap:8px;">
@@ -781,10 +802,12 @@
                     h3GridCount: 0,
                     h3GridResolution: 10,
                     h3GridIncludeMode: 'intersects',
+                    h3NeighborRing: 1,
                     h3GridMinOverlapRatio: 0.15,
                     h3GridFeatures: [],
                     selectedH3Id: null,
                     isComputingH3Analysis: false,
+                    h3PendingNeighborRecompute: false,
                     h3AnalysisSummary: null,
                     h3AnalysisCharts: null,
                     h3AnalysisGridFeatures: [],
@@ -798,6 +821,10 @@
                     h3MoranPermutations: 4999,
                     h3SignificanceConfidence: 95.0,
                     h3SignificanceFdr: false,
+                    h3SignificanceDirty: false,
+                    h3AppliedMoranPermutations: 4999,
+                    h3AppliedSignificanceConfidence: 95.0,
+                    h3AppliedSignificanceFdr: false,
                     h3LqSmoothingAlpha: 0.5,
                     h3CategoryMeta: [
                         { key: 'dining', label: '餐饮' },
@@ -907,6 +934,7 @@
                     this.h3AnalysisCharts = null;
                     this.h3AnalysisGridFeatures = [];
                     this.selectedH3Id = null;
+                    this.h3PendingNeighborRecompute = false;
                     this.h3MetricView = 'density';
                     this.h3SubTab = 'metric_map';
                     this.h3TargetCategory = 'dining';
@@ -915,6 +943,10 @@
                     this.h3MoranPermutations = 4999;
                     this.h3SignificanceConfidence = 95.0;
                     this.h3SignificanceFdr = false;
+                    this.h3SignificanceDirty = false;
+                    this.h3AppliedMoranPermutations = 4999;
+                    this.h3AppliedSignificanceConfidence = 95.0;
+                    this.h3AppliedSignificanceFdr = false;
                     this.h3Legend = null;
                     this.h3DerivedStats = {
                         significanceSummary: null,
@@ -956,6 +988,22 @@
                     } else {
                         this.h3GridStatus = `已切换到“相交优先（边缘保留）”，最小重叠比例=${this.h3GridMinOverlapRatio.toFixed(2)}，请点击“生成网络”`;
                     }
+                },
+                async onH3NeighborRingChange() {
+                    const ring = Math.max(1, Math.min(3, Math.round(this._toNumber(this.h3NeighborRing, 1))));
+                    this.h3NeighborRing = ring;
+                    if (!this.lastIsochroneGeoJSON || this.h3GridCount <= 0) {
+                        this.h3GridStatus = `已切换邻域圈层 ring=${ring}，将在下次计算分析时生效`;
+                        return;
+                    }
+                    if (this.isComputingH3Analysis) {
+                        this.h3PendingNeighborRecompute = true;
+                        this.h3GridStatus = `计算进行中，已记录 ring=${ring}，将在当前计算结束后自动重算`;
+                        return;
+                    }
+                    this.h3PendingNeighborRecompute = false;
+                    this.h3GridStatus = `邻域圈层已切换为 ring=${ring}，正在自动重算...`;
+                    await this.computeH3Analysis();
                 },
                 async generateH3Grid() {
                     const rawRing = this.getIsochronePolygonRing();
@@ -1041,7 +1089,7 @@
                         this.mapCore.clearGridFocus({ restoreView: true });
                     }
                     this.selectedH3Id = null;
-                    this.h3GridStatus = '已取消网格锁定';
+                    this.h3GridStatus = '';
                 },
                 tryRefocusSelectedGrid() {
                     if (!this.selectedH3Id || !this.mapCore || !this.mapCore.focusGridCellById) return;
@@ -1871,9 +1919,19 @@
                 onH3SignificanceParamsChange() {
                     const permutations = Math.max(0, Math.min(5000, Math.round(this._toNumber(this.h3MoranPermutations, 4999))));
                     const confidence = Math.max(80, Math.min(99.9, this._toNumber(this.h3SignificanceConfidence, 95)));
+                    const confidenceRounded = Number(confidence.toFixed(1));
                     this.h3MoranPermutations = permutations;
-                    this.h3SignificanceConfidence = Number(confidence.toFixed(1));
-                    this.h3GridStatus = `显著性参数已更新：置换=${permutations}，置信度=${this.h3SignificanceConfidence.toFixed(1)}%，请点击“重新计算显著检验”生效`;
+                    this.h3SignificanceConfidence = confidenceRounded;
+                    this.h3SignificanceDirty = (
+                        permutations !== this.h3AppliedMoranPermutations ||
+                        confidenceRounded !== this.h3AppliedSignificanceConfidence ||
+                        !!this.h3SignificanceFdr !== !!this.h3AppliedSignificanceFdr
+                    );
+                    if (this.h3SignificanceDirty) {
+                        this.h3GridStatus = `显著性参数已更新：置换=${permutations}，置信度=${this.h3SignificanceConfidence.toFixed(1)}%，FDR=${this.h3SignificanceFdr ? '开' : '关'}，请点击“重新计算显著检验”生效`;
+                    } else {
+                        this.h3GridStatus = '显著性参数已恢复到当前结果口径，无需重新计算';
+                    }
                 },
                 async computeH3Analysis() {
                     const rawRing = this.getIsochronePolygonRing();
@@ -1889,9 +1947,11 @@
                         }).filter(pt => Array.isArray(pt) && pt.length >= 2);
                         const permutations = Math.max(0, Math.min(5000, Math.round(this._toNumber(this.h3MoranPermutations, 4999))));
                         const confidence = Math.max(80, Math.min(99.9, this._toNumber(this.h3SignificanceConfidence, 95)));
+                        const neighborRing = Math.max(1, Math.min(3, Math.round(this._toNumber(this.h3NeighborRing, 1))));
                         const alpha = Math.max(0.001, Math.min(0.2, 1 - confidence / 100));
                         this.h3MoranPermutations = permutations;
                         this.h3SignificanceConfidence = Number(confidence.toFixed(1));
+                        this.h3NeighborRing = neighborRing;
 
                         const payload = {
                             polygon: polygon,
@@ -1901,7 +1961,7 @@
                             min_overlap_ratio: this.h3GridIncludeMode === 'intersects' ? this.h3GridMinOverlapRatio : 0,
                             pois: this.allPoisDetails || [],
                             poi_coord_type: 'gcj02',
-                            neighbor_ring: 1,
+                            neighbor_ring: neighborRing,
                             moran_permutations: permutations,
                             significance_alpha: Number(alpha.toFixed(4)),
                             moran_seed: 42,
@@ -1926,6 +1986,10 @@
                         this.h3GridCount = Number.isFinite(grid.count) ? grid.count : this.h3AnalysisGridFeatures.length;
                         this.h3AnalysisSummary = data.summary || null;
                         this.h3AnalysisCharts = data.charts || null;
+                        this.h3SignificanceDirty = false;
+                        this.h3AppliedMoranPermutations = permutations;
+                        this.h3AppliedSignificanceConfidence = this.h3SignificanceConfidence;
+                        this.h3AppliedSignificanceFdr = !!this.h3SignificanceFdr;
                         this.computeH3DerivedStats();
                         this.renderH3BySubTab();
                         await this.$nextTick();
@@ -1939,6 +2003,11 @@
                         this.h3GridStatus = '网格分析失败: ' + e.message;
                     } finally {
                         this.isComputingH3Analysis = false;
+                        if (this.h3PendingNeighborRecompute && this.lastIsochroneGeoJSON && this.h3GridCount > 0) {
+                            this.h3PendingNeighborRecompute = false;
+                            this.h3GridStatus = `检测到邻域圈层更新，按 ring=${this.h3NeighborRing} 自动重算...`;
+                            this.computeH3Analysis();
+                        }
                     }
                 },
                 selectStep3Panel(panelId) {
@@ -2637,6 +2706,93 @@
                     });
                     return (labels || []).map(label => colorByName[label] || '#5b8ff9');
                 },
+                _buildHistogram(values, metricKey, binCount = 8) {
+                    const valid = (values || [])
+                        .map(v => this._toNumber(v, NaN))
+                        .filter(v => Number.isFinite(v));
+                    if (!valid.length) {
+                        return { bins: [], counts: [] };
+                    }
+                    const minV = Math.min(...valid);
+                    const maxV = Math.max(...valid);
+                    if (Math.abs(maxV - minV) < 1e-12) {
+                        const label = `${this._formatLegendValue(minV, metricKey)} ~ ${this._formatLegendValue(maxV, metricKey)}`;
+                        return { bins: [label], counts: [valid.length] };
+                    }
+
+                    const bins = [];
+                    const counts = new Array(binCount).fill(0);
+                    const span = maxV - minV;
+                    const step = span / binCount;
+                    for (let i = 0; i < binCount; i += 1) {
+                        const start = minV + step * i;
+                        const end = i === binCount - 1 ? maxV : (minV + step * (i + 1));
+                        bins.push(`${this._formatLegendValue(start, metricKey)} ~ ${this._formatLegendValue(end, metricKey)}`);
+                    }
+                    for (const v of valid) {
+                        let idx = Math.floor((v - minV) / step);
+                        if (!Number.isFinite(idx)) idx = 0;
+                        if (idx < 0) idx = 0;
+                        if (idx >= binCount) idx = binCount - 1;
+                        counts[idx] += 1;
+                    }
+                    return { bins, counts };
+                },
+                _resolveMetricHistogram(metricKey) {
+                    const source = this.h3AnalysisGridFeatures || [];
+                    const values = source.map((feature) => {
+                        const props = (feature && feature.properties) || {};
+                        const datum = this._getH3MetricValue(props, metricKey);
+                        return datum.noData ? null : datum.value;
+                    }).filter(v => Number.isFinite(v));
+
+                    if (metricKey === 'entropy') {
+                        const hist = this._buildHistogram(values, 'entropy', 10);
+                        return {
+                            title: '局部熵分布（0~1）',
+                            xAxisName: '熵区间',
+                            bins: hist.bins,
+                            counts: hist.counts,
+                            color: '#4cae63',
+                            subtext: '仅统计样本数足够的网格',
+                        };
+                    }
+                    if (metricKey === 'neighbor_delta') {
+                        const hist = this._buildHistogram(values, 'neighbor_delta', 8);
+                        return {
+                            title: '邻域差值分布（POI/km²）',
+                            xAxisName: '差值区间（本格-邻域）',
+                            bins: hist.bins,
+                            counts: hist.counts,
+                            color: '#3f7fd8',
+                            subtext: '正值表示高于邻域，负值表示低于邻域',
+                        };
+                    }
+
+                    const densityData = this.h3AnalysisCharts && this.h3AnalysisCharts.density_histogram
+                        ? this.h3AnalysisCharts.density_histogram
+                        : null;
+                    if (densityData && Array.isArray(densityData.bins) && Array.isArray(densityData.counts)) {
+                        return {
+                            title: '密度分布（POI/km²）',
+                            xAxisName: '密度区间 (POI/km²)',
+                            bins: densityData.bins,
+                            counts: densityData.counts.map(v => this._toNumber(v, 0)),
+                            color: '#4c8bf5',
+                            subtext: '',
+                        };
+                    }
+
+                    const hist = this._buildHistogram(values, 'density', 8);
+                    return {
+                        title: '密度分布（POI/km²）',
+                        xAxisName: '密度区间 (POI/km²)',
+                        bins: hist.bins,
+                        counts: hist.counts,
+                        color: '#4c8bf5',
+                        subtext: '',
+                    };
+                },
                 updateH3Charts() {
                     if (!window.echarts || !this.h3AnalysisCharts) return;
                     const categoryEl = document.getElementById('h3CategoryChart');
@@ -2702,16 +2858,14 @@
                         true
                     );
 
-                    const densityData = this.h3AnalysisCharts.density_histogram || {};
-                    const bins = densityData.bins || [];
-                    const counts = (densityData.counts || []).map(v => this._toNumber(v, 0));
-                    const densitySubtext = this.h3MetricView === 'entropy'
-                        ? '熵已归一化到0~1，低样本格子不参与着色'
-                        : '';
+                    const metricHist = this._resolveMetricHistogram(this.h3MetricView || 'density');
+                    const bins = metricHist.bins || [];
+                    const counts = (metricHist.counts || []).map(v => this._toNumber(v, 0));
+                    const densitySubtext = metricHist.subtext || '';
                     densityChart.setOption(
                         {
                             title: {
-                                text: '密度分布（POI/km²）',
+                                text: metricHist.title || '指标分布',
                                 subtext: densitySubtext,
                                 left: 'center',
                                 top: 0,
@@ -2723,7 +2877,7 @@
                             xAxis: {
                                 type: 'category',
                                 data: bins,
-                                name: '密度区间 (POI/km²)',
+                                name: metricHist.xAxisName || '区间',
                                 nameLocation: 'middle',
                                 nameGap: 28,
                                 nameTextStyle: { color: '#6b7280', fontSize: 10 },
@@ -2750,7 +2904,7 @@
                                 type: 'bar',
                                 data: counts,
                                 barMaxWidth: 20,
-                                itemStyle: { color: '#4c8bf5' }
+                                itemStyle: { color: metricHist.color || '#4c8bf5' }
                             }]
                         },
                         true
