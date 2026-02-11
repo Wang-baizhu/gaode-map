@@ -11,6 +11,8 @@
 | :--- | :--- | :--- | :--- |
 | `POST` | `/api/v1/analysis/pois` | **抓取 POI 数据**<br>根据多边形范围抓取高德 POI | `{ "polygon": [[120,30]...], "keywords": "咖啡", "types": "050000" }` |
 | `POST` | `/api/v1/analysis/isochrone` | **生成等时圈**<br>计算如“15分钟步行范围”的多边形 | `{ "lat": 30.1, "lon": 120.2, "time_min": 15, "mode": "walking" }` |
+| `POST` | `/api/v1/analysis/h3-grid` | **生成 H3 网络**<br>将等时圈 polygon 转换为可渲染网格 GeoJSON | `{ "polygon": [[120,30]...], "resolution": 10, "coord_type": "gcj02", "include_mode": "intersects", "min_overlap_ratio": 0.15 }` |
+| `POST` | `/api/v1/analysis/h3-metrics` | **计算 H3 网格分析**<br>对 POI 做网格聚合并返回密度/熵/邻域指标与图表数据 | `{ "polygon": [[120,30]...], "resolution": 10, "pois": [...], "neighbor_ring": 1 }` |
 | `GET` | `/api/v1/analysis/history` | **获取分析历史**<br>查看之前的抓取记录 | `?limit=20` |
 
 #### 2. 地图管理 API
