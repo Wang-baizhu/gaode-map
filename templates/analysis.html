@@ -270,7 +270,7 @@
 
                                 <div class="panel" v-show="activeStep3Panel === 'h3'">
                                     <h4>网络</h4>
-                                    <div class="filter-section" style="display:flex; gap:10px; flex-wrap:wrap;">
+                                    <div class="filter-section h3-control-row">
                                         <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#666;">
                                             网格级别
                                             <select v-model.number="h3GridResolution" @change="onH3ResolutionChange"
@@ -289,17 +289,17 @@
                                                 <option value="inside">完全包含（严格）</option>
                                             </select>
                                         </label>
-                                        <button class="btn-outline" style="padding:5px; font-size:12px;"
+                                        <button class="h3-btn h3-btn-secondary"
                                             :disabled="isGeneratingGrid || !lastIsochroneGeoJSON"
                                             @click="generateH3Grid">
                                             {% raw %}{{ isGeneratingGrid ? '生成中...' : '生成网络' }}{% endraw %}
                                         </button>
-                                        <button class="btn-black" style="padding:5px 10px; font-size:12px;"
+                                        <button class="h3-btn h3-btn-primary"
                                             :disabled="isComputingH3Analysis || !lastIsochroneGeoJSON"
                                             @click="computeH3Analysis">
                                             {% raw %}{{ isComputingH3Analysis ? '分析中...' : '计算分析' }}{% endraw %}
                                         </button>
-                                        <button class="btn-outline" style="padding:5px; font-size:12px;"
+                                        <button class="h3-btn h3-btn-ghost"
                                             :disabled="h3GridCount === 0" @click="clearH3Grid">
                                             清空网络
                                         </button>
@@ -319,6 +319,9 @@
                                         <button type="button" class="h3-subtab-pill"
                                             :class="{ active: h3SubTab === 'metric_map' }"
                                             @click="onH3SubTabChange('metric_map')">热度分布</button>
+                                        <button type="button" class="h3-subtab-pill"
+                                            :class="{ active: h3SubTab === 'significance' }"
+                                            @click="onH3SubTabChange('significance')">显著检验</button>
                                         <button type="button" class="h3-subtab-pill"
                                             :class="{ active: h3SubTab === 'typing' }"
                                             @click="onH3SubTabChange('typing')">业态结构</button>
@@ -341,8 +344,8 @@
                                             </select>
                                         </label>
                                     </div>
-                                    <div class="filter-section" v-if="h3AnalysisGridFeatures.length > 0 && h3SubTab !== 'metric_map'"
-                                        style="margin-top:8px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                                    <div class="filter-section h3-control-row h3-control-row-tight" v-if="h3AnalysisGridFeatures.length > 0 && h3SubTab !== 'metric_map'"
+                                        style="margin-top:8px;">
                                         <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#666;">
                                             TopN
                                             <input type="number" min="3" max="30" step="1"
@@ -363,13 +366,49 @@
                                                 <option value="medical">医疗</option>
                                             </select>
                                         </label>
+                                        <label v-if="h3SubTab === 'significance'"
+                                            style="display:flex; align-items:center; gap:6px; font-size:12px; color:#666;">
+                                            置换次数
+                                            <input type="number" min="0" max="5000" step="1"
+                                                v-model.number="h3MoranPermutations" @change="onH3SignificanceParamsChange"
+                                                style="width:92px; padding:4px 6px; border:1px solid #ddd; border-radius:6px; font-size:12px;">
+                                        </label>
+                                        <label v-if="h3SubTab === 'significance'"
+                                            style="display:flex; align-items:center; gap:6px; font-size:12px; color:#666;">
+                                            置信度(%)
+                                            <input type="number" min="80" max="99.9" step="0.1"
+                                                v-model.number="h3SignificanceConfidence" @change="onH3SignificanceParamsChange"
+                                                style="width:82px; padding:4px 6px; border:1px solid #ddd; border-radius:6px; font-size:12px;">
+                                        </label>
+                                        <label v-if="h3SubTab === 'significance'" class="h3-check-chip">
+                                            <input type="checkbox" v-model="h3SignificanceFdr" @change="onH3SignificanceParamsChange">
+                                            FDR校正
+                                        </label>
+                                        <label v-if="h3SubTab === 'lq' || h3SubTab === 'gap'" class="h3-check-chip h3-check-chip-compact">
+                                            <input type="checkbox" v-model="h3OnlySignificant" @change="onH3DecisionSettingsChange">
+                                            仅显著网格
+                                        </label>
+                                    </div>
+                                    <div class="filter-section h3-significance-actions"
+                                        v-if="h3AnalysisGridFeatures.length > 0 && h3SubTab === 'significance'">
+                                        <button
+                                            type="button"
+                                            class="h3-btn h3-btn-secondary"
+                                            :disabled="isComputingH3Analysis || !lastIsochroneGeoJSON || h3GridCount === 0"
+                                            @click="computeH3Analysis">
+                                            {% raw %}{{ isComputingH3Analysis ? '重算中...' : '重新计算显著检验' }}{% endraw %}
+                                        </button>
+                                        <label class="h3-check-chip">
+                                            <input type="checkbox" v-model="h3OnlySignificant" @change="onH3DecisionSettingsChange">
+                                            仅显著网格
+                                        </label>
                                     </div>
                                     <div v-if="h3SubTab === 'metric_map' && h3AnalysisSummary"
                                         style="margin-top:10px; display:grid; grid-template-columns:1fr 1fr; gap:8px;">
                                         <div class="count-badge">POI总数 {% raw %}{{ h3AnalysisSummary.poi_count }}{% endraw %}</div>
                                         <div class="count-badge">平均密度 {% raw %}{{ h3AnalysisSummary.avg_density_poi_per_km2.toFixed(2) }}{% endraw %}</div>
                                         <div class="count-badge">平均熵 {% raw %}{{ h3AnalysisSummary.avg_local_entropy.toFixed(3) }}{% endraw %}</div>
-                                        <div class="count-badge">莫兰指数 {% raw %}{{ h3AnalysisSummary.global_moran_i_density ?? 'N/A' }}{% endraw %}</div>
+                                        <div class="count-badge">网格数 {% raw %}{{ h3AnalysisSummary.grid_count ?? h3GridCount }}{% endraw %}</div>
                                     </div>
                                     <div v-if="h3SubTab === 'metric_map' && h3AnalysisSummary" class="h3-analysis-hint">
                                         看密度、混合度和邻域差值，优先找“高密且邻域为正”的连续片区。
@@ -398,6 +437,56 @@
                                     <div v-if="h3SubTab === 'metric_map' && h3AnalysisSummary" style="margin-top:10px;">
                                         <div id="h3CategoryChart" style="height:180px;"></div>
                                         <div id="h3DensityChart" style="height:180px; margin-top:8px;"></div>
+                                    </div>
+                                    <div v-if="h3SubTab === 'significance' && h3DerivedStats.significanceSummary" style="margin-top:10px;">
+                                        <div class="h3-analysis-hint">
+                                            基于 PySAL 局部检验：红/蓝表示显著热点或冷点，灰色为不显著。
+                                        </div>
+                                        <div v-if="h3AnalysisSummary"
+                                            style="margin-top:10px; display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                                            <div class="count-badge">莫兰指数 {% raw %}{{ h3AnalysisSummary.global_moran_i_density ?? 'N/A' }}{% endraw %}</div>
+                                            <div class="count-badge">莫兰z值 {% raw %}{{ h3AnalysisSummary.global_moran_z_score ?? 'N/A' }}{% endraw %}</div>
+                                            <div class="count-badge">莫兰p值 {% raw %}{{ h3AnalysisSummary.global_moran_p_value ?? 'N/A' }}{% endraw %}</div>
+                                            <div class="count-badge">空间显著性 {% raw %}{{ h3AnalysisSummary.global_moran_significant === null ? 'N/A' : (h3AnalysisSummary.global_moran_significant ? '显著' : '不显著') }}{% endraw %}</div>
+                                        </div>
+                                        <div class="h3-decision-cards">
+                                            <div class="h3-decision-card">
+                                                <div class="label">显著网格</div>
+                                                <div class="value">{% raw %}{{ h3DerivedStats.significanceSummary.significantCount }}{% endraw %}</div>
+                                            </div>
+                                            <div class="h3-decision-card">
+                                                <div class="label">热点网格</div>
+                                                <div class="value">{% raw %}{{ h3DerivedStats.significanceSummary.hotspotCount }}{% endraw %}</div>
+                                            </div>
+                                            <div class="h3-decision-card">
+                                                <div class="label">冷点网格</div>
+                                                <div class="value">{% raw %}{{ h3DerivedStats.significanceSummary.coldspotCount }}{% endraw %}</div>
+                                            </div>
+                                        </div>
+                                        <div id="h3SignificanceChart" style="height:180px;"></div>
+                                        <table class="h3-mini-table" style="margin-top:8px;">
+                                            <thead>
+                                                <tr>
+                                                    <th>H3</th><th>LISA</th><th>Gi*</th><th>p值</th><th>结论</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr v-for="row in h3DerivedStats.significanceSummary.rows.slice(0, h3DecisionTopN)"
+                                                    :key="`sig-${row.h3_id}`"
+                                                    :class="{ 'h3-row-active': row.h3_id === selectedH3Id }">
+                                                    <td>
+                                                        <button type="button" class="h3-id-btn" :title="row.h3_id"
+                                                            @click="focusGridByH3Id(row.h3_id)">
+                                                            {% raw %}{{ shortH3Id(row.h3_id) }}{% endraw %}
+                                                        </button>
+                                                    </td>
+                                                    <td>{% raw %}{{ row.lisa_cluster || 'NS' }}{% endraw %}</td>
+                                                    <td>{% raw %}{{ row.gi_hotspot_type === 'hotspot' ? '热点' : (row.gi_hotspot_type === 'coldspot' ? '冷点' : 'NS') }}{% endraw %}</td>
+                                                    <td>{% raw %}{{ row.local_p_value === null ? '-' : row.local_p_value.toFixed(3) }}{% endraw %}</td>
+                                                    <td>{% raw %}{{ row.is_significant ? '显著' : '不显著' }}{% endraw %}</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
                                     </div>
                                     <div v-if="h3SubTab === 'typing' && h3DerivedStats.typingSummary" style="margin-top:10px;">
                                         <div class="h3-analysis-hint">
@@ -464,7 +553,7 @@
                                         <table class="h3-mini-table" style="margin-top:8px;">
                                             <thead>
                                                 <tr>
-                                                    <th>H3</th><th>POI</th><th>密度</th><th>熵</th><th>可信度</th><th>优势值</th>
+                                                    <th>H3</th><th>POI</th><th>密度</th><th>熵</th><th>可信度</th><th>统计</th><th>优势值</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
@@ -481,6 +570,7 @@
                                                     <td>{% raw %}{{ row.density.toFixed(2) }}{% endraw %}</td>
                                                     <td>{% raw %}{{ row.entropy_norm === null ? '-' : row.entropy_norm.toFixed(2) }}{% endraw %}</td>
                                                     <td>{% raw %}{{ (row.confidence && row.confidence.label) || '低' }}{% endraw %}</td>
+                                                    <td>{% raw %}{{ row.is_significant ? '显著' : '不显著' }}{% endraw %}</td>
                                                     <td>{% raw %}{{ row.lq_target === null ? '-' : row.lq_target.toFixed(2) }}{% endraw %}</td>
                                                 </tr>
                                             </tbody>
@@ -511,7 +601,7 @@
                                         <table class="h3-mini-table" style="margin-top:8px;">
                                             <thead>
                                                 <tr>
-                                                    <th>H3</th><th>POI</th><th>密度</th><th>熵</th><th>可信度</th><th>缺口分</th>
+                                                    <th>H3</th><th>POI</th><th>密度</th><th>熵</th><th>可信度</th><th>统计</th><th>缺口分</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
@@ -528,6 +618,7 @@
                                                     <td>{% raw %}{{ row.density.toFixed(2) }}{% endraw %}</td>
                                                     <td>{% raw %}{{ row.entropy_norm === null ? '-' : row.entropy_norm.toFixed(2) }}{% endraw %}</td>
                                                     <td>{% raw %}{{ (row.confidence && row.confidence.label) || '低' }}{% endraw %}</td>
+                                                    <td>{% raw %}{{ row.is_significant ? '显著' : '不显著' }}{% endraw %}</td>
                                                     <td>{% raw %}{{ row.gap_score === null ? '-' : row.gap_score.toFixed(2) }}{% endraw %}</td>
                                                 </tr>
                                             </tbody>
@@ -703,6 +794,10 @@
                     h3SubTab: 'metric_map',
                     h3TargetCategory: 'dining',
                     h3DecisionTopN: 10,
+                    h3OnlySignificant: false,
+                    h3MoranPermutations: 4999,
+                    h3SignificanceConfidence: 95.0,
+                    h3SignificanceFdr: false,
                     h3LqSmoothingAlpha: 0.5,
                     h3CategoryMeta: [
                         { key: 'dining', label: '餐饮' },
@@ -715,6 +810,7 @@
                     ],
                     h3GapWeights: { transport: 0.4, life: 0.25, education: 0.2, medical: 0.15 },
                     h3DerivedStats: {
+                        significanceSummary: null,
                         typingSummary: null,
                         lqSummary: null,
                         gapSummary: null,
@@ -724,6 +820,7 @@
                     h3DensityChart: null,
                     h3LqChart: null,
                     h3GapChart: null,
+                    h3SignificanceChart: null,
                     h3ChartsResizeHandler: null,
                 }
             },
@@ -814,8 +911,13 @@
                     this.h3SubTab = 'metric_map';
                     this.h3TargetCategory = 'dining';
                     this.h3DecisionTopN = 10;
+                    this.h3OnlySignificant = false;
+                    this.h3MoranPermutations = 4999;
+                    this.h3SignificanceConfidence = 95.0;
+                    this.h3SignificanceFdr = false;
                     this.h3Legend = null;
                     this.h3DerivedStats = {
+                        significanceSummary: null,
                         typingSummary: null,
                         lqSummary: null,
                         gapSummary: null,
@@ -1221,6 +1323,7 @@
                     this.h3DecisionTopN = topN;
                     if (!features.length) {
                         this.h3DerivedStats = {
+                            significanceSummary: null,
                             typingSummary: null,
                             lqSummary: null,
                             gapSummary: null,
@@ -1242,15 +1345,30 @@
                             neighbor_delta: density - neighborDensity,
                             category_counts: Object.assign({}, props.category_counts || {}),
                             confidence: this._getConfidenceInfo(props.poi_count),
+                            lisa_cluster: String(props.lisa_cluster || 'NS'),
+                            lisa_significant: !!props.lisa_significant,
+                            lisa_i: Number.isFinite(Number(props.lisa_i)) ? Number(props.lisa_i) : null,
+                            lisa_p_value: Number.isFinite(Number(props.lisa_p_value)) ? Number(props.lisa_p_value) : null,
+                            gi_hotspot_type: String(props.gi_hotspot_type || 'ns'),
+                            gi_star_z_score: Number.isFinite(Number(props.gi_star_z_score)) ? Number(props.gi_star_z_score) : null,
+                            gi_star_p_value: Number.isFinite(Number(props.gi_star_p_value)) ? Number(props.gi_star_p_value) : null,
+                            gi_star_significant: !!props.gi_star_significant,
+                            is_significant: !!props.is_significant || !!props.lisa_significant || !!props.gi_star_significant,
                         };
                     });
 
-                    const densitySorted = rowsBase.map(r => r.density).filter(v => Number.isFinite(v)).sort((a, b) => a - b);
-                    const entropySorted = rowsBase.map(r => r.entropy_norm).filter(v => Number.isFinite(v)).sort((a, b) => a - b);
+                    const rowsEnriched = rowsBase.map((row) => {
+                        const pVals = [row.lisa_p_value, row.gi_star_p_value].filter(v => Number.isFinite(v));
+                        const localP = pVals.length ? Math.min(...pVals) : null;
+                        return Object.assign({}, row, { local_p_value: localP });
+                    });
+
+                    const densitySorted = rowsEnriched.map(r => r.density).filter(v => Number.isFinite(v)).sort((a, b) => a - b);
+                    const entropySorted = rowsEnriched.map(r => r.entropy_norm).filter(v => Number.isFinite(v)).sort((a, b) => a - b);
                     const densityP70 = densitySorted.length ? this._quantile(densitySorted, 0.7) : 0;
                     const entropyP70 = entropySorted.length ? this._quantile(entropySorted, 0.7) : 0;
 
-                    const typingRows = rowsBase.map((row) => {
+                    const typingRows = rowsEnriched.map((row) => {
                         const typed = this.classifyGridType(row, { densityP70, entropyP70 });
                         return Object.assign({}, row, typed);
                     }).sort((a, b) => {
@@ -1271,15 +1389,39 @@
                     const typingOpportunityCount = typingRows.filter(r => r.is_opportunity).length;
                     const typingMaxDensity = typingRows.length ? Math.max(...typingRows.map(r => this._toNumber(r.density, 0))) : 0;
 
+                    const sigRowsBase = rowsEnriched.map((row) => {
+                        let lisaLabel = 'NS';
+                        if (row.lisa_significant && row.lisa_cluster && row.lisa_cluster !== 'NS') {
+                            lisaLabel = row.lisa_cluster;
+                        }
+                        return Object.assign({}, row, {
+                            lisa_label: lisaLabel,
+                        });
+                    });
+                    const sigRows = (this.h3OnlySignificant
+                        ? sigRowsBase.filter(r => r.is_significant)
+                        : sigRowsBase
+                    ).sort((a, b) => {
+                        if ((b.is_significant ? 1 : 0) !== (a.is_significant ? 1 : 0)) {
+                            return (b.is_significant ? 1 : 0) - (a.is_significant ? 1 : 0);
+                        }
+                        const giDiff = Math.abs(this._toNumber(b.gi_star_z_score, 0)) - Math.abs(this._toNumber(a.gi_star_z_score, 0));
+                        if (giDiff !== 0) return giDiff;
+                        return Math.abs(this._toNumber(b.lisa_i, 0)) - Math.abs(this._toNumber(a.lisa_i, 0));
+                    });
+                    const significantCount = sigRowsBase.filter(r => r.is_significant).length;
+                    const hotspotCount = sigRowsBase.filter(r => r.gi_hotspot_type === 'hotspot').length;
+                    const coldspotCount = sigRowsBase.filter(r => r.gi_hotspot_type === 'coldspot').length;
+
                     const globalCategoryCounts = {};
                     (this.h3CategoryMeta || []).forEach(item => { globalCategoryCounts[item.key] = 0; });
-                    rowsBase.forEach(row => {
+                    rowsEnriched.forEach(row => {
                         (this.h3CategoryMeta || []).forEach(item => {
                             globalCategoryCounts[item.key] += this._toNumber(row.category_counts[item.key], 0);
                         });
                     });
                     const globalTotal = Object.values(globalCategoryCounts).reduce((s, v) => s + this._toNumber(v, 0), 0);
-                    const lqRows = rowsBase.map(row => {
+                    const lqRowsAll = rowsEnriched.map(row => {
                         const lqMap = this.computeCellLQ(row, globalCategoryCounts, globalTotal);
                         let dominantKey = null;
                         let dominantValue = null;
@@ -1305,22 +1447,25 @@
                         return this._toNumber(b.confidence && b.confidence.score, 0)
                             - this._toNumber(a.confidence && a.confidence.score, 0);
                     });
+                    const lqRows = this.h3OnlySignificant
+                        ? lqRowsAll.filter(r => r.is_significant)
+                        : lqRowsAll;
                     const lqOpportunityCount = lqRows.filter(r => Number.isFinite(r.lq_target) && r.lq_target >= 1.2).length;
                     const lqMax = lqRows.length ? Math.max(...lqRows.map(r => this._toNumber(r.lq_target, 0))) : 0;
                     const dominantCounts = {};
                     (this.h3CategoryMeta || []).forEach(item => { dominantCounts[item.key] = 0; });
-                    lqRows.forEach(row => {
+                    lqRowsAll.forEach(row => {
                         if (row.dominant_key && Number.isFinite(row.dominant_value) && row.dominant_value > 1) {
                             dominantCounts[row.dominant_key] += 1;
                         }
                     });
 
-                    const gapRowsRaw = rowsBase.map(row => Object.assign({}, row, this.computeGapScore(row, this.h3TargetCategory)));
+                    const gapRowsRaw = rowsEnriched.map(row => Object.assign({}, row, this.computeGapScore(row, this.h3TargetCategory)));
                     const demandValues = gapRowsRaw.map(r => r.demand_proxy).filter(v => Number.isFinite(v));
                     const supplyValues = gapRowsRaw.map(r => r.supply_target_density).filter(v => Number.isFinite(v));
                     const demandSorted = demandValues.slice().sort((a, b) => a - b);
                     const supplySorted = supplyValues.slice().sort((a, b) => a - b);
-                    const gapRows = gapRowsRaw.map(row => {
+                    const gapRowsAll = gapRowsRaw.map(row => {
                         const demandPct = this._percentileFromSorted(demandSorted, row.demand_proxy);
                         const supplyPct = this._percentileFromSorted(supplySorted, row.supply_target_density);
                         return Object.assign({}, row, {
@@ -1334,10 +1479,22 @@
                         return this._toNumber(b.confidence && b.confidence.score, 0)
                             - this._toNumber(a.confidence && a.confidence.score, 0);
                     });
+                    const gapRows = this.h3OnlySignificant
+                        ? gapRowsAll.filter(r => r.is_significant)
+                        : gapRowsAll;
                     const gapOpportunityCount = gapRows.filter(r => this._toNumber(r.gap_score, 0) > 0.25).length;
                     const gapMax = gapRows.length ? Math.max(...gapRows.map(r => this._toNumber(r.gap_score, 0))) : 0;
 
                     this.h3DerivedStats = {
+                        significanceSummary: {
+                            rows: sigRows,
+                            significantCount: significantCount,
+                            hotspotCount: hotspotCount,
+                            coldspotCount: coldspotCount,
+                            recommendation: significantCount > 0
+                                ? '优先结合显著热点与LQ/缺口榜单做投放'
+                                : '当前无稳定显著聚集，可先扩样本或放宽范围复核',
+                        },
                         typingSummary: {
                             counts: typingCountByType,
                             rows: typingRows,
@@ -1363,6 +1520,7 @@
                             recommendation: `${this._getH3CategoryLabel(this.h3TargetCategory)}优先投放到高缺口网格`,
                         },
                         topCells: {
+                            significance: sigRows.slice(0, topN),
                             typing: typingRows.slice(0, topN),
                             lq: lqRows.slice(0, topN),
                             gap: gapRows.slice(0, topN),
@@ -1402,6 +1560,50 @@
                         ],
                         noDataLabel: `无数据（样本<${this.h3EntropyMinPoi}）`,
                         noDataColor: '#d1d5db',
+                    };
+                    this.mapCore.setGridFeatures(styled, { fillOpacity: 0.34, strokeWeight: 1 });
+                    this.tryRefocusSelectedGrid();
+                },
+                _renderSignificanceMap() {
+                    const summary = this.h3DerivedStats && this.h3DerivedStats.significanceSummary;
+                    if (!summary || !this.mapCore || !this.mapCore.setGridFeatures) return;
+                    const rowMap = {};
+                    (summary.rows || []).forEach(row => { rowMap[row.h3_id] = row; });
+                    const colorByClass = {
+                        hotspot: '#dc2626',
+                        coldspot: '#2563eb',
+                        HH: '#ef4444',
+                        LL: '#3b82f6',
+                        HL: '#f59e0b',
+                        LH: '#14b8a6',
+                        NS: '#d1d5db',
+                    };
+                    const styled = (this.h3AnalysisGridFeatures || []).map(feature => {
+                        const props = Object.assign({}, feature.properties || {});
+                        const row = rowMap[props.h3_id] || {};
+                        let cls = 'NS';
+                        if (row.gi_hotspot_type === 'hotspot') cls = 'hotspot';
+                        else if (row.gi_hotspot_type === 'coldspot') cls = 'coldspot';
+                        else if (row.lisa_significant && row.lisa_cluster && row.lisa_cluster !== 'NS') cls = row.lisa_cluster;
+                        props.fillColor = colorByClass[cls] || '#d1d5db';
+                        props.fillOpacity = cls === 'NS' ? 0.18 : 0.34;
+                        props.strokeColor = '#2c6ecb';
+                        props.strokeWeight = 1;
+                        return { type: feature.type, geometry: feature.geometry, properties: props };
+                    });
+                    this.h3Legend = {
+                        title: '显著检验',
+                        unit: '分类',
+                        items: [
+                            { color: colorByClass.hotspot, label: '显著热点' },
+                            { color: colorByClass.coldspot, label: '显著冷点' },
+                            { color: colorByClass.HH, label: 'LISA HH' },
+                            { color: colorByClass.LL, label: 'LISA LL' },
+                            { color: colorByClass.HL, label: 'LISA HL' },
+                            { color: colorByClass.LH, label: 'LISA LH' },
+                        ],
+                        noDataLabel: '不显著 / 无数据',
+                        noDataColor: colorByClass.NS,
                     };
                     this.mapCore.setGridFeatures(styled, { fillOpacity: 0.34, strokeWeight: 1 });
                     this.tryRefocusSelectedGrid();
@@ -1483,11 +1685,9 @@
                         this.h3Legend = null;
                         return;
                     }
-                    if ((this.h3SubTab === 'typing' || this.h3SubTab === 'lq' || this.h3SubTab === 'gap')
-                        && (!this.h3DerivedStats || !this.h3DerivedStats.typingSummary)) {
-                        this.computeH3DerivedStats();
-                    }
-                    if (this.h3SubTab === 'typing') {
+                    if (this.h3SubTab === 'significance') {
+                        this._renderSignificanceMap();
+                    } else if (this.h3SubTab === 'typing') {
                         this._renderTypingMap();
                     } else if (this.h3SubTab === 'lq') {
                         this._renderLqMap();
@@ -1501,14 +1701,50 @@
                     if (!window.echarts || !this.h3DerivedStats) return;
                     const lqEl = document.getElementById('h3LqChart');
                     const gapEl = document.getElementById('h3GapChart');
+                    const sigEl = document.getElementById('h3SignificanceChart');
                     if (!this.h3ChartsResizeHandler) {
                         this.h3ChartsResizeHandler = () => {
                             if (this.h3CategoryChart) this.h3CategoryChart.resize();
                             if (this.h3DensityChart) this.h3DensityChart.resize();
                             if (this.h3LqChart) this.h3LqChart.resize();
                             if (this.h3GapChart) this.h3GapChart.resize();
+                            if (this.h3SignificanceChart) this.h3SignificanceChart.resize();
                         };
                         window.addEventListener('resize', this.h3ChartsResizeHandler);
+                    }
+
+                    if (sigEl && this.h3SubTab === 'significance') {
+                        let chart = echarts.getInstanceByDom(sigEl);
+                        if (!chart) chart = echarts.init(sigEl);
+                        this.h3SignificanceChart = chart;
+                        const summary = this.h3DerivedStats.significanceSummary || {};
+                        const rows = summary.rows || [];
+                        const values = [
+                            rows.filter(r => r.gi_hotspot_type === 'hotspot').length,
+                            rows.filter(r => r.gi_hotspot_type === 'coldspot').length,
+                            rows.filter(r => r.lisa_cluster === 'HH').length,
+                            rows.filter(r => r.lisa_cluster === 'LL').length,
+                            rows.filter(r => !r.is_significant).length,
+                        ];
+                        chart.setOption({
+                            title: { text: '显著性结构', left: 'center', top: 2, textStyle: { fontSize: 12 } },
+                            grid: { left: 44, right: 14, top: 28, bottom: 24, containLabel: true },
+                            xAxis: { type: 'value', minInterval: 1, splitLine: { lineStyle: { color: '#eceff3' } } },
+                            yAxis: {
+                                type: 'category',
+                                data: ['显著热点', '显著冷点', 'LISA HH', 'LISA LL', '不显著'],
+                                axisTick: { show: false },
+                                axisLine: { show: false }
+                            },
+                            series: [{
+                                type: 'bar',
+                                data: values,
+                                barWidth: 12,
+                                itemStyle: {
+                                    color: (params) => ['#dc2626', '#2563eb', '#ef4444', '#3b82f6', '#94a3b8'][params.dataIndex] || '#94a3b8'
+                                }
+                            }]
+                        }, true);
                     }
 
                     if (lqEl && this.h3SubTab === 'lq') {
@@ -1613,23 +1849,31 @@
                     await this.$nextTick();
                     this.updateH3Charts();
                 },
-                onH3SubTabChange(tab) {
+                async onH3SubTabChange(tab) {
                     this.h3SubTab = tab;
                     if (!this.h3AnalysisGridFeatures.length) return;
-                    if (tab !== 'metric_map') this.computeH3DerivedStats();
-                    if (tab === 'metric_map') {
-                        this.refreshMetricMapView();
-                    } else {
-                        this.renderH3BySubTab();
-                        this.updateH3Charts();
-                    }
+                    this.computeH3DerivedStats();
+                    await this.$nextTick();
+                    this.renderH3BySubTab();
+                    await this.$nextTick();
+                    this.updateH3Charts();
                     this.updateDecisionCards();
                 },
-                onH3DecisionSettingsChange() {
+                async onH3DecisionSettingsChange() {
                     if (!this.h3AnalysisGridFeatures.length) return;
                     this.computeH3DerivedStats();
+                    await this.$nextTick();
                     this.renderH3BySubTab();
+                    await this.$nextTick();
+                    this.updateH3Charts();
                     this.updateDecisionCards();
+                },
+                onH3SignificanceParamsChange() {
+                    const permutations = Math.max(0, Math.min(5000, Math.round(this._toNumber(this.h3MoranPermutations, 4999))));
+                    const confidence = Math.max(80, Math.min(99.9, this._toNumber(this.h3SignificanceConfidence, 95)));
+                    this.h3MoranPermutations = permutations;
+                    this.h3SignificanceConfidence = Number(confidence.toFixed(1));
+                    this.h3GridStatus = `显著性参数已更新：置换=${permutations}，置信度=${this.h3SignificanceConfidence.toFixed(1)}%，请点击“重新计算显著检验”生效`;
                 },
                 async computeH3Analysis() {
                     const rawRing = this.getIsochronePolygonRing();
@@ -1643,6 +1887,11 @@
                             if (pt && typeof pt.lng === 'number') return [pt.lng, pt.lat];
                             return pt;
                         }).filter(pt => Array.isArray(pt) && pt.length >= 2);
+                        const permutations = Math.max(0, Math.min(5000, Math.round(this._toNumber(this.h3MoranPermutations, 4999))));
+                        const confidence = Math.max(80, Math.min(99.9, this._toNumber(this.h3SignificanceConfidence, 95)));
+                        const alpha = Math.max(0.001, Math.min(0.2, 1 - confidence / 100));
+                        this.h3MoranPermutations = permutations;
+                        this.h3SignificanceConfidence = Number(confidence.toFixed(1));
 
                         const payload = {
                             polygon: polygon,
@@ -1652,7 +1901,11 @@
                             min_overlap_ratio: this.h3GridIncludeMode === 'intersects' ? this.h3GridMinOverlapRatio : 0,
                             pois: this.allPoisDetails || [],
                             poi_coord_type: 'gcj02',
-                            neighbor_ring: 1
+                            neighbor_ring: 1,
+                            moran_permutations: permutations,
+                            significance_alpha: Number(alpha.toFixed(4)),
+                            moran_seed: 42,
+                            significance_fdr: !!this.h3SignificanceFdr
                         };
 
                         const res = await fetch('/api/v1/analysis/h3-metrics', {
@@ -1698,10 +1951,8 @@
                     if (panelId === 'h3') {
                         setTimeout(() => {
                             if (this.h3AnalysisGridFeatures.length) {
-                                this.renderH3BySubTab();
+                                this.onH3SubTabChange(this.h3SubTab);
                             }
-                            this.updateH3Charts();
-                            this.updateDecisionCards();
                         }, 0);
                     }
                 },
@@ -2370,6 +2621,10 @@
                         this.h3GapChart.dispose();
                         this.h3GapChart = null;
                     }
+                    if (this.h3SignificanceChart) {
+                        this.h3SignificanceChart.dispose();
+                        this.h3SignificanceChart = null;
+                    }
                     if (this.h3ChartsResizeHandler) {
                         window.removeEventListener('resize', this.h3ChartsResizeHandler);
                         this.h3ChartsResizeHandler = null;
@@ -2395,6 +2650,7 @@
                             if (this.h3DensityChart) this.h3DensityChart.resize();
                             if (this.h3LqChart) this.h3LqChart.resize();
                             if (this.h3GapChart) this.h3GapChart.resize();
+                            if (this.h3SignificanceChart) this.h3SignificanceChart.resize();
                         };
                         window.addEventListener('resize', this.h3ChartsResizeHandler);
                     }

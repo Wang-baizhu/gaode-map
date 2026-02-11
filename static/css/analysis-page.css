@@ -329,6 +329,145 @@ label {
     font-weight: 600;
 }
 
+.h3-control-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.h3-control-row-tight {
+    gap: 8px;
+}
+
+.h3-control-row .count-badge {
+    margin-left: auto;
+}
+
+.h3-significance-actions {
+    margin-top: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.h3-btn {
+    width: auto;
+    min-width: 96px;
+    height: 30px;
+    padding: 0 12px;
+    border-radius: 10px;
+    border: 1px solid transparent;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.1px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.12s ease, box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
+}
+
+.h3-btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+}
+
+.h3-btn:active:not(:disabled) {
+    transform: translateY(0);
+}
+
+.h3-btn:disabled {
+    border-color: #e2e8f0;
+    background: #f8fafc;
+    color: #94a3b8;
+    box-shadow: none;
+    cursor: not-allowed;
+}
+
+.h3-btn-primary {
+    border-color: #0f172a;
+    background: linear-gradient(180deg, #1f2937 0%, #111827 100%);
+    color: #ffffff;
+    box-shadow: 0 3px 10px rgba(17, 24, 39, 0.28);
+}
+
+.h3-btn-primary:hover:not(:disabled) {
+    border-color: #0b1220;
+    box-shadow: 0 6px 14px rgba(17, 24, 39, 0.34);
+}
+
+.h3-btn-secondary {
+    border-color: #c9d7ef;
+    background: linear-gradient(180deg, #ffffff 0%, #f2f7ff 100%);
+    color: #1f4f9a;
+    box-shadow: 0 1px 0 rgba(31, 79, 154, 0.08), 0 4px 10px rgba(59, 130, 246, 0.08);
+}
+
+.h3-btn-secondary:hover:not(:disabled) {
+    border-color: #99b4df;
+    background: linear-gradient(180deg, #ffffff 0%, #e9f2ff 100%);
+    box-shadow: 0 2px 0 rgba(31, 79, 154, 0.1), 0 8px 14px rgba(59, 130, 246, 0.14);
+}
+
+.h3-btn-ghost {
+    border-color: #d7dde7;
+    background: #ffffff;
+    color: #475569;
+    box-shadow: 0 1px 0 rgba(15, 23, 42, 0.04);
+}
+
+.h3-btn-ghost:hover:not(:disabled) {
+    border-color: #b7c1d2;
+    background: #f8fafc;
+    color: #334155;
+    box-shadow: 0 4px 10px rgba(15, 23, 42, 0.08);
+}
+
+.h3-check-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border: 1px solid #d8e0ee;
+    border-radius: 10px;
+    background: #ffffff;
+    color: #475569;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
+    transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+
+.h3-check-chip:hover {
+    border-color: #b5c5e2;
+    background: #f8fbff;
+    box-shadow: 0 3px 10px rgba(59, 130, 246, 0.08);
+}
+
+.h3-check-chip input[type="checkbox"] {
+    margin: 0;
+    width: 14px;
+    height: 14px;
+    accent-color: #1f4f9a;
+    cursor: pointer;
+}
+
+.h3-check-chip-compact {
+    padding: 4px 8px;
+    font-size: 11px;
+    gap: 6px;
+    border-radius: 9px;
+    line-height: 1.1;
+}
+
+.h3-check-chip-compact input[type="checkbox"] {
+    width: 13px;
+    height: 13px;
+}
+
 .btn-compact {
     width: auto;
     padding: 6px 10px;
@@ -432,6 +571,14 @@ label {
     .h3-subtab-pill {
         flex: 0 0 auto;
         min-width: 88px;
+    }
+
+    .h3-significance-actions {
+        justify-content: flex-start;
+    }
+
+    .h3-control-row .count-badge {
+        margin-left: 0;
     }
 }
 

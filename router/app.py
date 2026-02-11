@@ -345,6 +345,10 @@ async def analyze_h3_metrics(payload: H3MetricsRequest):
         poi_payload,
         payload.poi_coord_type,
         payload.neighbor_ring,
+        payload.moran_permutations,
+        payload.significance_alpha,
+        payload.moran_seed,
+        payload.significance_fdr,
     )
     return result
 

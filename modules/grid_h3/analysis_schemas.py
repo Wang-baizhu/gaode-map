@@ -38,6 +38,26 @@ class H3MetricsRequest(BaseModel):
         description="Coordinate system of POI locations",
     )
     neighbor_ring: int = Field(1, ge=1, le=3, description="Neighbor ring size for neighborhood metrics")
+    moran_permutations: int = Field(
+        4999,
+        ge=0,
+        le=5000,
+        description="Permutation count for Moran significance test (0 disables p-value)",
+    )
+    significance_alpha: float = Field(
+        0.05,
+        ge=0.001,
+        le=0.2,
+        description="Significance threshold for Moran p-value",
+    )
+    moran_seed: Optional[int] = Field(
+        42,
+        description="Random seed for Moran permutation test",
+    )
+    significance_fdr: bool = Field(
+        False,
+        description="Whether to use Benjamini-Hochberg FDR correction for local significance",
+    )
 
 
 class H3AnalysisSummary(BaseModel):
@@ -46,6 +66,12 @@ class H3AnalysisSummary(BaseModel):
     avg_density_poi_per_km2: float = 0.0
     avg_local_entropy: float = 0.0
     global_moran_i_density: Optional[float] = None
+    global_moran_z_score: Optional[float] = None
+    global_moran_p_value: Optional[float] = None
+    global_moran_significant: Optional[bool] = None
+    significant_cell_count: int = Field(0, ge=0)
+    hotspot_cell_count: int = Field(0, ge=0)
+    coldspot_cell_count: int = Field(0, ge=0)
 
 
 class CategoryDistribution(BaseModel):
