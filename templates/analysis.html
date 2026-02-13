@@ -187,12 +187,37 @@
                             <input type="range" v-model.number="timeHorizon" class="minimal-range" min="5" max="60"
                                 step="5">
                         </div>
+                        <div class="form-group" style="display:flex; align-items:center; gap:8px;">
+                            <label style="margin:0;">底图源</label>
+                            <select v-model="basemapSource" @change="onBasemapSourceChange"
+                                class="minimal-input" style="padding:4px 8px; max-width:180px;">
+                                <option value="tianditu">天地图（国内科研）</option>
+                                <option value="osm">OpenStreetMap（科研）</option>
+                                <option value="amap">高德（业务）</option>
+                            </select>
+                        </div>
 
 
                         <button class="btn-black" :disabled="!selectedPoint || isCalculating" @click="startAnalysis">
                             {% raw %}{{ isCalculating ? '计算中...' : '下一步: 生成等时圈' }}{% endraw %}
                         </button>
                         <div v-if="errorMessage" class="error-msg">{% raw %}{{ errorMessage }}{% endraw %}</div>
+                        <div v-if="basemapSource === 'tianditu' && tdtDiag && tdtDiag.ok === false"
+                            style="margin-top:10px; padding:10px; border:1px solid #f1b0b7; border-radius:8px; background:#fff7f7;">
+                            <div style="font-size:12px; font-weight:600; color:#9f1239; margin-bottom:6px;">天地图诊断信息</div>
+                            <div style="font-size:11px; color:#6b7280; line-height:1.5; margin-bottom:6px;">
+                                {% raw %}阶段={{ tdtDiag.phase || '-' }}；状态={{ tdtDiag.status === null || tdtDiag.status === undefined ? '-' : tdtDiag.status }}；内容类型={{ tdtDiag.contentType || '-' }}{% endraw %}
+                            </div>
+                            <pre
+                                style="margin:0; max-height:120px; overflow:auto; white-space:pre-wrap; word-break:break-all; font-size:11px; line-height:1.45; color:#4b5563; background:#fff; border:1px solid #e5e7eb; border-radius:6px; padding:8px;">{% raw %}{{ buildTdtDiagText() }}{% endraw %}</pre>
+                            <div style="display:flex; align-items:center; gap:8px; margin-top:8px;">
+                                <button type="button" class="btn-outline" style="margin-top:0; padding:6px 12px; width:auto;"
+                                    @click="copyTdtDiag">
+                                    复制诊断
+                                </button>
+                                <span style="font-size:11px; color:#6b7280;">{% raw %}{{ tdtDiagCopyStatus }}{% endraw %}</span>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- Step 2: POI Categories -->
@@ -265,7 +290,26 @@
 
                                 <div class="panel" v-show="activeStep3Panel === 'parcel'">
                                     <h4>地块指标</h4>
-                                    <div class="panel-placeholder">待接入数据/开发中</div>
+                                    <div class="filter-section h3-control-row">
+                                        <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#666;">
+                                            最小地块面积(m²)
+                                            <input type="number" min="0" step="50" v-model.number="parcelMinAreaM2"
+                                                style="width:100px; padding:4px 6px; border:1px solid #ddd; border-radius:6px; font-size:12px;">
+                                        </label>
+                                        <button class="h3-btn h3-btn-primary"
+                                            :disabled="isGeneratingParcels || !lastIsochroneGeoJSON"
+                                            @click="generateRoadParcels">
+                                            {% raw %}{{ isGeneratingParcels ? '生成中...' : '按路网生成地块' }}{% endraw %}
+                                        </button>
+                                        <button class="h3-btn h3-btn-ghost" :disabled="parcelCount === 0"
+                                            @click="clearRoadParcels">
+                                            清空地块
+                                        </button>
+                                        <span class="count-badge">地块数 {% raw %}{{ parcelCount }}{% endraw %}</span>
+                                    </div>
+                                    <div v-if="parcelStatus" class="h3-status-line" style="margin-top:8px;">
+                                        {% raw %}{{ parcelStatus }}{% endraw %}
+                                    </div>
                                 </div>
 
                                 <div class="panel" v-show="activeStep3Panel === 'h3'">
@@ -304,6 +348,10 @@
                                             清空网络
                                         </button>
                                         <span class="count-badge">网格数 {% raw %}{{ h3GridCount }}{% endraw %}</span>
+                                        <label class="h3-check-chip h3-check-chip-compact">
+                                            <input type="checkbox" v-model="h3BasemapMuted" @change="onH3BasemapStyleChange">
+                                            简化底图
+                                        </label>
                                     </div>
                                     <div class="filter-section" v-if="h3GridIncludeMode === 'intersects'"
                                         style="margin-top:8px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
@@ -599,7 +647,7 @@
                                     </div>
                                     <div v-if="h3SubTab === 'gap' && h3DerivedStats.gapSummary" style="margin-top:10px;">
                                         <div class="h3-analysis-hint">
-                                            看需求百分位与供给百分位差值：分数越高越值得优先补位。
+                                            先看“需求分位”和“供给分位”，再看两者差值；需求高且供给低的网格优先补位。
                                         </div>
                                         <div class="h3-decision-cards">
                                             <div class="h3-decision-card">
@@ -616,13 +664,13 @@
                                             </div>
                                         </div>
                                         <div class="panel-placeholder" style="margin-top:8px;">
-                                            缺口分 = 需求百分位 - 目标业态供给百分位（越高越可能供给偏弱）
+                                            {% raw %}{{ h3DerivedStats.gapSummary.insight || '缺口分 = 需求百分位 - 目标业态供给百分位（越高越可能供给偏弱）' }}{% endraw %}
                                         </div>
                                         <div id="h3GapChart" style="height:180px; margin-top:8px;"></div>
                                         <table class="h3-mini-table" style="margin-top:8px;">
                                             <thead>
                                                 <tr>
-                                                    <th>H3</th><th>POI</th><th>密度</th><th>熵</th><th>可信度</th><th>统计</th><th>缺口分</th>
+                                                    <th>H3</th><th>需求分位</th><th>供给分位</th><th>缺口分</th><th>可信度</th><th>结论</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
@@ -635,12 +683,11 @@
                                                             {% raw %}{{ shortH3Id(row.h3_id) }}{% endraw %}
                                                         </button>
                                                     </td>
-                                                    <td>{% raw %}{{ row.poi_count }}{% endraw %}</td>
-                                                    <td>{% raw %}{{ row.density.toFixed(2) }}{% endraw %}</td>
-                                                    <td>{% raw %}{{ row.entropy_norm === null ? '-' : row.entropy_norm.toFixed(2) }}{% endraw %}</td>
-                                                    <td>{% raw %}{{ (row.confidence && row.confidence.label) || '低' }}{% endraw %}</td>
-                                                    <td>{% raw %}{{ row.is_significant ? '显著' : '不显著' }}{% endraw %}</td>
+                                                    <td>{% raw %}{{ Math.round((row.demand_pct || 0) * 100) }}{% endraw %}</td>
+                                                    <td>{% raw %}{{ Math.round((row.supply_pct || 0) * 100) }}{% endraw %}</td>
                                                     <td>{% raw %}{{ row.gap_score === null ? '-' : row.gap_score.toFixed(2) }}{% endraw %}</td>
+                                                    <td>{% raw %}{{ (row.confidence && row.confidence.label) || '低' }}{% endraw %}</td>
+                                                    <td>{% raw %}{{ row.gap_zone_label || '-' }}{% endraw %}</td>
                                                 </tr>
                                             </tbody>
                                         </table>
@@ -719,7 +766,14 @@
 
         <!-- Middle: Map -->
         <main class="main-content">
+            <div id="tianditu-container" aria-hidden="true"></div>
             <div id="container"></div>
+            <div v-if="basemapSource === 'osm'" style="position:absolute; right:8px; bottom:6px; z-index:2; background:rgba(255,255,255,0.9); border:1px solid #e5e7eb; border-radius:6px; padding:2px 6px; font-size:10px; color:#4b5563;">
+                © OpenStreetMap contributors
+            </div>
+            <div v-else-if="basemapSource === 'tianditu'" style="position:absolute; right:8px; bottom:6px; z-index:2; background:rgba(255,255,255,0.9); border:1px solid #e5e7eb; border-radius:6px; padding:2px 6px; font-size:10px; color:#4b5563;">
+                © 天地图
+            </div>
         </main>
     </div>
 
@@ -752,6 +806,9 @@
                     timeHorizon: 15,
                     isCalculating: false,
                     errorMessage: '',
+                    basemapSource: 'amap',
+                    tdtDiag: null,
+                    tdtDiagCopyStatus: '',
 
                     // POI Data
                     poiKeywords: '', // Not used if using categories, but kept for custom
@@ -804,6 +861,7 @@
                     h3GridIncludeMode: 'intersects',
                     h3NeighborRing: 1,
                     h3GridMinOverlapRatio: 0.15,
+                    h3BasemapMuted: true,
                     h3GridFeatures: [],
                     selectedH3Id: null,
                     isComputingH3Analysis: false,
@@ -849,6 +907,13 @@
                     h3GapChart: null,
                     h3SignificanceChart: null,
                     h3ChartsResizeHandler: null,
+
+                    // Road Parcel
+                    isGeneratingParcels: false,
+                    parcelStatus: '',
+                    parcelCount: 0,
+                    parcelFeatures: [],
+                    parcelMinAreaM2: 300,
                 }
             },
             async mounted() {
@@ -856,8 +921,15 @@
                     // 1. Initialize config from server-injected variables directly to save an RTT
                     this.config = {
                         amap_js_api_key: "{{ amap_js_api_key }}",
-                        amap_js_security_code: "{{ amap_js_security_code }}"
+                        amap_js_security_code: "{{ amap_js_security_code }}",
+                        tianditu_key: "{{ tianditu_key }}"
                     };
+                    if (this.basemapSource === 'tianditu') {
+                        const tileReady = await this.validateTiandituSource();
+                        if (!tileReady) {
+                            this.tdtDiagCopyStatus = '';
+                        }
+                    }
 
                     // 2. Load AMap script and fetch history in parallel
                     // Don't block the initial UI on history loading
@@ -901,6 +973,7 @@
                     this.h3GridFeatures = [];
                     this.isGeneratingGrid = false;
                     this.resetH3AnalysisState();
+                    this.clearRoadParcels();
 
                     if (this.markerManager) {
                         if (this.markerManager.markers) {
@@ -922,6 +995,9 @@
                     if (this.mapCore) {
                         if (this.mapCore.clearGridPolygons) {
                             this.mapCore.clearGridPolygons();
+                        }
+                        if (this.mapCore.clearParcelPolygons) {
+                            this.mapCore.clearParcelPolygons();
                         }
                         this.mapCore.clearCustomPolygons();
                         this.mapCore.setRadius(0);
@@ -968,6 +1044,72 @@
                     }
                     return null;
                 },
+                clearRoadParcels(options = {}) {
+                    this.parcelFeatures = [];
+                    this.parcelCount = 0;
+                    this.isGeneratingParcels = false;
+                    if (!options.silent) {
+                        this.parcelStatus = '';
+                    }
+                    if (this.mapCore && this.mapCore.clearParcelPolygons) {
+                        this.mapCore.clearParcelPolygons();
+                    }
+                },
+                async generateRoadParcels() {
+                    const rawRing = this.getIsochronePolygonRing();
+                    if (!rawRing || this.isGeneratingParcels) return;
+
+                    this.isGeneratingParcels = true;
+                    this.parcelStatus = '正在按路网生成地块...';
+                    try {
+                        const polygon = rawRing.map(pt => {
+                            if (Array.isArray(pt)) return [pt[0], pt[1]];
+                            if (pt && typeof pt.lng === 'number') return [pt.lng, pt.lat];
+                            return pt;
+                        }).filter(pt => Array.isArray(pt) && pt.length >= 2);
+
+                        const center = this.selectedPoint
+                            ? [this.selectedPoint.lng, this.selectedPoint.lat]
+                            : null;
+                        const payload = {
+                            polygon: polygon,
+                            coord_type: 'gcj02',
+                            center: center,
+                            mode: this.transportMode,
+                            time_min: parseInt(this.timeHorizon, 10),
+                            min_parcel_area_m2: Math.max(0, this._toNumber(this.parcelMinAreaM2, 300)),
+                        };
+
+                        const res = await fetch('/api/v1/analysis/road-parcels', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        if (!res.ok) {
+                            let detail = '';
+                            try { detail = await res.text(); } catch (_) { }
+                            throw new Error(detail || '地块生成失败');
+                        }
+
+                        const data = await res.json();
+                        this.parcelFeatures = data.features || [];
+                        this.parcelCount = Number.isFinite(data.count) ? data.count : this.parcelFeatures.length;
+
+                        if (this.mapCore && this.mapCore.setParcelFeatures) {
+                            this.mapCore.setParcelFeatures(this.parcelFeatures);
+                        }
+
+                        const roadCount = this._toNumber((data.meta || {}).road_line_count, 0);
+                        this.parcelStatus = this.parcelCount > 0
+                            ? `已生成 ${this.parcelCount} 个地块（路网线段 ${roadCount}）`
+                            : '当前范围未生成有效地块';
+                    } catch (e) {
+                        console.error(e);
+                        this.parcelStatus = '地块生成失败: ' + e.message;
+                    } finally {
+                        this.isGeneratingParcels = false;
+                    }
+                },
                 clearH3Grid() {
                     this.h3GridFeatures = [];
                     this.h3GridCount = 0;
@@ -987,6 +1129,48 @@
                         this.h3GridStatus = `已切换到“完全包含（严格）”，请点击“生成网络”`;
                     } else {
                         this.h3GridStatus = `已切换到“相交优先（边缘保留）”，最小重叠比例=${this.h3GridMinOverlapRatio.toFixed(2)}，请点击“生成网络”`;
+                    }
+                },
+                onH3BasemapStyleChange() {
+                    if (!this.mapCore || !this.mapCore.setBasemapMuted) return;
+                    this.mapCore.setBasemapMuted(!!this.h3BasemapMuted);
+                },
+                async onBasemapSourceChange() {
+                    const allowedSources = ['amap', 'osm', 'tianditu'];
+                    let source = allowedSources.includes(this.basemapSource) ? this.basemapSource : 'amap';
+                    if (source === 'tianditu') {
+                        const tileReady = await this.validateTiandituSource();
+                        if (!tileReady) {
+                            this.tdtDiagCopyStatus = '';
+                        }
+                    } else {
+                        this.tdtDiag = null;
+                        this.tdtDiagCopyStatus = '';
+                        if (this.errorMessage && this.errorMessage.indexOf('天地图') >= 0) {
+                            this.errorMessage = '';
+                        }
+                    }
+                    this.basemapSource = source;
+                    if (this.mapCore && this.mapCore.setBasemapSource) {
+                        const applyResult = this.mapCore.setBasemapSource(source);
+                        if (source === 'tianditu' && applyResult && applyResult.ok === false) {
+                            this.tdtDiag = {
+                                ok: false,
+                                phase: 'map-init',
+                                status: null,
+                                contentType: '',
+                                bodySnippet: applyResult.message || '',
+                                reason: applyResult.code || 'wmts-layer-init-failed',
+                            };
+                            this.errorMessage = '天地图 WMTS 图层初始化失败，请检查：Key 类型=Web JS，白名单包含 localhost/127.0.0.1（及端口）。';
+                        } else if (source === 'tianditu' && applyResult && applyResult.ok === true) {
+                            if (this.errorMessage && this.errorMessage.indexOf('天地图') >= 0) {
+                                this.errorMessage = '';
+                            }
+                        }
+                    }
+                    if (this.mapCore && this.mapCore.setBasemapMuted) {
+                        this.mapCore.setBasemapMuted(!!this.h3BasemapMuted);
                     }
                 },
                 async onH3NeighborRingChange() {
@@ -1365,6 +1549,18 @@
                         supply_target_density: supplyTargetDensity,
                     };
                 },
+                classifyGapZone(demandPct, supplyPct, gapScore) {
+                    const demand = this._toNumber(demandPct, 0);
+                    const supply = this._toNumber(supplyPct, 0);
+                    const gap = this._toNumber(gapScore, 0);
+                    if (demand >= 0.6 && supply < 0.4) return '补位机会区';
+                    if (demand >= 0.6 && supply >= 0.6) return '高需求高供给（竞争区）';
+                    if (demand < 0.4 && supply >= 0.6) return '低需求高供给（偏饱和）';
+                    if (demand < 0.4 && supply < 0.4) return '低需求低供给（观察区）';
+                    if (gap >= 0.15) return '偏机会区';
+                    if (gap <= -0.15) return '偏饱和区';
+                    return '相对平衡区';
+                },
                 computeH3DerivedStats() {
                     const features = this.h3AnalysisGridFeatures || [];
                     const topN = Math.max(3, Math.min(30, Math.round(this._toNumber(this.h3DecisionTopN, 10))));
@@ -1516,10 +1712,12 @@
                     const gapRowsAll = gapRowsRaw.map(row => {
                         const demandPct = this._percentileFromSorted(demandSorted, row.demand_proxy);
                         const supplyPct = this._percentileFromSorted(supplySorted, row.supply_target_density);
+                        const gapScore = demandPct - supplyPct;
                         return Object.assign({}, row, {
                             demand_pct: demandPct,
                             supply_pct: supplyPct,
-                            gap_score: demandPct - supplyPct,
+                            gap_score: gapScore,
+                            gap_zone_label: this.classifyGapZone(demandPct, supplyPct, gapScore),
                         });
                     }).sort((a, b) => {
                         const gapDiff = this._toNumber(b.gap_score, -999) - this._toNumber(a.gap_score, -999);
@@ -1530,8 +1728,12 @@
                     const gapRows = this.h3OnlySignificant
                         ? gapRowsAll.filter(r => r.is_significant)
                         : gapRowsAll;
-                    const gapOpportunityCount = gapRows.filter(r => this._toNumber(r.gap_score, 0) > 0.25).length;
+                    const gapOpportunityCount = gapRows.filter(r => this._toNumber(r.gap_score, 0) > 0.25 && this._toNumber(r.demand_pct, 0) >= 0.6).length;
                     const gapMax = gapRows.length ? Math.max(...gapRows.map(r => this._toNumber(r.gap_score, 0))) : 0;
+                    const topGap = gapRows.length ? gapRows[0] : null;
+                    const gapInsight = topGap
+                        ? `Top1 网格需求分位 ${Math.round(this._toNumber(topGap.demand_pct, 0) * 100)}，供给分位 ${Math.round(this._toNumber(topGap.supply_pct, 0) * 100)}，结论：${topGap.gap_zone_label}`
+                        : '当前缺口结果为空，请调整范围或业态后重算';
 
                     this.h3DerivedStats = {
                         significanceSummary: {
@@ -1565,7 +1767,10 @@
                             rows: gapRows,
                             opportunityCount: gapOpportunityCount,
                             maxGap: gapMax,
-                            recommendation: `${this._getH3CategoryLabel(this.h3TargetCategory)}优先投放到高缺口网格`,
+                            recommendation: topGap
+                                ? `${this._getH3CategoryLabel(this.h3TargetCategory)}优先关注${topGap.gap_zone_label}`
+                                : `${this._getH3CategoryLabel(this.h3TargetCategory)}当前无明显补位机会`,
+                            insight: gapInsight,
                         },
                         topCells: {
                             significance: sigRows.slice(0, topN),
@@ -1609,7 +1814,7 @@
                         noDataLabel: `无数据（样本<${this.h3EntropyMinPoi}）`,
                         noDataColor: '#d1d5db',
                     };
-                    this.mapCore.setGridFeatures(styled, { fillOpacity: 0.34, strokeWeight: 1 });
+                    this.mapCore.setGridFeatures(styled, { fillOpacity: 0.38, strokeWeight: 1.6 });
                     this.tryRefocusSelectedGrid();
                 },
                 _renderSignificanceMap() {
@@ -1653,7 +1858,7 @@
                         noDataLabel: '不显著 / 无数据',
                         noDataColor: colorByClass.NS,
                     };
-                    this.mapCore.setGridFeatures(styled, { fillOpacity: 0.34, strokeWeight: 1 });
+                    this.mapCore.setGridFeatures(styled, { fillOpacity: 0.38, strokeWeight: 1.6 });
                     this.tryRefocusSelectedGrid();
                 },
                 _renderLqMap() {
@@ -1689,7 +1894,7 @@
                         props.strokeWeight = 1;
                         return { type: feature.type, geometry: feature.geometry, properties: props };
                     });
-                    this.mapCore.setGridFeatures(styled, { fillOpacity: 0.34, strokeWeight: 1 });
+                    this.mapCore.setGridFeatures(styled, { fillOpacity: 0.38, strokeWeight: 1.6 });
                     this.tryRefocusSelectedGrid();
                 },
                 _renderGapMap() {
@@ -1725,7 +1930,7 @@
                         props.strokeWeight = 1;
                         return { type: feature.type, geometry: feature.geometry, properties: props };
                     });
-                    this.mapCore.setGridFeatures(styled, { fillOpacity: 0.34, strokeWeight: 1 });
+                    this.mapCore.setGridFeatures(styled, { fillOpacity: 0.38, strokeWeight: 1.6 });
                     this.tryRefocusSelectedGrid();
                 },
                 renderH3BySubTab() {
@@ -1815,24 +2020,89 @@
                         let chart = echarts.getInstanceByDom(gapEl);
                         if (!chart) chart = echarts.init(gapEl);
                         this.h3GapChart = chart;
-                        const rows = ((this.h3DerivedStats.gapSummary || {}).rows || []).slice(0, this.h3DecisionTopN);
+                        const rows = ((this.h3DerivedStats.gapSummary || {}).rows || []);
+                        const data = rows.map((row) => {
+                            const demandPct = Math.max(0, Math.min(1, this._toNumber(row.demand_pct, 0)));
+                            const supplyPct = Math.max(0, Math.min(1, this._toNumber(row.supply_pct, 0)));
+                            const gapScore = this._toNumber(row.gap_score, 0);
+                            const poiCount = Math.max(0, this._toNumber(row.poi_count, 0));
+                            const symbolSize = Math.max(8, Math.min(26, 8 + Math.sqrt(poiCount) * 2));
+                            return {
+                                h3_id: row.h3_id,
+                                gap_zone_label: row.gap_zone_label || '',
+                                confidence_label: (row.confidence && row.confidence.label) || '低',
+                                demand_pct: demandPct,
+                                supply_pct: supplyPct,
+                                gap_score: gapScore,
+                                poi_count: poiCount,
+                                symbolSize: symbolSize,
+                                value: [Math.round(supplyPct * 100), Math.round(demandPct * 100), gapScore]
+                            };
+                        });
                         chart.setOption({
-                            title: { text: `Top${this.h3DecisionTopN} 缺口网格`, left: 'center', top: 2, textStyle: { fontSize: 12 } },
-                            grid: { left: 50, right: 14, top: 28, bottom: 36, containLabel: true },
-                            xAxis: {
-                                type: 'category',
-                                data: rows.map(r => (r.h3_id || '').slice(-6)),
-                                axisLabel: { rotate: 30, fontSize: 10, color: '#6b7280' }
+                            title: { text: '需求-供给散点（每点=网格）', left: 'center', top: 2, textStyle: { fontSize: 12 } },
+                            grid: { left: 54, right: 14, top: 28, bottom: 34, containLabel: true },
+                            tooltip: {
+                                trigger: 'item',
+                                formatter: (params) => {
+                                    const d = params.data || {};
+                                    const hid = d.h3_id || '-';
+                                    return [
+                                        `<b>${this.shortH3Id(hid)}</b>`,
+                                        `需求分位: ${d.value ? d.value[1] : 0}`,
+                                        `供给分位: ${d.value ? d.value[0] : 0}`,
+                                        `缺口分: ${this._toNumber(d.gap_score, 0).toFixed(2)}`,
+                                        `可信度: ${d.confidence_label || '-'}`,
+                                        `结论: ${d.gap_zone_label || '-'}`,
+                                    ].join('<br/>');
+                                }
                             },
-                            yAxis: { type: 'value', splitLine: { lineStyle: { color: '#eceff3' } } },
+                            xAxis: {
+                                type: 'value',
+                                name: '供给百分位',
+                                min: 0,
+                                max: 100,
+                                splitLine: { lineStyle: { color: '#eceff3' } }
+                            },
+                            yAxis: {
+                                type: 'value',
+                                name: '需求百分位',
+                                min: 0,
+                                max: 100,
+                                splitLine: { lineStyle: { color: '#eceff3' } }
+                            },
                             series: [{
-                                type: 'bar',
-                                data: rows.map(r => this._toNumber(r.gap_score, 0)),
+                                type: 'scatter',
+                                data: data,
+                                symbolSize: (item) => item.symbolSize || 10,
                                 itemStyle: {
-                                    color: (params) => (params.value >= 0 ? '#d8573f' : '#3f7fd8')
+                                    color: (params) => {
+                                        const gap = this._toNumber(params && params.data && params.data.gap_score, 0);
+                                        if (gap >= 0.25) return '#d8573f';
+                                        if (gap <= -0.25) return '#3f7fd8';
+                                        return '#93a5bf';
+                                    },
+                                    opacity: 0.85
+                                },
+                                emphasis: {
+                                    itemStyle: {
+                                        borderColor: '#111827',
+                                        borderWidth: 1
+                                    }
+                                },
+                                markLine: {
+                                    silent: true,
+                                    symbol: ['none', 'none'],
+                                    lineStyle: { type: 'dashed', color: '#cbd5e1' },
+                                    data: [{ xAxis: 50 }, { yAxis: 50 }]
                                 }
                             }]
                         }, true);
+                        chart.off('click');
+                        chart.on('click', (params) => {
+                            const h3Id = params && params.data && params.data.h3_id;
+                            if (h3Id) this.focusGridByH3Id(h3Id);
+                        });
                     }
                 },
                 renderH3AnalysisGrid(metricKey) {
@@ -1882,7 +2152,7 @@
                         };
                     });
 
-                    this.mapCore.setGridFeatures(styled, { fillOpacity: 0.34, strokeWeight: 1 });
+                    this.mapCore.setGridFeatures(styled, { fillOpacity: 0.38, strokeWeight: 1.6 });
                     this.tryRefocusSelectedGrid();
                 },
                 onH3MetricViewChange() {
@@ -2094,6 +2364,7 @@
 
                                 this.poiStatus = '';
                                 this.clearH3Grid();
+                                this.clearRoadParcels();
                             }
 
                             if (this.step >= 2 && targetStep <= 1) {
@@ -2103,6 +2374,7 @@
                                 }
                                 this.lastIsochroneGeoJSON = null;
                                 this.clearH3Grid();
+                                this.clearRoadParcels();
                             }
                         }
                         this.step = targetStep;
@@ -2141,6 +2413,10 @@
                 },
                 loadAMapScript(key, securityCode) {
                     return new Promise((resolve, reject) => {
+                        if (window.AMap && window.AMap.Map) {
+                            resolve();
+                            return;
+                        }
                         window._AMapSecurityConfig = { securityJsCode: securityCode };
                         const script = document.createElement('script');
                         script.src = `https://webapi.amap.com/maps?v=1.4.15&key=${key}&plugin=AMap.Autocomplete,AMap.PlaceSearch`;
@@ -2149,15 +2425,163 @@
                         document.head.appendChild(script);
                     });
                 },
+                async probeTiandituTile(timeoutMs = 4500) {
+                    const key = (this.config && this.config.tianditu_key ? String(this.config.tianditu_key) : '').trim();
+                    if (!key) {
+                        return {
+                            ok: false,
+                            phase: 'wmts-probe',
+                            status: null,
+                            contentType: '',
+                            bodySnippet: '',
+                            reason: 'missing-key',
+                            url: '',
+                        };
+                    }
+                    const probeUrl = `https://t0.tianditu.gov.cn/vec_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=vec&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILEMATRIX=7&TILEROW=53&TILECOL=107&tk=${encodeURIComponent(key)}&_ts=${Date.now()}`;
+                    const controller = new AbortController();
+                    const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+                    try {
+                        const response = await fetch(probeUrl, {
+                            method: 'GET',
+                            cache: 'no-store',
+                            signal: controller.signal,
+                        });
+                        const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+                        const isImage = this.isImageContentType(contentType);
+                        let bodySnippet = '';
+                        if (!isImage) {
+                            try {
+                                bodySnippet = this._trimText(await response.text(), 300);
+                            } catch (_) {
+                                bodySnippet = '';
+                            }
+                        }
+                        const status = response.status;
+                        const ok = response.ok && isImage;
+                        let reason = 'ok';
+                        if (!ok) {
+                            if (status === 418) reason = 'http-418';
+                            else if (status >= 500) reason = 'http-5xx';
+                            else if (status >= 400) reason = 'http-4xx';
+                            else if (response.ok) reason = 'non-image-response';
+                            else reason = 'http-error';
+                        }
+                        return {
+                            ok: ok,
+                            phase: 'wmts-probe',
+                            status: status,
+                            contentType: contentType,
+                            bodySnippet: bodySnippet,
+                            reason: reason,
+                            url: probeUrl,
+                        };
+                    } catch (e) {
+                        if (e && e.name === 'AbortError') {
+                            return {
+                                ok: false,
+                                phase: 'wmts-probe',
+                                status: null,
+                                contentType: '',
+                                bodySnippet: '',
+                                reason: 'timeout',
+                                url: probeUrl,
+                            };
+                        }
+                        return {
+                            ok: false,
+                            phase: 'wmts-probe',
+                            status: null,
+                            contentType: '',
+                            bodySnippet: this._trimText(e && e.message ? e.message : String(e), 300),
+                            reason: 'network-error',
+                            url: probeUrl,
+                        };
+                    } finally {
+                        window.clearTimeout(timer);
+                    }
+                },
+                async validateTiandituSource() {
+                    const result = await this.probeTiandituTile();
+                    this.tdtDiag = result;
+                    this.tdtDiagCopyStatus = '';
+                    if (result.ok) {
+                        if (this.errorMessage && this.errorMessage.indexOf('天地图') >= 0) {
+                            this.errorMessage = '';
+                        }
+                        return true;
+                    }
+                    if (result.reason === 'missing-key') {
+                        this.errorMessage = '未配置天地图 Key（TIANDITU_KEY）。';
+                    } else if (result.reason === 'timeout') {
+                        this.errorMessage = '天地图 WMTS 探测超时，请稍后重试（配置修改可能需要 5-10 分钟生效）。';
+                    } else if (result.reason === 'http-418') {
+                        this.errorMessage = '天地图 WMTS 探测被拦截（HTTP 418），请检查 Key 类型=Web JS，白名单包含 localhost/127.0.0.1（及端口）。';
+                    } else {
+                        this.errorMessage = `天地图 WMTS 探测失败（${result.status || 'NO_STATUS'}），请检查 Key 与白名单。`;
+                    }
+                    return false;
+                },
+                isImageContentType(contentType) {
+                    const ct = String(contentType || '').toLowerCase();
+                    return ct.indexOf('image/') >= 0 || ct.indexOf('application/octet-stream') >= 0;
+                },
+                _trimText(value, maxLen = 300) {
+                    const text = String(value || '');
+                    if (text.length <= maxLen) return text;
+                    return text.slice(0, maxLen) + '...';
+                },
+                buildTdtDiagText() {
+                    if (!this.tdtDiag) return '';
+                    const rows = [
+                        `ok=${this.tdtDiag.ok}`,
+                        `phase=${this.tdtDiag.phase || '-'}`,
+                        `reason=${this.tdtDiag.reason || '-'}`,
+                        `status=${this.tdtDiag.status === null || this.tdtDiag.status === undefined ? '-' : this.tdtDiag.status}`,
+                        `contentType=${this.tdtDiag.contentType || '-'}`,
+                    ];
+                    if (this.tdtDiag.url) rows.push(`url=${this.tdtDiag.url}`);
+                    if (this.tdtDiag.bodySnippet) rows.push(`body=${this.tdtDiag.bodySnippet}`);
+                    return rows.join('\n');
+                },
+                async copyTdtDiag() {
+                    const text = this.buildTdtDiagText();
+                    if (!text) {
+                        this.tdtDiagCopyStatus = '无可复制内容';
+                        return;
+                    }
+                    try {
+                        await navigator.clipboard.writeText(text);
+                        this.tdtDiagCopyStatus = '已复制';
+                    } catch (e) {
+                        console.error(e);
+                        this.tdtDiagCopyStatus = '复制失败，请手动复制';
+                    }
+                },
                 initMap() {
                     const mapCore = new MapCore('container', {
                         center: { lng: 112.9388, lat: 28.2282 },
                         zoom: 13,
                         zooms: [3, 20],
-                        mapData: {}
+                        mapData: {},
+                        basemapSource: this.basemapSource,
+                        basemapMuted: !!this.h3BasemapMuted,
+                        tiandituKey: this.config ? this.config.tianditu_key : '',
+                        tiandituContainerId: 'tianditu-container'
                     });
                     mapCore.initMap();
                     this.mapCore = mapCore;
+                    if (this.basemapSource === 'tianditu' && mapCore.lastBasemapError) {
+                        this.tdtDiag = {
+                            ok: false,
+                            phase: 'map-init',
+                            status: null,
+                            contentType: '',
+                            bodySnippet: mapCore.lastBasemapError.message || '',
+                            reason: mapCore.lastBasemapError.code || 'wmts-layer-init-failed',
+                        };
+                        this.errorMessage = '天地图 WMTS 图层初始化失败，请检查：Key 类型=Web JS，白名单包含 localhost/127.0.0.1（及端口）。';
+                    }
 
                     mapCore.map.on('click', (e) => {
                         // Limit marker adjustment to Step 1 in Wizard mode
@@ -2228,6 +2652,7 @@
                         const geojson = await res.json();
 
                         this.clearH3Grid();
+                        this.clearRoadParcels();
                         this.lastIsochroneGeoJSON = geojson;
                         this.renderResult(geojson);
                         this.step = 2; // Advance to Step 2
@@ -2539,6 +2964,7 @@
 
                         // Cleanup previous state
                         this.clearH3Grid();
+                        this.clearRoadParcels();
                         if (this.marker) this.marker.setMap(null);
                         this.marker = null;
                         this.mapCore.clearCustomPolygons();
@@ -2636,6 +3062,7 @@
                     if (this.marker) this.marker.setMap(null);
                     this.marker = null;
                     this.clearH3Grid();
+                    this.clearRoadParcels();
                     if (this.mapCore && this.mapCore.clearCustomPolygons) {
                         this.mapCore.clearCustomPolygons();
                     }

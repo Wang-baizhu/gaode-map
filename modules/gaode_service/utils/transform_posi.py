@@ -1,5 +1,6 @@
 import math
 
+
 def wgs84_to_gcj02(lng, lat):
     """
     将WGS84坐标系转换为GCJ-02坐标系（火星坐标系）
@@ -57,6 +58,7 @@ def gcj02_to_wgs84(lng, lat, max_iter=10, threshold=1e-6):
 
     return guess_lng, guess_lat
 
+
 def transform_lat(lng, lat):
     """
     计算纬度偏移量的辅助函数
@@ -67,6 +69,7 @@ def transform_lat(lng, lat):
     ret += (160.0 * math.sin(lat / 12.0 * math.pi) + 320 * math.sin(lat * math.pi / 30.0)) * 2.0 / 3.0
     return ret
 
+
 def transform_lng(lng, lat):
     """
     计算经度偏移量的辅助函数
@@ -76,6 +79,7 @@ def transform_lng(lng, lat):
     ret += (20.0 * math.sin(lng * math.pi) + 40.0 * math.sin(lng / 3.0 * math.pi)) * 2.0 / 3.0
     ret += (150.0 * math.sin(lng / 12.0 * math.pi) + 300.0 * math.sin(lng * math.pi / 30.0)) * 2.0 / 3.0
     return ret
+
 
 def out_of_china(lng, lat):
     """

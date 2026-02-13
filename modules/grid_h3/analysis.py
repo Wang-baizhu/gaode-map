@@ -3,6 +3,9 @@ import warnings
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 import h3
+import numpy as np
+from libpysal.weights import lag_spatial
+from scipy.stats import entropy as scipy_entropy
 
 from modules.gaode_service.utils.transform_posi import gcj02_to_wgs84
 
@@ -104,16 +107,14 @@ def _neighbors(cell_id: str, ring_size: int) -> List[str]:
 
 
 def _shannon_entropy(category_counts: Dict[CategoryKey, int]) -> float:
-    total = sum(category_counts.values())
-    if total <= 0:
+    counts = np.asarray(list(category_counts.values()), dtype=float)
+    if counts.size <= 0:
         return 0.0
-    entropy = 0.0
-    for count in category_counts.values():
-        if count <= 0:
-            continue
-        p = count / total
-        entropy -= p * math.log(p)
-    return entropy
+    counts = counts[counts > 0]
+    if counts.size <= 0:
+        return 0.0
+    probs = counts / counts.sum()
+    return float(scipy_entropy(probs, base=math.e))
 
 
 def aggregate_pois_to_h3(
@@ -182,20 +183,42 @@ def compute_neighbor_metrics(
     stats_by_cell: Dict[str, Dict[str, Any]],
     neighbor_ring: int = 1,
 ) -> None:
-    cell_ids = set(stats_by_cell.keys())
-    for cell_id, stats in stats_by_cell.items():
-        neighbors = [nid for nid in _neighbors(cell_id, neighbor_ring) if nid in cell_ids and nid != cell_id]
-        if not neighbors:
+    weights, id_order = _build_pysal_weights(stats_by_cell, neighbor_ring=neighbor_ring)
+    if not weights or not id_order:
+        for stats in stats_by_cell.values():
             stats["neighbor_mean_density"] = 0.0
             stats["neighbor_mean_entropy"] = 0.0
             stats["neighbor_count"] = 0
-            continue
+        return
 
-        density_values = [stats_by_cell[n]["density_poi_per_km2"] for n in neighbors]
-        entropy_values = [stats_by_cell[n]["local_entropy"] for n in neighbors]
-        stats["neighbor_mean_density"] = float(sum(density_values) / len(density_values))
-        stats["neighbor_mean_entropy"] = float(sum(entropy_values) / len(entropy_values))
-        stats["neighbor_count"] = len(neighbors)
+    density_values = np.asarray(
+        [float(stats_by_cell[cid].get("density_poi_per_km2", 0.0) or 0.0) for cid in id_order],
+        dtype=float,
+    )
+    entropy_values = np.asarray(
+        [float(stats_by_cell[cid].get("local_entropy", 0.0) or 0.0) for cid in id_order],
+        dtype=float,
+    )
+
+    try:
+        weights.transform = "R"  # Row-standardized: lag_spatial output is neighbor mean.
+    except Exception:
+        pass
+
+    lag_density = np.asarray(lag_spatial(weights, density_values), dtype=float).reshape(-1)
+    lag_entropy = np.asarray(lag_spatial(weights, entropy_values), dtype=float).reshape(-1)
+
+    for idx, cid in enumerate(id_order):
+        neighbors = weights.neighbors.get(cid, []) or []
+        neighbor_count = int(len(neighbors))
+        stats = stats_by_cell[cid]
+        stats["neighbor_count"] = neighbor_count
+        if neighbor_count <= 0:
+            stats["neighbor_mean_density"] = 0.0
+            stats["neighbor_mean_entropy"] = 0.0
+            continue
+        stats["neighbor_mean_density"] = float(lag_density[idx])
+        stats["neighbor_mean_entropy"] = float(lag_entropy[idx])
 
 
 def compute_global_moran_i(
@@ -539,22 +562,19 @@ def build_chart_payload(
     keys = [key for key, _label, _prefix in CATEGORY_RULES]
     values = [int(global_category_counts.get(key, 0)) for key in keys]
 
-    # Fixed bins for consistent comparison between runs
-    edges = [0, 1, 2, 5, 10, 20, 50, 100, 200]
-    hist_labels = [f"{edges[i]}-{edges[i + 1]}" for i in range(len(edges) - 1)] + [f">={edges[-1]}"]
-    hist_counts = [0 for _ in hist_labels]
-    for density in density_values:
-        if density >= edges[-1]:
-            hist_counts[-1] += 1
-            continue
-        placed = False
-        for i in range(len(edges) - 1):
-            if edges[i] <= density < edges[i + 1]:
-                hist_counts[i] += 1
-                placed = True
-                break
-        if not placed:
-            hist_counts[0] += 1
+    # Fixed bins for consistent comparison between runs.
+    edges = np.asarray([0, 1, 2, 5, 10, 20, 50, 100, 200], dtype=float)
+    hist_labels = [f"{int(edges[i])}-{int(edges[i + 1])}" for i in range(len(edges) - 1)] + [f">={int(edges[-1])}"]
+    hist_counts = np.zeros(len(hist_labels), dtype=np.int64)
+
+    if density_values:
+        density_arr = np.asarray(density_values, dtype=float)
+        density_arr = density_arr[np.isfinite(density_arr)]
+        if density_arr.size > 0:
+            bin_edges = np.concatenate([edges, np.asarray([np.inf])])
+            bin_indices = np.digitize(density_arr, bin_edges, right=False) - 1
+            bin_indices = np.clip(bin_indices, 0, len(hist_labels) - 1)
+            hist_counts = np.bincount(bin_indices, minlength=len(hist_labels))
 
     return {
         "category_distribution": {
@@ -563,7 +583,7 @@ def build_chart_payload(
         },
         "density_histogram": {
             "bins": hist_labels,
-            "counts": hist_counts,
+            "counts": [int(item) for item in hist_counts.tolist()],
         },
     }
 

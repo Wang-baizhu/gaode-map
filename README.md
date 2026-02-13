@@ -2,6 +2,17 @@
 - fastapi开发的高德/本地map后端 + 使用html原生jinjia2模板开发的高德地图
 - 请确保安装核心依赖: `pip install -r requirements.txt` (包含 `h3` 网格计算库)
 
+### 天地图本地开发配置
+- `TIANDITU_KEY` 只需要配置在 `.env`，例如：`TIANDITU_KEY=your_tianditu_key`。
+- 当前前端“天地图底图”采用 `WMTS over AMap`（通过高德容器承载天地图瓦片），会请求 `vec_w`（底图）+ `cva_w`（注记）两层。
+- 本地开发白名单模板（天地图控制台中配置 Referer/域名白名单）：
+  - `localhost`
+  - `127.0.0.1`
+  - `localhost:8000`
+  - `127.0.0.1:8000`
+- `0.0.0.0` 仅用于服务监听（如 `APP_HOST=0.0.0.0`），不是 Referer 白名单值。
+- 天地图链路不需要像高德 JS 一样额外配置 `security code`。
+
 ### 📚 接口文档 (API Reference)
 
 本项目提供 REST API，主要分为分析、地图管理和后台管理三类。

@@ -36,6 +36,8 @@ from modules.grid_h3.analysis import analyze_h3_grid
 from modules.grid_h3.analysis_schemas import H3MetricsRequest, H3MetricsResponse
 from modules.grid_h3.core import build_h3_grid_feature_collection
 from modules.grid_h3.schemas import GridRequest, GridResponse
+from modules.parcel_road.core import build_road_parcels_feature_collection
+from modules.parcel_road.schemas import RoadParcelRequest, RoadParcelResponse
 from modules.gaode_service.utils.transform_posi import gcj02_to_wgs84, wgs84_to_gcj02
 
 # Stores
@@ -101,6 +103,7 @@ async def get_frontend_config():
     return {
         "amap_js_api_key": settings.amap_js_api_key,
         "amap_js_security_code": settings.amap_js_security_code,
+        "tianditu_key": settings.tianditu_key,
         "map_type_config_json": { "groups": [], "markerStyles": {} }
     }
 
@@ -164,6 +167,7 @@ async def render_analysis_page(request: Request):
             "request": request,
             "amap_js_api_key": settings.amap_js_api_key,
             "amap_js_security_code": settings.amap_js_security_code,
+            "tianditu_key": settings.tianditu_key,
             "map_type_config_json": "{}", 
             "map_id": "null",
             "map_data_json": "{}" 
@@ -349,6 +353,20 @@ async def analyze_h3_metrics(payload: H3MetricsRequest):
         payload.significance_alpha,
         payload.moran_seed,
         payload.significance_fdr,
+    )
+    return result
+
+
+@router.post("/api/v1/analysis/road-parcels", response_model=RoadParcelResponse)
+async def analyze_road_parcels(payload: RoadParcelRequest):
+    result = await asyncio.to_thread(
+        build_road_parcels_feature_collection,
+        payload.polygon,
+        payload.coord_type,
+        payload.center,
+        payload.mode,
+        payload.time_min,
+        payload.min_parcel_area_m2,
     )
     return result
 

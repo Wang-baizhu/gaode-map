@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(Path(__file__).resolve().parent.parent / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",  # 未声明的 env 变量忽略，不抛出校验错误
     )
@@ -56,6 +56,11 @@ class Settings(BaseSettings):
         "",
         validation_alias="AMAP_JS_SECURITY_CODE",
         description="高德 JS 安全码（若未开启可留空）",
+    )
+    tianditu_key: str = Field(
+        "",
+        validation_alias="TIANDITU_KEY",
+        description="天地图 Web 瓦片服务 Key（tk）",
     )
 
     # 本地历史数据查询服务配置

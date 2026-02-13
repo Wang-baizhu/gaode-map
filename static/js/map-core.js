@@ -10,6 +10,22 @@
         this.currentRadius = typeof this.mapData.radius === 'number'
             ? this.mapData.radius
             : (typeof this.config.radius === 'number' ? this.config.radius : null);
+        this.basemapSource = ['amap', 'osm', 'tianditu'].indexOf(this.config.basemapSource) >= 0
+            ? this.config.basemapSource
+            : 'amap';
+        this.basemapMuted = !!this.config.basemapMuted;
+        this.tiandituKey = (this.config.tiandituKey || '').trim();
+        this.tiandituContainerId = this.config.tiandituContainerId || '';
+        this._defaultZooms = Array.isArray(this.zooms) && this.zooms.length >= 2
+            ? [this.zooms[0], this.zooms[1]]
+            : [3, 20];
+        this._tiandituZooms = [
+            Math.max(1, this._defaultZooms[0]),
+            Math.min(18, this._defaultZooms[1])
+        ];
+        if (this._tiandituZooms[0] > this._tiandituZooms[1]) {
+            this._tiandituZooms = [3, 18];
+        }
 
         this.map = null;
         this.mainCircle = null;
@@ -17,6 +33,7 @@
         this.cityCircleMap = {};
         this.boundaryPolygons = [];
         this.customPolygons = [];
+        this.parcelPolygons = [];
         this.gridPolygons = [];
         this.gridPolygonMap = {};
         this.focusedGridPolygon = null;
@@ -26,17 +43,28 @@
         this.clusterPluginReady = false;
         this.heatmapPluginReady = false;
         this._pluginPromise = null;
+        this._amapTileLayer = null;
+        this._osmTileLayer = null;
+        this._tdtVecLayer = null;
+        this._tdtCvaLayer = null;
+        this._blankTileLayer = null;
+        this.tiandituMap = null;
+        this.lastBasemapError = null;
     }
 
     MapCore.prototype.initMap = function () {
+        var initialFeatures = ['bg', 'point', 'road', 'building'];
         this.map = new AMap.Map(this.containerId, {
             zoom: this.zoom,
             zooms: this.zooms,
-            center: [this.center.lng, this.center.lat]
+            center: [this.center.lng, this.center.lat],
+            features: initialFeatures
         });
 
         this.updateMainCircle(this.currentRadius);
         this.rebuildCityCircles(this.currentRadius);
+        this.setBasemapSource(this.basemapSource);
+        this.setBasemapMuted(this.basemapMuted);
 
         if (this.mapMode === 'city') {
             var cityBoundaryId = this.mapData.adcode || (this.center && this.center.adcode) || (this.center && this.center.name);
@@ -154,6 +182,264 @@
         this.customPolygons = [];
     };
 
+    MapCore.prototype._getTiandituContainer = function () {
+        if (!this.tiandituContainerId || typeof document === 'undefined') return null;
+        return document.getElementById(this.tiandituContainerId);
+    };
+
+    MapCore.prototype._toggleTiandituContainer = function (visible) {
+        var el = this._getTiandituContainer();
+        if (!el) return;
+        el.style.display = visible ? 'block' : 'none';
+    };
+
+    MapCore.prototype._resizeTiandituMap = function () {
+        if (!this.tiandituMap || !this.tiandituMap.checkResize) return;
+        try {
+            this.tiandituMap.checkResize();
+        } catch (err) {
+            console.warn('[MapCore] T.Map resize failed:', err);
+        }
+    };
+
+    MapCore.prototype._ensureBlankTileLayer = function () {
+        if (this._blankTileLayer) return this._blankTileLayer;
+        var transparentPng = 'data:image/png;base64,'
+            + 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO2p3nQAAAAASUVORK5CYII=';
+        this._blankTileLayer = new AMap.TileLayer({
+            zIndex: 0,
+            opacity: 1,
+            getTileUrl: function () {
+                return transparentPng;
+            }
+        });
+        return this._blankTileLayer;
+    };
+
+    MapCore.prototype._buildTiandituWmtsTileUrl = function (layerName, x, y, z) {
+        if (!this.tiandituKey) return '';
+        return 'https://t0.tianditu.gov.cn/' + layerName + '_w/wmts'
+            + '?SERVICE=WMTS'
+            + '&REQUEST=GetTile'
+            + '&VERSION=1.0.0'
+            + '&LAYER=' + layerName
+            + '&STYLE=default'
+            + '&TILEMATRIXSET=w'
+            + '&FORMAT=tiles'
+            + '&TILEMATRIX=' + z
+            + '&TILEROW=' + y
+            + '&TILECOL=' + x
+            + '&tk=' + encodeURIComponent(this.tiandituKey);
+    };
+
+    MapCore.prototype._ensureTiandituWmtsLayers = function () {
+        if (!this.tiandituKey) return false;
+        if (this._tdtVecLayer && this._tdtCvaLayer) return true;
+        var self = this;
+        try {
+            if (!this._tdtVecLayer) {
+                this._tdtVecLayer = new AMap.TileLayer({
+                    zIndex: 0,
+                    opacity: 1,
+                    getTileUrl: function (x, y, z) {
+                        return self._buildTiandituWmtsTileUrl('vec', x, y, z);
+                    }
+                });
+            }
+            if (!this._tdtCvaLayer) {
+                this._tdtCvaLayer = new AMap.TileLayer({
+                    zIndex: 1,
+                    opacity: 1,
+                    getTileUrl: function (x, y, z) {
+                        return self._buildTiandituWmtsTileUrl('cva', x, y, z);
+                    }
+                });
+            }
+        } catch (err) {
+            console.warn('[MapCore] Failed to create TianDiTu WMTS layers:', err);
+            this._tdtVecLayer = null;
+            this._tdtCvaLayer = null;
+            return false;
+        }
+        return !!(this._tdtVecLayer && this._tdtCvaLayer);
+    };
+
+    MapCore.prototype._ensureTiandituMap = function () {
+        if (this.tiandituMap) return true;
+        if (!(window.T && window.T.Map && window.T.LngLat)) {
+            return false;
+        }
+        var container = this._getTiandituContainer();
+        if (!container) return false;
+        container.innerHTML = '';
+        try {
+            this.tiandituMap = new T.Map(this.tiandituContainerId);
+            this.tiandituMap.centerAndZoom(
+                new T.LngLat(this.center.lng, this.center.lat),
+                Math.round(this.zoom || 13)
+            );
+            if (this.tiandituMap.setMinZoom) {
+                this.tiandituMap.setMinZoom(this._tiandituZooms[0]);
+            }
+            if (this.tiandituMap.setMaxZoom) {
+                this.tiandituMap.setMaxZoom(this._tiandituZooms[1]);
+            }
+            return true;
+        } catch (err) {
+            console.warn('[MapCore] Failed to create T.Map:', err);
+            this.tiandituMap = null;
+            return false;
+        }
+    };
+
+    MapCore.prototype._syncTiandituViewFromAMap = function () {
+        if (!this.tiandituMap || !this.map || !(window.T && window.T.LngLat)) return;
+        if (!(this.map.getCenter && this.map.getZoom && this.tiandituMap.centerAndZoom)) return;
+        this._resizeTiandituMap();
+        var center = this.map.getCenter();
+        if (!center || !center.getLng || !center.getLat) return;
+        var zoom = this.map.getZoom();
+        if (typeof zoom !== 'number') return;
+        this.tiandituMap.centerAndZoom(
+            new T.LngLat(center.getLng(), center.getLat()),
+            Math.round(zoom)
+        );
+    };
+
+    MapCore.prototype._applyAmapBasemap = function () {
+        this._toggleTiandituContainer(false);
+        if (this.map.setZooms) {
+            this.map.setZooms(this._defaultZooms);
+        }
+        if (!this._amapTileLayer) {
+            this._amapTileLayer = new AMap.TileLayer({ zIndex: 0, opacity: 1 });
+        }
+        if (this.map.setLayers) {
+            this.map.setLayers([this._amapTileLayer]);
+        } else {
+            this._amapTileLayer.setMap(this.map);
+        }
+    };
+
+    MapCore.prototype.setBasemapSource = function (source) {
+        this.basemapSource = ['amap', 'osm', 'tianditu'].indexOf(source) >= 0 ? source : 'amap';
+        this.lastBasemapError = null;
+        if (!this.map) {
+            this.lastBasemapError = {
+                code: 'map-not-ready',
+                message: 'Map is not initialized.'
+            };
+            return {
+                ok: false,
+                source: this.basemapSource,
+                code: this.lastBasemapError.code,
+                message: this.lastBasemapError.message
+            };
+        }
+
+        if (this.basemapSource === 'osm') {
+            this._toggleTiandituContainer(false);
+            if (this.map.setZooms) {
+                this.map.setZooms(this._defaultZooms);
+            }
+            if (!this._osmTileLayer) {
+                this._osmTileLayer = new AMap.TileLayer({
+                    zIndex: 0,
+                    opacity: 1,
+                    getTileUrl: function (x, y, z) {
+                        return 'https://tile.openstreetmap.org/' + z + '/' + x + '/' + y + '.png';
+                    }
+                });
+            }
+            if (this.map.setLayers) {
+                this.map.setLayers([this._osmTileLayer]);
+            } else {
+                this._osmTileLayer.setMap(this.map);
+            }
+            return { ok: true, source: 'osm' };
+        }
+
+        if (this.basemapSource === 'tianditu') {
+            if (!this.tiandituKey) {
+                console.warn('[MapCore] TIANDITU_KEY is empty.');
+                this.lastBasemapError = {
+                    code: 'missing-key',
+                    message: 'TIANDITU_KEY is empty.'
+                };
+                return {
+                    ok: false,
+                    source: 'tianditu',
+                    code: this.lastBasemapError.code,
+                    message: this.lastBasemapError.message
+                };
+            } else {
+                this._toggleTiandituContainer(false);
+                if (!this._ensureTiandituWmtsLayers()) {
+                    console.warn('[MapCore] TianDiTu WMTS layers are not ready.');
+                    this.lastBasemapError = {
+                        code: 'wmts-layer-init-failed',
+                        message: 'TianDiTu WMTS layers are not ready.'
+                    };
+                    return {
+                        ok: false,
+                        source: 'tianditu',
+                        code: this.lastBasemapError.code,
+                        message: this.lastBasemapError.message
+                    };
+                } else {
+                    if (this.map.setZooms) {
+                        this.map.setZooms(this._tiandituZooms);
+                    }
+                    if (this.map.getZoom && this.map.setZoom) {
+                        var currentZoom = this.map.getZoom();
+                        if (typeof currentZoom === 'number' && currentZoom > this._tiandituZooms[1]) {
+                            this.map.setZoom(this._tiandituZooms[1]);
+                        }
+                    }
+                    if (this.map.setLayers) {
+                        this.map.setLayers([this._tdtVecLayer, this._tdtCvaLayer]);
+                    } else {
+                        this._tdtVecLayer.setMap(this.map);
+                        this._tdtCvaLayer.setMap(this.map);
+                    }
+                    return { ok: true, source: 'tianditu' };
+                }
+            }
+        }
+
+        this._applyAmapBasemap();
+        return { ok: true, source: 'amap' };
+    };
+
+    MapCore.prototype.setBasemapMuted = function (muted) {
+        this.basemapMuted = !!muted;
+        if (!this.map) return;
+
+        if (this.basemapSource === 'tianditu') {
+            var opacity = this.basemapMuted ? 0.75 : 1;
+            if (this._tdtVecLayer && this._tdtVecLayer.setOpacity) {
+                this._tdtVecLayer.setOpacity(opacity);
+            }
+            if (this._tdtCvaLayer && this._tdtCvaLayer.setOpacity) {
+                this._tdtCvaLayer.setOpacity(opacity);
+            }
+            return;
+        }
+
+        if (this.basemapSource === 'amap') {
+            if (!this.map.setFeatures) return;
+            this.map.setFeatures(this.basemapMuted
+                ? ['road']
+                : ['bg', 'point', 'road', 'building']);
+            return;
+        }
+    };
+
+    MapCore.prototype.clearParcelPolygons = function () {
+        this.parcelPolygons.forEach(function (polygon) { polygon.setMap(null); });
+        this.parcelPolygons = [];
+    };
+
     MapCore.prototype.clearGridPolygons = function () {
         if (this._gridFocusAnimTimer) {
             window.clearInterval(this._gridFocusAnimTimer);
@@ -191,9 +477,9 @@
         var self = this;
         var cfg = style || {};
         var strokeColor = cfg.strokeColor || '#1e88e5';
-        var strokeWeight = typeof cfg.strokeWeight === 'number' ? cfg.strokeWeight : 2;
+        var strokeWeight = typeof cfg.strokeWeight === 'number' ? cfg.strokeWeight : 2.2;
         var fillColor = cfg.fillColor || '#42a5f5';
-        var fillOpacity = typeof cfg.fillOpacity === 'number' ? cfg.fillOpacity : 0.12;
+        var fillOpacity = typeof cfg.fillOpacity === 'number' ? cfg.fillOpacity : 0.2;
 
         this.clearGridPolygons();
         (features || []).forEach(function (feature) {
@@ -211,7 +497,7 @@
                 path: path,
                 strokeColor: currentStrokeColor,
                 strokeWeight: currentStrokeWeight,
-                strokeOpacity: 0.85,
+                strokeOpacity: 0.92,
                 fillColor: currentFillColor,
                 fillOpacity: currentFillOpacity,
                 zIndex: 80,
@@ -231,6 +517,39 @@
             if (polygon.__h3Id) {
                 self.gridPolygonMap[polygon.__h3Id] = polygon;
             }
+        });
+
+        this.updateFitView();
+    };
+
+    MapCore.prototype.setParcelFeatures = function (features, style) {
+        var self = this;
+        var cfg = style || {};
+        var strokeColor = cfg.strokeColor || '#7f8c99';
+        var strokeWeight = typeof cfg.strokeWeight === 'number' ? cfg.strokeWeight : 1;
+        var fillColor = cfg.fillColor || '#a0aec0';
+        var fillOpacity = typeof cfg.fillOpacity === 'number' ? cfg.fillOpacity : 0.08;
+
+        this.clearParcelPolygons();
+        (features || []).forEach(function (feature) {
+            if (!feature || !feature.geometry || feature.geometry.type !== 'Polygon') return;
+            var rings = feature.geometry.coordinates || [];
+            var path = rings[0];
+            if (!Array.isArray(path) || path.length < 3) return;
+            var props = feature.properties || {};
+            var polygon = new AMap.Polygon({
+                path: path,
+                strokeColor: props.strokeColor || strokeColor,
+                strokeWeight: typeof props.strokeWeight === 'number' ? props.strokeWeight : strokeWeight,
+                strokeOpacity: 0.75,
+                fillColor: props.fillColor || fillColor,
+                fillOpacity: typeof props.fillOpacity === 'number' ? props.fillOpacity : fillOpacity,
+                zIndex: 60,
+                bubble: true,
+                clickable: false
+            });
+            polygon.setMap(self.map);
+            self.parcelPolygons.push(polygon);
         });
 
         this.updateFitView();
@@ -455,6 +774,11 @@
             }
         });
         this.customPolygons.forEach(function (polygon) {
+            if (polygon && polygon.getMap) {
+                objects.push(polygon);
+            }
+        });
+        this.parcelPolygons.forEach(function (polygon) {
             if (polygon && polygon.getMap) {
                 objects.push(polygon);
             }
