@@ -1,5 +1,5 @@
-from typing import List, Literal, Optional
-from pydantic import BaseModel, Field
+from typing import Any, Dict, List, Literal, Optional
+from pydantic import BaseModel, ConfigDict, Field
 
 from .schemas import GridResponse
 
@@ -12,6 +12,8 @@ class PoiLike(BaseModel):
 
 
 class H3MetricsRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     polygon: List[List[float]] = Field(
         ...,
         min_length=3,
@@ -38,25 +40,32 @@ class H3MetricsRequest(BaseModel):
         description="Coordinate system of POI locations",
     )
     neighbor_ring: int = Field(1, ge=1, le=3, description="Neighbor ring size for neighborhood metrics")
-    moran_permutations: int = Field(
-        4999,
-        ge=0,
-        le=5000,
-        description="Permutation count for Moran significance test (0 disables p-value)",
+    use_arcgis: bool = Field(False, description="Whether to run ArcGIS(ArcPy) as spatial analysis engine")
+    arcgis_python_path: Optional[str] = Field(
+        None,
+        description=r"Optional ArcPy python path, e.g. C:\Python27\ArcGIS10.7\python.exe",
     )
-    significance_alpha: float = Field(
-        0.05,
-        ge=0.001,
-        le=0.2,
-        description="Significance threshold for Moran p-value",
+    arcgis_neighbor_ring: int = Field(
+        1,
+        ge=1,
+        le=3,
+        description="Neighbor ring size for ArcGIS path; mapped to KNN(1->6,2->18,3->36)",
     )
-    moran_seed: Optional[int] = Field(
-        42,
-        description="Random seed for Moran permutation test",
+    arcgis_knn_neighbors: Optional[int] = Field(
+        None,
+        ge=1,
+        le=64,
+        description="Deprecated legacy KNN input. Accepted for compatibility and ignored (ring is used).",
     )
-    significance_fdr: bool = Field(
-        False,
-        description="Whether to use Benjamini-Hochberg FDR correction for local significance",
+    arcgis_export_image: bool = Field(
+        True,
+        description="Whether to export ArcGIS structure preview image for frontend display",
+    )
+    arcgis_timeout_sec: int = Field(
+        240,
+        ge=30,
+        le=1800,
+        description="ArcGIS bridge timeout in seconds",
     )
 
 
@@ -67,11 +76,15 @@ class H3AnalysisSummary(BaseModel):
     avg_local_entropy: float = 0.0
     global_moran_i_density: Optional[float] = None
     global_moran_z_score: Optional[float] = None
-    global_moran_p_value: Optional[float] = None
-    global_moran_significant: Optional[bool] = None
-    significant_cell_count: int = Field(0, ge=0)
-    hotspot_cell_count: int = Field(0, ge=0)
-    coldspot_cell_count: int = Field(0, ge=0)
+    analysis_engine: Literal["pysal", "arcgis"] = "pysal"
+    arcgis_status: Optional[str] = None
+    arcgis_image_url: Optional[str] = None
+    arcgis_image_url_gi: Optional[str] = None
+    arcgis_image_url_lisa: Optional[str] = None
+    gi_render_meta: Dict[str, Any] = Field(default_factory=dict)
+    lisa_render_meta: Dict[str, Any] = Field(default_factory=dict)
+    gi_z_stats: Dict[str, Any] = Field(default_factory=dict)
+    lisa_i_stats: Dict[str, Any] = Field(default_factory=dict)
 
 
 class CategoryDistribution(BaseModel):

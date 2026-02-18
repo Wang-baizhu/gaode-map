@@ -10,16 +10,6 @@
         <h3>地图过滤</h3>
     </div>
     <div class="filter-section">
-        <h4><span>半径调节</span></h4>
-        <div class="filter-group">
-            <div class="filter-option range-control">
-                <input type="range" id="radiusSlider" min="0" max="10000" step="100">
-                <span id="radiusValue" class="range-value">—</span>
-            </div>
-        </div>
-    </div>
-
-    <div class="filter-section">
         <button id="toggleExpandAll">全部展开</button>
     </div>
 
@@ -28,23 +18,12 @@
         <button id="toggleNames">显示名称</button>
     </div>
 
-    <div class="filter-section">
-        <button id="toggleHeatmap">开启热力图</button>
-        <div class="filter-group">
-            <div class="filter-option range-control">
-                <input type="range" id="heatmapCountSlider" min="1" max="100" step="1" value="10">
-                <span id="heatmapCountValue" class="range-value">10</span>
-            </div>
-        </div>
-    </div>
-
     <div id="filtersContainer"></div>
 </div>
 {% endblock %}
 
 {% block extra_js %}
 <script src="/static/js/map-markers.js"></script>
-<script src="/static/js/map-heatmap.js"></script>
 <script src="/static/js/map-filters.js"></script>
 {% endblock %}
 
@@ -68,17 +47,10 @@ markerManager.init();
 markerManager.renderMarkers();
 window.markerManager = markerManager;
 
-// 初始化热力图管理器
-var heatmapManager = new HeatmapManager(mapCore, {
-    radius: 35,
-    maxCount: 100
-});
-
 // 初始化过滤面板
 var filterPanel = new FilterPanel(markerManager, {
     mapData: mapData,
-    mapTypeConfig: mapTypeConfig,
-    heatmapManager: heatmapManager
+    mapTypeConfig: mapTypeConfig
 });
 filterPanel.init();
 window.filterPanel = filterPanel;

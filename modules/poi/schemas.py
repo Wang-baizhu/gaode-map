@@ -33,6 +33,5 @@ class HistorySaveRequest(BaseModel):
     pois: List[dict] = Field(..., description="List of POI objects")
     keywords: str = Field(default="")
     mode: str = Field(default="walking")
-    mode: str = Field(default="walking")
     time_min: int = Field(default=15)
     location_name: Optional[str] = Field(None, description="Location name or coordinates for title")

@@ -23,6 +23,7 @@
         this.lastVisibleMarkerPids = new Set();
         this.lastFilteredPoints = [];
         this.showMarkers = true;
+        this.hideAllPoints = false;
         this.spatialFilter = null;
 
         this.onMarkerClick = null;
@@ -405,6 +406,10 @@
         this.showMarkers = !!show;
     };
 
+    MarkerManager.prototype.setHideAllPoints = function (hide) {
+        this.hideAllPoints = !!hide;
+    };
+
     MarkerManager.prototype.setSpatialFilter = function (filterFn) {
         this.spatialFilter = typeof filterFn === 'function' ? filterFn : null;
     };
@@ -461,10 +466,10 @@
 
             // Optimization: Only call setMap when state changes or for center point
             if (point.type === 'center') {
-                if (isVisible && !marker.getMap()) {
+                if (!self.hideAllPoints && isVisible && !marker.getMap()) {
                     marker.setMap(self.map);
                     self.setMarkerLabel(marker);
-                } else if (!isVisible && marker.getMap()) {
+                } else if ((self.hideAllPoints || !isVisible) && marker.getMap()) {
                     marker.setMap(null);
                     marker.setLabel(null);
                 }
@@ -473,7 +478,7 @@
 
             // For POI markers, if not visible, ensure they are off the map.
             // If visible, DON'T call setMap(map) here, let MarkerClusterer handle it.
-            if (!isVisible || !self.showMarkers) {
+            if (!isVisible || !self.showMarkers || self.hideAllPoints) {
                 if (marker.getMap()) {
                     marker.setMap(null);
                 }

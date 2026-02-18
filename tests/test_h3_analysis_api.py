@@ -67,6 +67,13 @@ def test_h3_metrics_api_shape():
     assert "grid" in data and "summary" in data and "charts" in data
     assert data["grid"]["type"] == "FeatureCollection"
     assert data["summary"]["grid_count"] == len(data["grid"]["features"])
+    assert data["summary"]["analysis_engine"] in ("pysal", "arcgis")
+    assert data["summary"].get("gi_render_meta", {}).get("mode") == "fixed_z"
+    assert data["summary"].get("lisa_render_meta", {}).get("mode") == "stddev"
+    assert "gi_z_stats" in data["summary"]
+    assert "lisa_i_stats" in data["summary"]
+    assert "arcgis_image_url_gi" in data["summary"]
+    assert "arcgis_image_url_lisa" in data["summary"]
 
 
 def test_h3_metrics_poi_count_consistency():
@@ -108,8 +115,88 @@ def test_h3_metrics_grid_count_changes_with_threshold():
     assert strict_count <= loose_count
 
 
+def test_h3_metrics_spatial_structure_fields():
+    client = TestClient(app)
+    payload = {
+        "polygon": _sample_gcj02_polygon(),
+        "resolution": 10,
+        "coord_type": "gcj02",
+        "include_mode": "intersects",
+        "min_overlap_ratio": 0.0,
+        "pois": _sample_pois_gcj02(),
+        "poi_coord_type": "gcj02",
+        "neighbor_ring": 1,
+    }
+    resp = client.post("/api/v1/analysis/h3-metrics", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    props_list = [f.get("properties", {}) for f in data["grid"]["features"]]
+    assert props_list
+    assert all("gi_star_z_score" in p for p in props_list)
+    assert all("lisa_i" in p for p in props_list)
+    assert all("gi_star_p_value" not in p for p in props_list)
+    assert all("lisa_p_value" not in p for p in props_list)
+    assert all("gi_star_bin" not in p for p in props_list)
+    assert all("lisa_cluster" not in p for p in props_list)
+    assert all("spatial_structure_type" not in p for p in props_list)
+    summary = data.get("summary", {})
+    assert "significant_cell_count" not in summary
+    assert "global_moran_p_value" not in summary
+    assert "global_moran_significant" not in summary
+    assert summary.get("gi_render_meta", {}).get("mode") == "fixed_z"
+    assert summary.get("lisa_render_meta", {}).get("mode") == "stddev"
+
+
+def test_h3_metrics_legacy_significance_payload_is_ignored():
+    client = TestClient(app)
+    payload = {
+        "polygon": _sample_gcj02_polygon(),
+        "resolution": 10,
+        "coord_type": "gcj02",
+        "include_mode": "intersects",
+        "min_overlap_ratio": 0.0,
+        "pois": _sample_pois_gcj02(),
+        "poi_coord_type": "gcj02",
+        "neighbor_ring": 1,
+        "moran_permutations": 99,
+        "significance_alpha": 0.1,
+        "moran_seed": 1,
+        "significance_fdr": True,
+        "significance_local_sum_k": 888,
+    }
+    resp = client.post("/api/v1/analysis/h3-metrics", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    props_list = [f.get("properties", {}) for f in data["grid"]["features"]]
+    assert props_list
+    assert all("spatial_structure_type" not in p for p in props_list)
+
+
+def test_h3_metrics_arcgis_failure_returns_502():
+    client = TestClient(app)
+    payload = {
+        "polygon": _sample_gcj02_polygon(),
+        "resolution": 10,
+        "coord_type": "gcj02",
+        "include_mode": "intersects",
+        "min_overlap_ratio": 0.0,
+        "pois": _sample_pois_gcj02(),
+        "poi_coord_type": "gcj02",
+        "neighbor_ring": 1,
+        "use_arcgis": True,
+        "arcgis_python_path": r"C:\\not_exists\\ArcGIS\\python.exe",
+    }
+    resp = client.post("/api/v1/analysis/h3-metrics", json=payload)
+    assert resp.status_code == 502
+    body = resp.json()
+    assert "ArcGIS桥接失败" in str(body.get("detail") or "")
+
+
 if __name__ == "__main__":
     test_h3_metrics_api_shape()
     test_h3_metrics_poi_count_consistency()
     test_h3_metrics_grid_count_changes_with_threshold()
+    test_h3_metrics_spatial_structure_fields()
+    test_h3_metrics_legacy_significance_payload_is_ignored()
+    test_h3_metrics_arcgis_failure_returns_502()
     print("H3 analysis API tests passed.")

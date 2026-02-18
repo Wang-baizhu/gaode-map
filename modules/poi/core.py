@@ -126,7 +126,15 @@ async def fetch_pois_by_polygon(
 
         # Fetch remaining pages if needed
         if count > len(all_pois):
-            remaining = await _fetch_remaining_pages(polygon, keywords, types, key_manager, count, global_limiter, session)
+            remaining = await _fetch_remaining_pages(
+                polygon,
+                keywords,
+                types,
+                key_manager,
+                count,
+                global_limiter,
+                session,
+            )
             all_pois.extend(remaining)
         
     logger.info(f"Fetch Complete. Total POIs: {len(all_pois)}")
@@ -149,7 +157,7 @@ async def _fetch_amap_page_one(polygon, keywords, types, key_manager, limiter, s
 
         params = {
             "key": current_key, "polygon": poly_str, "keywords": keywords, "types": types,
-            "offset": 25, "page": 1, "extensions": "all"
+            "offset": 25, "page": 1, "extensions": "base"
         }
 
         # Request loop (network retries)
@@ -192,16 +200,23 @@ async def _fetch_amap_page_one(polygon, keywords, types, key_manager, limiter, s
 
     return 0, []
 
-async def _fetch_remaining_pages(polygon, keywords, types, key_manager, total_count, limiter, session):
+async def _fetch_remaining_pages(
+    polygon,
+    keywords,
+    types,
+    key_manager,
+    total_count,
+    limiter,
+    session,
+):
     """Fetch pages 2..N"""
     poly_str = ";".join([f"{p[0]:.6f},{p[1]:.6f}" for p in polygon])
     all_pois = []
     page_size = 25
-    max_pages = (min(total_count, 900) // page_size) + 1 
+    max_pages = (min(total_count, 900) // page_size) + 1
     
     # Start from page 2
     for page in range(2, max_pages + 1):
-        
         # Key Rotation Loop for EACH page
         success = False
         for key_attempt in range(len(key_manager.keys) + 1):
@@ -210,7 +225,7 @@ async def _fetch_remaining_pages(polygon, keywords, types, key_manager, total_co
 
             params = {
                 "key": current_key, "polygon": poly_str, "keywords": keywords, "types": types,
-                "offset": page_size, "page": page, "extensions": "all"
+                "offset": page_size, "page": page, "extensions": "base"
             }
             
             # Network Attempt Loop

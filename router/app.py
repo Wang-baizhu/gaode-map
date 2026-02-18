@@ -36,8 +36,6 @@ from modules.grid_h3.analysis import analyze_h3_grid
 from modules.grid_h3.analysis_schemas import H3MetricsRequest, H3MetricsResponse
 from modules.grid_h3.core import build_h3_grid_feature_collection
 from modules.grid_h3.schemas import GridRequest, GridResponse
-from modules.parcel_road.core import build_road_parcels_feature_collection
-from modules.parcel_road.schemas import RoadParcelRequest, RoadParcelResponse
 from modules.gaode_service.utils.transform_posi import gcj02_to_wgs84, wgs84_to_gcj02
 
 # Stores
@@ -54,7 +52,7 @@ from store import (
 from store.history_repo import history_repo
 
 # Utils
-from utils import export_map_to_xlsx, parse_json, generate_html_content
+from utils import export_map_to_xlsx, parse_json, generate_html_content, load_type_config
 from router.utils.deps import load_map_request, verify_api_key
 
 import os
@@ -104,7 +102,7 @@ async def get_frontend_config():
         "amap_js_api_key": settings.amap_js_api_key,
         "amap_js_security_code": settings.amap_js_security_code,
         "tianditu_key": settings.tianditu_key,
-        "map_type_config_json": { "groups": [], "markerStyles": {} }
+        "map_type_config_json": load_type_config()
     }
 
 # =============================================================================
@@ -161,16 +159,18 @@ async def render_analysis_page(request: Request):
     """
     渲染高级分析页面 (Analysis Dashboard)
     """
+    type_config_json = json.dumps(load_type_config(), ensure_ascii=False)
     return templates.TemplateResponse(
-        "analysis.html", 
+        "analysis.html",
         {
             "request": request,
             "amap_js_api_key": settings.amap_js_api_key,
             "amap_js_security_code": settings.amap_js_security_code,
             "tianditu_key": settings.tianditu_key,
-            "map_type_config_json": "{}", 
+            "map_type_config_json": type_config_json,
             "map_id": "null",
-            "map_data_json": "{}" 
+            "map_data_json": "{}",
+            "static_version": str(int(time.time()))
         }
     )
 
@@ -339,36 +339,31 @@ async def analyze_h3_metrics(payload: H3MetricsRequest):
         p.model_dump() if hasattr(p, "model_dump") else p.dict()
         for p in payload.pois
     ]
-    result = await asyncio.to_thread(
-        analyze_h3_grid,
-        payload.polygon,
-        payload.resolution,
-        payload.coord_type,
-        payload.include_mode,
-        payload.min_overlap_ratio,
-        poi_payload,
-        payload.poi_coord_type,
-        payload.neighbor_ring,
-        payload.moran_permutations,
-        payload.significance_alpha,
-        payload.moran_seed,
-        payload.significance_fdr,
-    )
+    try:
+        result = await asyncio.to_thread(
+            analyze_h3_grid,
+            polygon=payload.polygon,
+            resolution=payload.resolution,
+            coord_type=payload.coord_type,
+            include_mode=payload.include_mode,
+            min_overlap_ratio=payload.min_overlap_ratio,
+            pois=poi_payload,
+            poi_coord_type=payload.poi_coord_type,
+            neighbor_ring=payload.neighbor_ring,
+            use_arcgis=payload.use_arcgis,
+            arcgis_python_path=payload.arcgis_python_path,
+            arcgis_neighbor_ring=payload.arcgis_neighbor_ring,
+            # Grid analysis is ring-based; keep legacy KNN field accepted but ignored.
+            arcgis_knn_neighbors=None,
+            arcgis_export_image=payload.arcgis_export_image,
+            arcgis_timeout_sec=payload.arcgis_timeout_sec,
+        )
+    except RuntimeError as exc:
+        if payload.use_arcgis:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     return result
 
-
-@router.post("/api/v1/analysis/road-parcels", response_model=RoadParcelResponse)
-async def analyze_road_parcels(payload: RoadParcelRequest):
-    result = await asyncio.to_thread(
-        build_road_parcels_feature_collection,
-        payload.polygon,
-        payload.coord_type,
-        payload.center,
-        payload.mode,
-        payload.time_min,
-        payload.min_parcel_area_m2,
-    )
-    return result
 
 @router.post("/api/v1/analysis/pois", response_model=PoiResponse)
 async def fetch_pois_analysis(payload: PoiRequest):
@@ -442,12 +437,16 @@ async def save_history_manually(payload: HistorySaveRequest):
     if payload.time_min and "min" not in desc: # Avoid double prefix if name already has it
         desc = f"{payload.time_min}min - {desc}"
     
-    history_repo.create_record(
-        {"center": s_center, "time_min": payload.time_min, "keywords": payload.keywords, "mode": payload.mode},
-        s_poly, s_pois, desc
-    )
-    
-    return {"status": "ok"}
+    try:
+        history_id = history_repo.create_record(
+            {"center": s_center, "time_min": payload.time_min, "keywords": payload.keywords, "mode": payload.mode},
+            s_poly, s_pois, desc
+        )
+    except Exception as e:
+        logger.exception("Failed to save analysis history: %s", e)
+        raise HTTPException(status_code=500, detail=f"保存历史失败: {str(e)}")
+
+    return {"status": "ok", "history_id": history_id, "count": len(s_pois)}
 
 @router.get("/api/v1/analysis/history")
 async def get_history_list(limit: int = 20):

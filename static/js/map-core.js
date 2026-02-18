@@ -33,9 +33,10 @@
         this.cityCircleMap = {};
         this.boundaryPolygons = [];
         this.customPolygons = [];
-        this.parcelPolygons = [];
         this.gridPolygons = [];
         this.gridPolygonMap = {};
+        this.gridStructureBoundaryOverlays = [];
+        this.gridStructureSymbolOverlays = [];
         this.focusedGridPolygon = null;
         this._gridFocusAnimTimer = null;
         this._gridFocusViewBeforeLock = null;
@@ -107,7 +108,7 @@
             strokeColor: "#FF0000",
             strokeWeight: 3,
             fillColor: "#FF0000",
-            fillOpacity: 0.1
+            fillOpacity: 0
         });
         this.map.add(this.mainCircle);
     };
@@ -136,7 +137,7 @@
                     strokeColor: "#009688",
                     strokeWeight: 2,
                     fillColor: "#009688",
-                    fillOpacity: 0.06
+                    fillOpacity: 0
                 });
                 self.cityCircleMap[pid] = circle;
             } else {
@@ -435,11 +436,6 @@
         }
     };
 
-    MapCore.prototype.clearParcelPolygons = function () {
-        this.parcelPolygons.forEach(function (polygon) { polygon.setMap(null); });
-        this.parcelPolygons = [];
-    };
-
     MapCore.prototype.clearGridPolygons = function () {
         if (this._gridFocusAnimTimer) {
             window.clearInterval(this._gridFocusAnimTimer);
@@ -447,6 +443,14 @@
         }
         this.gridPolygons.forEach(function (polygon) { polygon.setMap(null); });
         this.gridPolygons = [];
+        this.gridStructureBoundaryOverlays.forEach(function (overlay) {
+            if (overlay && overlay.setMap) overlay.setMap(null);
+        });
+        this.gridStructureBoundaryOverlays = [];
+        this.gridStructureSymbolOverlays.forEach(function (overlay) {
+            if (overlay && overlay.setMap) overlay.setMap(null);
+        });
+        this.gridStructureSymbolOverlays = [];
         this.gridPolygonMap = {};
         this.focusedGridPolygon = null;
         this._gridFocusViewBeforeLock = null;
@@ -463,7 +467,7 @@
                 strokeWeight: 2,
                 strokeOpacity: 0.9,
                 fillColor: '#ff6f00',
-                fillOpacity: 0.08,
+                fillOpacity: 0,
                 clickable: false,
                 bubble: true
             });
@@ -473,13 +477,412 @@
         this.updateFitView();
     };
 
+    MapCore.prototype._normalizeEdgePoint = function (pt, precision) {
+        var lng = NaN;
+        var lat = NaN;
+        if (Array.isArray(pt) && pt.length >= 2) {
+            lng = Number(pt[0]);
+            lat = Number(pt[1]);
+        } else if (pt && typeof pt === 'object') {
+            if (typeof pt.getLng === 'function' && typeof pt.getLat === 'function') {
+                lng = Number(pt.getLng());
+                lat = Number(pt.getLat());
+            } else if (Object.prototype.hasOwnProperty.call(pt, 'lng') && Object.prototype.hasOwnProperty.call(pt, 'lat')) {
+                lng = Number(pt.lng);
+                lat = Number(pt.lat);
+            } else if (Object.prototype.hasOwnProperty.call(pt, 'lon') && Object.prototype.hasOwnProperty.call(pt, 'lat')) {
+                lng = Number(pt.lon);
+                lat = Number(pt.lat);
+            }
+        }
+        if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
+        var p = Math.max(0, Number.isFinite(Number(precision)) ? Math.floor(Number(precision)) : 7);
+        var factor = Math.pow(10, p);
+        return [
+            Math.round(lng * factor) / factor,
+            Math.round(lat * factor) / factor
+        ];
+    };
+
+    MapCore.prototype._buildEdgeKey = function (p1, p2) {
+        if (!Array.isArray(p1) || !Array.isArray(p2) || p1.length < 2 || p2.length < 2) return '';
+        var first = p1;
+        var second = p2;
+        if (p1[0] > p2[0] || (p1[0] === p2[0] && p1[1] > p2[1])) {
+            first = p2;
+            second = p1;
+        }
+        return String(first[0]) + ',' + String(first[1]) + '|' + String(second[0]) + ',' + String(second[1]);
+    };
+
+    MapCore.prototype._resolveLisaSubtype = function (props) {
+        var p = props || {};
+        var lisaCluster = String(p.lisa_cluster || 'NS').toUpperCase();
+        if (lisaCluster === 'HH' || lisaCluster === 'HL' || lisaCluster === 'LH' || lisaCluster === 'LL') {
+            return lisaCluster;
+        }
+        return null;
+    };
+
+    MapCore.prototype._getStructureBoundaryBucket = function (sourceType, props) {
+        var p = props || {};
+        if (sourceType === 'gi') {
+            var giColorMap = {
+                core_hotspot: '#991b1b',
+                secondary_hotspot: '#dc2626',
+                core_coldspot: '#1e3a8a',
+                secondary_coldspot: '#2563eb'
+            };
+            var giType = String(p.spatial_structure_type || 'ns');
+            var giColor = giColorMap[giType] || null;
+            if (!giColor) return null;
+            return {
+                key: 'gi:' + giType,
+                subtype: giType,
+                color: giColor
+            };
+        }
+        if (sourceType === 'lisa') {
+            var lisaColorMap = {
+                HH: '#facc15',
+                HL: '#e879f9',
+                LH: '#10b981',
+                LL: '#22d3ee'
+            };
+            var lisaCluster = this._resolveLisaSubtype(p);
+            var lisaColor = lisaColorMap[lisaCluster] || null;
+            if (!lisaColor) return null;
+            return {
+                key: 'lisa:' + lisaCluster,
+                subtype: lisaCluster,
+                color: lisaColor
+            };
+        }
+        return null;
+    };
+
+    MapCore.prototype._extractOuterEdges = function (features, sourceType, subtypeKey) {
+        var edgeOwners = {};
+        var self = this;
+        var normalizedSubtype = subtypeKey ? String(subtypeKey).toUpperCase() : '';
+        var candidateCells = {};
+        var seenCellIds = {};
+        (features || []).forEach(function (feature, featureIdx) {
+            if (!feature || !feature.geometry || feature.geometry.type !== 'Polygon') return;
+            var rings = feature.geometry.coordinates || [];
+            var path = rings[0];
+            if (!Array.isArray(path) || path.length < 3) return;
+            var props = feature.properties || {};
+            var bucket = self._getStructureBoundaryBucket(sourceType, props);
+            if (!bucket) return;
+            if (normalizedSubtype && String(bucket.subtype || '').toUpperCase() !== normalizedSubtype) return;
+            var candidateKey = String(props.h3_id || '');
+            if (!candidateKey) candidateKey = '__idx_' + String(featureIdx);
+            if (seenCellIds[candidateKey]) return;
+            seenCellIds[candidateKey] = 1;
+            candidateCells[candidateKey] = 1;
+
+            var points = path.slice();
+            var firstNorm = self._normalizeEdgePoint(points[0], 7);
+            var lastNorm = self._normalizeEdgePoint(points[points.length - 1], 7);
+            if (
+                firstNorm && lastNorm
+                && firstNorm[0] === lastNorm[0]
+                && firstNorm[1] === lastNorm[1]
+            ) {
+                points = points.slice(0, points.length - 1);
+            }
+            if (!Array.isArray(points) || points.length < 3) return;
+
+            var seenKeys = {};
+            for (var idx = 0; idx < points.length; idx += 1) {
+                var nextIdx = (idx + 1) % points.length;
+                var p1 = self._normalizeEdgePoint(points[idx], 7);
+                var p2 = self._normalizeEdgePoint(points[nextIdx], 7);
+                if (!p1 || !p2) continue;
+                if (p1[0] === p2[0] && p1[1] === p2[1]) continue;
+                var key = self._buildEdgeKey(p1, p2);
+                if (!key || seenKeys[key]) continue;
+                seenKeys[key] = true;
+                var bucketEdgeKey = bucket.key + '::' + key;
+                if (!edgeOwners[bucketEdgeKey]) edgeOwners[bucketEdgeKey] = [];
+                edgeOwners[bucketEdgeKey].push({
+                    path: [p1, p2],
+                    color: bucket.color,
+                });
+            }
+        });
+
+        var outerEdges = [];
+        Object.keys(edgeOwners).forEach(function (key) {
+            var owners = edgeOwners[key] || [];
+            if (owners.length === 1) outerEdges.push(owners[0]);
+        });
+        return {
+            edges: outerEdges,
+            candidateCount: Object.keys(candidateCells).length
+        };
+    };
+
+    MapCore.prototype._renderStructureBoundaryEdges = function (edgeSegments, styleSpec) {
+        var self = this;
+        var spec = styleSpec || {};
+        if (!this.map) return;
+        (edgeSegments || []).forEach(function (segment) {
+            if (!segment || !Array.isArray(segment.path) || segment.path.length < 2) return;
+            var styleType = String(spec.strokeStyle || 'solid').toLowerCase();
+            var useDashed = styleType === 'dashed' || styleType === 'dotted';
+            var strokeDasharray = spec.strokeDasharray;
+            if (!Array.isArray(strokeDasharray) || strokeDasharray.length < 2) {
+                strokeDasharray = styleType === 'dotted' ? [2, 6] : [10, 8];
+            }
+            var zIndex = typeof spec.zIndex === 'number' ? spec.zIndex : 160;
+            var haloWeight = typeof spec.haloWeight === 'number' ? spec.haloWeight : 0;
+            if (haloWeight > 0) {
+                var haloLine = new AMap.Polyline({
+                    path: segment.path,
+                    strokeColor: spec.haloColor || '#ffffff',
+                    strokeWeight: haloWeight,
+                    strokeOpacity: typeof spec.haloOpacity === 'number' ? spec.haloOpacity : 0.95,
+                    strokeStyle: 'solid',
+                    lineJoin: 'round',
+                    lineCap: 'round',
+                    zIndex: zIndex - 1,
+                    bubble: true,
+                    clickable: false
+                });
+                haloLine.setMap(self.map);
+                self.gridStructureBoundaryOverlays.push(haloLine);
+            }
+            var polyline = new AMap.Polyline({
+                path: segment.path,
+                strokeColor: spec.strokeColor || segment.color || '#111827',
+                strokeWeight: typeof spec.strokeWeight === 'number' ? spec.strokeWeight : 4,
+                strokeOpacity: typeof spec.strokeOpacity === 'number' ? spec.strokeOpacity : 1,
+                strokeStyle: useDashed ? 'dashed' : 'solid',
+                strokeDasharray: useDashed ? strokeDasharray : undefined,
+                lineJoin: 'round',
+                lineCap: 'round',
+                zIndex: zIndex,
+                bubble: true,
+                clickable: false
+            });
+            polyline.setMap(self.map);
+            self.gridStructureBoundaryOverlays.push(polyline);
+        });
+    };
+
+    MapCore.prototype._buildClosedRingsFromEdges = function (edgeSegments) {
+        var segments = Array.isArray(edgeSegments) ? edgeSegments : [];
+        if (!segments.length) return [];
+
+        var pointByKey = {};
+        var adjacency = {};
+        var edgeMap = {};
+        var self = this;
+
+        var pointKey = function (pt) {
+            if (!Array.isArray(pt) || pt.length < 2) return '';
+            return String(pt[0]) + ',' + String(pt[1]);
+        };
+
+        var addNeighbor = function (fromKey, toKey) {
+            if (!adjacency[fromKey]) adjacency[fromKey] = [];
+            if (adjacency[fromKey].indexOf(toKey) < 0) adjacency[fromKey].push(toKey);
+        };
+
+        segments.forEach(function (segment) {
+            if (!segment || !Array.isArray(segment.path) || segment.path.length < 2) return;
+            var p1 = self._normalizeEdgePoint(segment.path[0], 7);
+            var p2 = self._normalizeEdgePoint(segment.path[1], 7);
+            if (!p1 || !p2) return;
+            if (p1[0] === p2[0] && p1[1] === p2[1]) return;
+            var k1 = pointKey(p1);
+            var k2 = pointKey(p2);
+            if (!k1 || !k2) return;
+            pointByKey[k1] = p1;
+            pointByKey[k2] = p2;
+            addNeighbor(k1, k2);
+            addNeighbor(k2, k1);
+            var eKey = self._buildEdgeKey(p1, p2);
+            if (!eKey) return;
+            edgeMap[eKey] = { a: k1, b: k2 };
+        });
+
+        var usedEdges = {};
+        var edgeKeys = Object.keys(edgeMap);
+        var rings = [];
+        var maxStep = Math.max(32, edgeKeys.length * 2 + 8);
+
+        edgeKeys.forEach(function (startEdgeKey) {
+            if (usedEdges[startEdgeKey]) return;
+            var edge = edgeMap[startEdgeKey];
+            if (!edge) return;
+            var startKey = edge.a;
+            var prevKey = edge.a;
+            var currKey = edge.b;
+            var ring = [pointByKey[startKey], pointByKey[currKey]];
+            usedEdges[startEdgeKey] = 1;
+
+            var step = 0;
+            while (step < maxStep && currKey !== startKey) {
+                step += 1;
+                var neighbors = adjacency[currKey] || [];
+                if (!neighbors.length) break;
+
+                var nextKey = null;
+                for (var nIdx = 0; nIdx < neighbors.length; nIdx += 1) {
+                    var candidate = neighbors[nIdx];
+                    if (!candidate || candidate === prevKey) continue;
+                    var cEdgeKey = self._buildEdgeKey(pointByKey[currKey], pointByKey[candidate]);
+                    if (cEdgeKey && !usedEdges[cEdgeKey]) {
+                        nextKey = candidate;
+                        usedEdges[cEdgeKey] = 1;
+                        break;
+                    }
+                }
+
+                if (!nextKey) {
+                    var closeEdgeKey = self._buildEdgeKey(pointByKey[currKey], pointByKey[startKey]);
+                    if (
+                        (adjacency[currKey] || []).indexOf(startKey) >= 0
+                        && closeEdgeKey
+                        && !usedEdges[closeEdgeKey]
+                    ) {
+                        nextKey = startKey;
+                        usedEdges[closeEdgeKey] = 1;
+                    } else {
+                        break;
+                    }
+                }
+
+                ring.push(pointByKey[nextKey]);
+                prevKey = currKey;
+                currKey = nextKey;
+            }
+
+            if (currKey === startKey && ring.length >= 4) {
+                var first = ring[0];
+                var last = ring[ring.length - 1];
+                if (!last || first[0] !== last[0] || first[1] !== last[1]) {
+                    ring.push([first[0], first[1]]);
+                }
+                rings.push(ring);
+            }
+        });
+
+        return rings;
+    };
+
+    MapCore.prototype._renderStructureBoundaryRings = function (rings, styleSpec) {
+        var self = this;
+        var spec = styleSpec || {};
+        if (!this.map) return;
+        (rings || []).forEach(function (ringPath) {
+            if (!Array.isArray(ringPath) || ringPath.length < 4) return;
+            var styleType = String(spec.strokeStyle || 'solid').toLowerCase();
+            var useDashed = styleType === 'dashed' || styleType === 'dotted';
+            var strokeDasharray = spec.strokeDasharray;
+            if (!Array.isArray(strokeDasharray) || strokeDasharray.length < 2) {
+                strokeDasharray = styleType === 'dotted' ? [2, 6] : [10, 8];
+            }
+            var zIndex = typeof spec.zIndex === 'number' ? spec.zIndex : 160;
+            var haloWeight = typeof spec.haloWeight === 'number' ? spec.haloWeight : 0;
+            if (haloWeight > 0) {
+                var haloLine = new AMap.Polyline({
+                    path: ringPath,
+                    strokeColor: spec.haloColor || '#ffffff',
+                    strokeWeight: haloWeight,
+                    strokeOpacity: typeof spec.haloOpacity === 'number' ? spec.haloOpacity : 0.95,
+                    strokeStyle: 'solid',
+                    lineJoin: 'round',
+                    lineCap: 'round',
+                    zIndex: zIndex - 1,
+                    bubble: true,
+                    clickable: false
+                });
+                haloLine.setMap(self.map);
+                self.gridStructureBoundaryOverlays.push(haloLine);
+            }
+            var polyline = new AMap.Polyline({
+                path: ringPath,
+                strokeColor: spec.strokeColor || '#111827',
+                strokeWeight: typeof spec.strokeWeight === 'number' ? spec.strokeWeight : 4,
+                strokeOpacity: typeof spec.strokeOpacity === 'number' ? spec.strokeOpacity : 1,
+                strokeStyle: useDashed ? 'dashed' : 'solid',
+                strokeDasharray: useDashed ? strokeDasharray : undefined,
+                lineJoin: 'round',
+                lineCap: 'round',
+                zIndex: zIndex,
+                bubble: true,
+                clickable: false
+            });
+            polyline.setMap(self.map);
+            self.gridStructureBoundaryOverlays.push(polyline);
+        });
+    };
+
+    MapCore.prototype._renderEdgeSymbols = function (edgeSegments, symbolSpec) {
+        var self = this;
+        if (!this.map) return 0;
+        var spec = symbolSpec || {};
+        var textSymbol = String(spec.text || '▲');
+        var symbolCount = 0;
+        (edgeSegments || []).forEach(function (segment) {
+            if (!segment || !Array.isArray(segment.path) || segment.path.length < 2) return;
+            var p1 = segment.path[0];
+            var p2 = segment.path[1];
+            if (!Array.isArray(p1) || !Array.isArray(p2) || p1.length < 2 || p2.length < 2) return;
+            var mid = [
+                (Number(p1[0]) + Number(p2[0])) / 2,
+                (Number(p1[1]) + Number(p2[1])) / 2
+            ];
+            if (!Number.isFinite(mid[0]) || !Number.isFinite(mid[1])) return;
+            var symbol = new AMap.Text({
+                text: textSymbol,
+                position: mid,
+                anchor: 'center',
+                clickable: false,
+                bubble: true,
+                style: {
+                    border: 'none',
+                    background: 'transparent',
+                    color: spec.color || segment.color || '#0ea5a4',
+                    fontSize: '12px',
+                    fontWeight: '700',
+                    lineHeight: '12px',
+                    padding: '0',
+                },
+                zIndex: typeof spec.zIndex === 'number' ? spec.zIndex : 166
+            });
+            symbol.setMap(self.map);
+            self.gridStructureSymbolOverlays.push(symbol);
+            symbolCount += 1;
+        });
+        return symbolCount;
+    };
+
     MapCore.prototype.setGridFeatures = function (features, style) {
         var self = this;
         var cfg = style || {};
         var strokeColor = cfg.strokeColor || '#1e88e5';
-        var strokeWeight = typeof cfg.strokeWeight === 'number' ? cfg.strokeWeight : 2.2;
+        var strokeWeight = typeof cfg.strokeWeight === 'number' ? cfg.strokeWeight : 1.4;
         var fillColor = cfg.fillColor || '#42a5f5';
-        var fillOpacity = typeof cfg.fillOpacity === 'number' ? cfg.fillOpacity : 0.2;
+        var fillOpacity = typeof cfg.fillOpacity === 'number' ? cfg.fillOpacity : 0;
+        var showStructureBoundaryEdges = !!cfg.structureBoundaryEdges;
+        var showStructureBoundaryGi = !!cfg.structureBoundaryGi;
+        var showStructureBoundaryLisa = !!cfg.structureBoundaryLisa;
+        var showStructureLisaSymbols = !!cfg.structureLisaSymbolMode;
+        var structureBoundaryLineStyleMap = cfg.structureBoundaryLineStyleMap || {};
+        var structureBoundaryDebug = !!cfg.structureBoundaryDebug;
+        var boundaryRenderStats = {
+            enabled: showStructureBoundaryEdges,
+            giOuterEdges: 0,
+            lisaCandidateCells: { HH: 0, LL: 0, HL: 0, LH: 0 },
+            lisaOuterEdges: { HH: 0, LL: 0, HL: 0, LH: 0 },
+            lisaOuterRings: { HH: 0, LL: 0, HL: 0, LH: 0 },
+            lisaSymbols: 0,
+        };
 
         this.clearGridPolygons();
         (features || []).forEach(function (feature) {
@@ -497,12 +900,12 @@
                 path: path,
                 strokeColor: currentStrokeColor,
                 strokeWeight: currentStrokeWeight,
-                strokeOpacity: 0.92,
+                strokeOpacity: 0.82,
                 fillColor: currentFillColor,
                 fillOpacity: currentFillOpacity,
                 zIndex: 80,
-                clickable: false,
-                bubble: true
+                clickable: true,
+                bubble: false
             });
             polygon.__baseStyle = {
                 strokeColor: currentStrokeColor,
@@ -512,6 +915,20 @@
                 zIndex: 80,
             };
             polygon.__h3Id = props.h3_id || null;
+            polygon.__props = Object.assign({}, props);
+            if (polygon.__h3Id && typeof self.config.onGridFeatureClick === 'function' && polygon.on) {
+                polygon.on('click', function (evt) {
+                    var lnglat = null;
+                    if (evt && evt.lnglat && evt.lnglat.getLng && evt.lnglat.getLat) {
+                        lnglat = [evt.lnglat.getLng(), evt.lnglat.getLat()];
+                    }
+                    self.config.onGridFeatureClick({
+                        h3_id: polygon.__h3Id,
+                        properties: Object.assign({}, polygon.__props || {}),
+                        lnglat: lnglat
+                    });
+                });
+            }
             polygon.setMap(self.map);
             self.gridPolygons.push(polygon);
             if (polygon.__h3Id) {
@@ -519,40 +936,63 @@
             }
         });
 
+        if (showStructureBoundaryEdges) {
+            if (showStructureBoundaryGi) {
+                var giExtraction = this._extractOuterEdges(features, 'gi', null);
+                var giOuterEdges = giExtraction.edges || [];
+                boundaryRenderStats.giOuterEdges = giOuterEdges.length;
+                if (structureBoundaryDebug && typeof console !== 'undefined' && console.info) {
+                    console.info('[MapCore] Gi* outer edges:', giOuterEdges.length);
+                }
+                this._renderStructureBoundaryEdges(giOuterEdges, {
+                    strokeWeight: 7,
+                    strokeOpacity: 1,
+                    zIndex: 260
+                });
+            }
+            if (showStructureBoundaryLisa) {
+                var lisaDefaults = {
+                    HH: { strokeStyle: 'solid', strokeWeight: 4, strokeOpacity: 1, zIndex: 262, strokeColor: '#facc15', haloWeight: 6, haloColor: '#ffffff', haloOpacity: 0.95 },
+                    LL: { strokeStyle: 'dashed', strokeWeight: 4, strokeOpacity: 1, zIndex: 263, strokeColor: '#22d3ee', strokeDasharray: [10, 8], haloWeight: 6, haloColor: '#ffffff', haloOpacity: 0.95 },
+                    HL: { strokeStyle: 'dashed', strokeWeight: 4, strokeOpacity: 1, zIndex: 264, strokeColor: '#e879f9', strokeDasharray: [4, 6], haloWeight: 6, haloColor: '#ffffff', haloOpacity: 0.95 },
+                    LH: { strokeStyle: 'solid', strokeWeight: 4, strokeOpacity: 1, zIndex: 265, strokeColor: '#10b981', haloWeight: 6, haloColor: '#ffffff', haloOpacity: 0.95 }
+                };
+                var lisaSubtypes = ['HH', 'LL', 'HL', 'LH'];
+                for (var sIdx = 0; sIdx < lisaSubtypes.length; sIdx += 1) {
+                    var subtype = lisaSubtypes[sIdx];
+                    var lisaExtraction = this._extractOuterEdges(features, 'lisa', subtype);
+                    var lisaEdges = lisaExtraction.edges || [];
+                    var lisaRings = this._buildClosedRingsFromEdges(lisaEdges);
+                    boundaryRenderStats.lisaCandidateCells[subtype] = Number(lisaExtraction.candidateCount || 0);
+                    boundaryRenderStats.lisaOuterEdges[subtype] = lisaEdges.length;
+                    boundaryRenderStats.lisaOuterRings[subtype] = lisaRings.length;
+                    if (structureBoundaryDebug && typeof console !== 'undefined' && console.info) {
+                        console.info(
+                            '[MapCore] LISA rings (' + subtype + '):',
+                            lisaRings.length,
+                            'edges:',
+                            lisaEdges.length,
+                            'candidates:',
+                            boundaryRenderStats.lisaCandidateCells[subtype]
+                        );
+                    }
+                    if (!lisaRings.length) continue;
+                    var styleOverride = structureBoundaryLineStyleMap[subtype] || {};
+                    var lineSpec = Object.assign({}, lisaDefaults[subtype], styleOverride);
+                    this._renderStructureBoundaryRings(lisaRings, lineSpec);
+                    if (showStructureLisaSymbols && subtype === 'LH') {
+                        boundaryRenderStats.lisaSymbols += this._renderEdgeSymbols(lisaEdges, {
+                            text: '▲',
+                            color: lineSpec.strokeColor || '#0ea5a4',
+                            zIndex: (typeof lineSpec.zIndex === 'number' ? lineSpec.zIndex : 165) + 1,
+                        });
+                    }
+                }
+            }
+        }
+
         this.updateFitView();
-    };
-
-    MapCore.prototype.setParcelFeatures = function (features, style) {
-        var self = this;
-        var cfg = style || {};
-        var strokeColor = cfg.strokeColor || '#7f8c99';
-        var strokeWeight = typeof cfg.strokeWeight === 'number' ? cfg.strokeWeight : 1;
-        var fillColor = cfg.fillColor || '#a0aec0';
-        var fillOpacity = typeof cfg.fillOpacity === 'number' ? cfg.fillOpacity : 0.08;
-
-        this.clearParcelPolygons();
-        (features || []).forEach(function (feature) {
-            if (!feature || !feature.geometry || feature.geometry.type !== 'Polygon') return;
-            var rings = feature.geometry.coordinates || [];
-            var path = rings[0];
-            if (!Array.isArray(path) || path.length < 3) return;
-            var props = feature.properties || {};
-            var polygon = new AMap.Polygon({
-                path: path,
-                strokeColor: props.strokeColor || strokeColor,
-                strokeWeight: typeof props.strokeWeight === 'number' ? props.strokeWeight : strokeWeight,
-                strokeOpacity: 0.75,
-                fillColor: props.fillColor || fillColor,
-                fillOpacity: typeof props.fillOpacity === 'number' ? props.fillOpacity : fillOpacity,
-                zIndex: 60,
-                bubble: true,
-                clickable: false
-            });
-            polygon.setMap(self.map);
-            self.parcelPolygons.push(polygon);
-        });
-
-        this.updateFitView();
+        return boundaryRenderStats;
     };
 
     MapCore.prototype._restoreGridPolygonStyle = function (polygon) {
@@ -743,7 +1183,7 @@
                         strokeWeight: 2,
                         strokeOpacity: 0.9,
                         fillColor: '#00bcd4',
-                        fillOpacity: 0.05
+                        fillOpacity: 0
                     });
                     polygon.setMap(self.map);
                     self.boundaryPolygons.push(polygon);
@@ -774,11 +1214,6 @@
             }
         });
         this.customPolygons.forEach(function (polygon) {
-            if (polygon && polygon.getMap) {
-                objects.push(polygon);
-            }
-        });
-        this.parcelPolygons.forEach(function (polygon) {
             if (polygon && polygon.getMap) {
                 objects.push(polygon);
             }

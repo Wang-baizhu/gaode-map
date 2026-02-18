@@ -33,6 +33,16 @@ class Settings(BaseSettings):
     static_dir: str = str(Path(__file__).resolve().parent.parent / "static")  # 静态资源根目录
     templates_dir: str = str(Path(__file__).resolve().parent.parent / "templates")  # Jinja模板目录
     template_name: str = "map_with_filters.html"  # 默认模板文件名
+    file_lifetime_hours: int = Field(
+        168,
+        validation_alias="FILE_LIFETIME_HOURS",
+        description="Generated file retention period in hours",
+    )
+    cleanup_interval_hours: int = Field(
+        24,
+        validation_alias="CLEANUP_INTERVAL_HOURS",
+        description="Background cleanup interval in hours",
+    )
     db_path: str = str(Path(__file__).resolve().parent.parent / "data" / "map.db")  # SQLite 数据文件路径
     db_url: Optional[str] = Field(None, validation_alias="DB_URL", description="数据库连接字符串")
 
@@ -88,6 +98,28 @@ class Settings(BaseSettings):
         60,
         validation_alias="VALHALLA_TIMEOUT_S",
         description="Valhalla 请求超时时间（秒）",
+    )
+
+    # ArcGIS HTTP bridge config
+    arcgis_bridge_enabled: bool = Field(
+        True,
+        validation_alias="ARCGIS_BRIDGE_ENABLED",
+        description="Whether ArcGIS HTTP bridge is enabled",
+    )
+    arcgis_bridge_base_url: str = Field(
+        "http://host.docker.internal:18081",
+        validation_alias="ARCGIS_BRIDGE_BASE_URL",
+        description="ArcGIS bridge base URL",
+    )
+    arcgis_bridge_token: str = Field(
+        "",
+        validation_alias="ARCGIS_BRIDGE_TOKEN",
+        description="Shared token used in X-ArcGIS-Token header",
+    )
+    arcgis_bridge_timeout_s: int = Field(
+        300,
+        validation_alias="ARCGIS_BRIDGE_TIMEOUT_S",
+        description="ArcGIS bridge request timeout in seconds",
     )
 
 
