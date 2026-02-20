@@ -9,7 +9,7 @@ services:
     environment:
       - VALHALLA_BASE_URL=http://valhalla:8002
       - AMAP_WEB_SERVICE_KEY
-      - DEPTHMAPX_CLI_PATH=/usr/local/bin/depthmapXcli
+      - DEPTHMAPX_CLI_PATH=${DEPTHMAPX_CLI_PATH:-/usr/local/bin/depthmapXcli}
       - OVERPASS_ENDPOINT=${OVERPASS_ENDPOINT}
       - PYTHONUNBUFFERED=1
     depends_on:
