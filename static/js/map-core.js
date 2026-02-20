@@ -183,6 +183,44 @@
         this.customPolygons = [];
     };
 
+    MapCore.prototype._normalizeLngLatPoint = function (pt) {
+        var lng = NaN;
+        var lat = NaN;
+        if (Array.isArray(pt) && pt.length >= 2) {
+            lng = Number(pt[0]);
+            lat = Number(pt[1]);
+        } else if (pt && typeof pt === 'object') {
+            if (typeof pt.getLng === 'function' && typeof pt.getLat === 'function') {
+                lng = Number(pt.getLng());
+                lat = Number(pt.getLat());
+            } else if (Object.prototype.hasOwnProperty.call(pt, 'lng') && Object.prototype.hasOwnProperty.call(pt, 'lat')) {
+                lng = Number(pt.lng);
+                lat = Number(pt.lat);
+            } else if (Object.prototype.hasOwnProperty.call(pt, 'lon') && Object.prototype.hasOwnProperty.call(pt, 'lat')) {
+                lng = Number(pt.lon);
+                lat = Number(pt.lat);
+            }
+        } else if (typeof pt === 'string') {
+            var parts = pt.split(',');
+            if (parts.length >= 2) {
+                lng = Number(parts[0].trim());
+                lat = Number(parts[1].trim());
+            }
+        }
+        if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
+        return [lng, lat];
+    };
+
+    MapCore.prototype._normalizePathPoints = function (path, minPoints) {
+        var required = Number.isFinite(Number(minPoints)) ? Math.max(2, Math.floor(Number(minPoints))) : 2;
+        var out = [];
+        (Array.isArray(path) ? path : []).forEach(function (pt) {
+            var norm = this._normalizeLngLatPoint(pt);
+            if (norm) out.push(norm);
+        }, this);
+        return out.length >= required ? out : [];
+    };
+
     MapCore.prototype._getTiandituContainer = function () {
         if (!this.tiandituContainerId || typeof document === 'undefined') return null;
         return document.getElementById(this.tiandituContainerId);
@@ -427,6 +465,13 @@
             return;
         }
 
+        if (this.basemapSource === 'osm') {
+            if (this._osmTileLayer && this._osmTileLayer.setOpacity) {
+                this._osmTileLayer.setOpacity(this.basemapMuted ? 0.75 : 1);
+            }
+            return;
+        }
+
         if (this.basemapSource === 'amap') {
             if (!this.map.setFeatures) return;
             this.map.setFeatures(this.basemapMuted
@@ -460,9 +505,10 @@
         var self = this;
         this.clearCustomPolygons();
         (pathsList || []).forEach(function (path) {
-            if (!path || !path.length) return;
+            var normalizedPath = self._normalizePathPoints(path, 3);
+            if (!normalizedPath.length) return;
             var polygon = new AMap.Polygon({
-                path: path,
+                path: normalizedPath,
                 strokeColor: '#ff6f00',
                 strokeWeight: 2,
                 strokeOpacity: 0.9,
@@ -869,6 +915,8 @@
         var strokeWeight = typeof cfg.strokeWeight === 'number' ? cfg.strokeWeight : 1.4;
         var fillColor = cfg.fillColor || '#42a5f5';
         var fillOpacity = typeof cfg.fillOpacity === 'number' ? cfg.fillOpacity : 0;
+        var clickable = cfg.clickable !== false;
+        var bubble = cfg.bubble !== false;
         var showStructureBoundaryEdges = !!cfg.structureBoundaryEdges;
         var showStructureBoundaryGi = !!cfg.structureBoundaryGi;
         var showStructureBoundaryLisa = !!cfg.structureBoundaryLisa;
@@ -888,7 +936,7 @@
         (features || []).forEach(function (feature) {
             if (!feature || !feature.geometry || feature.geometry.type !== 'Polygon') return;
             var rings = feature.geometry.coordinates || [];
-            var path = rings[0];
+            var path = self._normalizePathPoints(rings[0], 3);
             if (!Array.isArray(path) || path.length < 3) return;
             var props = feature.properties || {};
             var currentStrokeColor = props.strokeColor || strokeColor;
@@ -904,8 +952,8 @@
                 fillColor: currentFillColor,
                 fillOpacity: currentFillOpacity,
                 zIndex: 80,
-                clickable: true,
-                bubble: false
+                clickable: clickable,
+                bubble: bubble
             });
             polygon.__baseStyle = {
                 strokeColor: currentStrokeColor,

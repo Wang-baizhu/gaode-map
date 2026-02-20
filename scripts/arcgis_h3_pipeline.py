@@ -10,6 +10,7 @@ import re
 import shutil
 import sys
 import tempfile
+import time
 import traceback
 import uuid
 
@@ -68,6 +69,14 @@ def _safe_float(value):
         return f
     except Exception:
         return None
+
+
+def _delete_if_exists(path):
+    try:
+        if path and arcpy.Exists(path):
+            arcpy.Delete_management(path)
+    except Exception:
+        pass
 
 
 def _tool_candidates(primary_name, legacy_name):
@@ -139,10 +148,61 @@ def _parse_global_moran_result(result_obj):
 
 
 def _build_feature_class(rows):
+    sr = arcpy.SpatialReference(4326)
+
+    def _populate_rows(fc_path):
+        source_id_to_h3 = {}
+        next_source_id = 1
+        with arcpy.da.InsertCursor(fc_path, ["SHAPE@", "H3_ID", "VALUE"]) as cursor:
+            for row in rows:
+                h3_id = (row or {}).get("h3_id")
+                ring = (row or {}).get("ring") or []
+                if not h3_id or len(ring) < 3:
+                    continue
+                pts = []
+                for item in ring:
+                    if not isinstance(item, (list, tuple)) or len(item) < 2:
+                        continue
+                    x = _safe_float(item[0])
+                    y = _safe_float(item[1])
+                    if x is None or y is None:
+                        continue
+                    pts.append(arcpy.Point(x, y))
+                if len(pts) < 3:
+                    continue
+                if pts[0].X != pts[-1].X or pts[0].Y != pts[-1].Y:
+                    pts.append(arcpy.Point(pts[0].X, pts[0].Y))
+                polygon = arcpy.Polygon(arcpy.Array(pts), sr)
+                cursor.insertRow([polygon, str(h3_id), float((_safe_float(row.get("value")) or 0.0))])
+                source_id_to_h3[str(next_source_id)] = str(h3_id)
+                next_source_id += 1
+        return source_id_to_h3
+
+    # Fast path: use in-memory workspace to reduce disk I/O.
+    in_memory_name = "h3_cells_%s" % uuid.uuid4().hex[:8]
+    in_memory_fc = os.path.join("in_memory", in_memory_name)
+    try:
+        _delete_if_exists(in_memory_fc)
+        fc_path = arcpy.CreateFeatureclass_management(
+            "in_memory",
+            in_memory_name,
+            "POLYGON",
+            "",
+            "DISABLED",
+            "DISABLED",
+            sr,
+        ).getOutput(0)
+        arcpy.AddField_management(fc_path, "H3_ID", "TEXT", field_length=32)
+        arcpy.AddField_management(fc_path, "VALUE", "DOUBLE")
+        source_id_to_h3 = _populate_rows(fc_path)
+        return None, fc_path, source_id_to_h3, "in_memory"
+    except Exception:
+        _delete_if_exists(in_memory_fc)
+
+    # Fallback: file geodatabase.
     tmp_dir = tempfile.mkdtemp(prefix="arcgis_h3_")
     gdb_name = "h3_%s.gdb" % uuid.uuid4().hex[:8]
     gdb_path = arcpy.CreateFileGDB_management(tmp_dir, gdb_name).getOutput(0)
-    sr = arcpy.SpatialReference(4326)
     fc_path = arcpy.CreateFeatureclass_management(
         gdb_path,
         "h3_cells",
@@ -154,34 +214,8 @@ def _build_feature_class(rows):
     ).getOutput(0)
     arcpy.AddField_management(fc_path, "H3_ID", "TEXT", field_length=32)
     arcpy.AddField_management(fc_path, "VALUE", "DOUBLE")
-
-    source_id_to_h3 = {}
-    next_source_id = 1
-    with arcpy.da.InsertCursor(fc_path, ["SHAPE@", "H3_ID", "VALUE"]) as cursor:
-        for row in rows:
-            h3_id = (row or {}).get("h3_id")
-            ring = (row or {}).get("ring") or []
-            if not h3_id or len(ring) < 3:
-                continue
-            pts = []
-            for item in ring:
-                if not isinstance(item, (list, tuple)) or len(item) < 2:
-                    continue
-                x = _safe_float(item[0])
-                y = _safe_float(item[1])
-                if x is None or y is None:
-                    continue
-                pts.append(arcpy.Point(x, y))
-            if len(pts) < 3:
-                continue
-            if pts[0].X != pts[-1].X or pts[0].Y != pts[-1].Y:
-                pts.append(arcpy.Point(pts[0].X, pts[0].Y))
-            polygon = arcpy.Polygon(arcpy.Array(pts), sr)
-            cursor.insertRow([polygon, str(h3_id), float((_safe_float(row.get("value")) or 0.0))])
-            source_id_to_h3[str(next_source_id)] = str(h3_id)
-            next_source_id += 1
-
-    return tmp_dir, fc_path, source_id_to_h3
+    source_id_to_h3 = _populate_rows(fc_path)
+    return tmp_dir, fc_path, source_id_to_h3, "file_gdb"
 
 
 def _collect_hotspot_rows(fc, source_id_to_h3=None):
@@ -247,13 +281,26 @@ def run_pipeline(input_path, output_path, knn_neighbors):
         return 0
 
     tmp_dir = None
+    in_fc = None
+    hot_fc = None
+    lisa_fc = None
+    timings = {}
+    started_ts = time.time()
     try:
-        tmp_dir, in_fc, source_id_to_h3 = _build_feature_class(rows)
-        workspace = os.path.dirname(in_fc)
-        hot_fc = os.path.join(workspace, "hotspots")
-        lisa_fc = os.path.join(workspace, "lisa")
+        t0 = time.time()
+        tmp_dir, in_fc, source_id_to_h3, workspace_kind = _build_feature_class(rows)
+        timings["build_fc_sec"] = round(time.time() - t0, 3)
+        if str(workspace_kind) == "in_memory":
+            unique = uuid.uuid4().hex[:8]
+            hot_fc = os.path.join("in_memory", "hotspots_%s" % unique)
+            lisa_fc = os.path.join("in_memory", "lisa_%s" % unique)
+        else:
+            workspace = os.path.dirname(in_fc)
+            hot_fc = os.path.join(workspace, "hotspots")
+            lisa_fc = os.path.join(workspace, "lisa")
 
         hot_tools = _tool_candidates("HotSpots", "HotSpots_stats")
+        t1 = time.time()
         _run_tool(
             hot_tools,
             [
@@ -263,6 +310,7 @@ def run_pipeline(input_path, output_path, knn_neighbors):
             ],
             "HotSpots",
         )
+        timings["hotspots_sec"] = round(time.time() - t1, 3)
 
         lisa_tools = []
         stats_mod = getattr(arcpy, "stats", None)
@@ -272,6 +320,7 @@ def run_pipeline(input_path, output_path, knn_neighbors):
         for name in ("ClusterOutlierAnalysis_stats", "ClustersOutliers_stats"):
             if hasattr(arcpy, name):
                 lisa_tools.append(getattr(arcpy, name))
+        t2 = time.time()
         _run_tool(
             lisa_tools,
             [
@@ -284,11 +333,13 @@ def run_pipeline(input_path, output_path, knn_neighbors):
             ],
             "ClusterOutlierAnalysis",
         )
+        timings["lisa_sec"] = round(time.time() - t2, 3)
 
         global_moran = {"i": None, "z_score": None}
         moran_tools = _tool_candidates("SpatialAutocorrelation", "SpatialAutocorrelation_stats")
         if moran_tools:
             try:
+                t3 = time.time()
                 moran_result = _run_tool(
                     moran_tools,
                     [
@@ -299,12 +350,17 @@ def run_pipeline(input_path, output_path, knn_neighbors):
                     "SpatialAutocorrelation",
                 )
                 global_moran = _parse_global_moran_result(moran_result)
+                timings["global_moran_sec"] = round(time.time() - t3, 3)
             except Exception:
                 global_moran = {"i": None, "z_score": None}
+                timings["global_moran_sec"] = None
 
+        t4 = time.time()
         hot_map = _collect_hotspot_rows(hot_fc, source_id_to_h3=source_id_to_h3)
         lisa_map = _collect_lisa_rows(lisa_fc, source_id_to_h3=source_id_to_h3)
+        timings["collect_sec"] = round(time.time() - t4, 3)
 
+        t5 = time.time()
         cells = []
         for row in rows:
             h3_id = str((row or {}).get("h3_id") or "")
@@ -318,12 +374,15 @@ def run_pipeline(input_path, output_path, knn_neighbors):
                 "lisa_i": lisa.get("lisa_i"),
                 "lisa_z_score": lisa.get("lisa_z_score"),
             })
+        timings["assemble_sec"] = round(time.time() - t5, 3)
+        timings["total_sec"] = round(time.time() - started_ts, 3)
 
         _write_json(output_path, {
             "ok": True,
             "status": "ok",
             "global_moran": global_moran,
             "cells": cells,
+            "timings": timings,
         })
         return 0
     except Exception as exc:
@@ -335,6 +394,9 @@ def run_pipeline(input_path, output_path, knn_neighbors):
         })
         return 1
     finally:
+        _delete_if_exists(hot_fc)
+        _delete_if_exists(lisa_fc)
+        _delete_if_exists(in_fc)
         if tmp_dir and os.path.exists(tmp_dir):
             try:
                 shutil.rmtree(tmp_dir)

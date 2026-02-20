@@ -1,4 +1,26 @@
 (function (window, MapUtils) {
+    function normalizeLngLatPair(point) {
+        if (!point || typeof point !== 'object') return null;
+        var lng = Number(point.lng);
+        var lat = Number(point.lat);
+        if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
+        return [lng, lat];
+    }
+
+    function buildPointSample(point, idx) {
+        var p = point && typeof point === 'object' ? point : {};
+        return {
+            idx: Number(idx),
+            pid: p._pid || '',
+            id: p.id || '',
+            name: p.name || '',
+            type: p.type || '',
+            lng: p.lng,
+            lat: p.lat,
+            location: p.location
+        };
+    }
+
     function MarkerManager(mapCore, config) {
         this.mapCore = mapCore;
         this.map = mapCore.map;
@@ -25,6 +47,12 @@
         this.showMarkers = true;
         this.hideAllPoints = false;
         this.spatialFilter = null;
+        this._invalidAddMarkerCount = 0;
+        this._invalidRuntimePositionWarned = false;
+        this._coordHealthLastLogAt = 0;
+        this.clustererDegraded = false;
+        this.clustererDegradeReason = '';
+        this._clustererErrorCount = 0;
 
         this.onMarkerClick = null;
     }
@@ -90,15 +118,35 @@
         this.pointsByType = {};
         this.pointStateMap = {};
         this.pointsByPid = {};
+        var invalidCount = 0;
+        var invalidSamples = [];
 
-        if (this.centerPoint) {
+        if (this.centerPoint && normalizeLngLatPair(this.centerPoint)) {
             this.centerPoint._pid = 'center';
             this.centerPoint.disabled = false;
             this.pointsByPid[this.centerPoint._pid] = this.centerPoint;
+        } else {
+            if (this.centerPoint) {
+                invalidCount += 1;
+                if (invalidSamples.length < 5) {
+                    invalidSamples.push(buildPointSample(this.centerPoint, -1));
+                }
+            }
+            this.centerPoint = null;
         }
 
         (this.mapData.points || []).forEach(function (point, idx) {
             if (!point) return;
+            var normalized = normalizeLngLatPair(point);
+            if (!normalized) {
+                invalidCount += 1;
+                if (invalidSamples.length < 5) {
+                    invalidSamples.push(buildPointSample(point, idx));
+                }
+                return;
+            }
+            point.lng = normalized[0];
+            point.lat = normalized[1];
             if (!point.type) point.type = 'default';
             point._pid = point._pid || ('p-' + idx);
             point.disabled = !!point.disabled;
@@ -107,6 +155,13 @@
             self.pointsByType[point.type] = self.pointsByType[point.type] || [];
             self.pointsByType[point.type].push(point);
         });
+        if (invalidCount > 0) {
+            console.warn('[marker-manager] skipped invalid coordinates in preparePointsIndex', {
+                invalid_count: invalidCount,
+                total_candidates: Array.isArray(this.mapData.points) ? this.mapData.points.length : 0,
+                samples: invalidSamples
+            });
+        }
     };
 
     MarkerManager.prototype.isPointEnabled = function (point) {
@@ -166,9 +221,24 @@
 
     MarkerManager.prototype.addMarker = function (point) {
         var self = this;
+        var normalized = normalizeLngLatPair(point);
+        if (!normalized) {
+            this._invalidAddMarkerCount += 1;
+            if (this._invalidAddMarkerCount <= 5) {
+                console.warn('[marker-manager] addMarker skipped invalid coordinate', {
+                    count: this._invalidAddMarkerCount,
+                    sample: buildPointSample(point, -1)
+                });
+            } else if (this._invalidAddMarkerCount === 6) {
+                console.warn('[marker-manager] addMarker skipped invalid coordinate (further logs suppressed)');
+            }
+            return null;
+        }
+        point.lng = normalized[0];
+        point.lat = normalized[1];
         var isCenter = point.type === 'center';
         var marker = new AMap.Marker({
-            position: [point.lng, point.lat],
+            position: [normalized[0], normalized[1]],
             title: point.name,
             map: isCenter ? this.map : null,
             content: '<div class="marker-dot ' + MapUtils.getMarkerClass(point.type, this.markerClassMap) + '"></div>',
@@ -266,10 +336,13 @@
         // Calculate distance if missing and center exists
         var distanceStr = point.distance;
         if ((!distanceStr || distanceStr === '—') && this.centerPoint && point.type !== 'center') {
-            var p1 = new AMap.LngLat(this.centerPoint.lng, this.centerPoint.lat);
-            var p2 = new AMap.LngLat(coordLng, coordLat);
-            var dist = Math.round(p1.distance(p2));
-            distanceStr = dist;
+            var centerPair = normalizeLngLatPair(this.centerPoint);
+            if (centerPair) {
+                var p1 = new AMap.LngLat(centerPair[0], centerPair[1]);
+                var p2 = new AMap.LngLat(coordLng, coordLat);
+                var dist = Math.round(p1.distance(p2));
+                distanceStr = dist;
+            }
         }
 
         var infoContainer = document.createElement('div');
@@ -425,6 +498,132 @@
         return (this.lastFilteredPoints || []).slice();
     };
 
+    MarkerManager.prototype.sanitizeClusterMarkers = function (list, typeKey) {
+        var out = [];
+        var dropped = 0;
+        var samples = [];
+        (Array.isArray(list) ? list : []).forEach(function (marker, idx) {
+            if (!marker || typeof marker.getPosition !== 'function') {
+                dropped += 1;
+                if (samples.length < 3) {
+                    samples.push({ reason: 'marker-invalid', idx: idx });
+                }
+                return;
+            }
+            var pos = null;
+            try {
+                pos = marker.getPosition();
+            } catch (_) {
+                pos = null;
+            }
+            var lng = pos && typeof pos.getLng === 'function' ? Number(pos.getLng()) : NaN;
+            var lat = pos && typeof pos.getLat === 'function' ? Number(pos.getLat()) : NaN;
+            if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
+                dropped += 1;
+                if (samples.length < 3) {
+                    samples.push({ reason: 'position-invalid', idx: idx });
+                }
+                try {
+                    marker.setMap(null);
+                } catch (_) { }
+                return;
+            }
+            if (typeof marker.getTitle === 'function' && typeof marker.setTitle === 'function') {
+                var title = null;
+                try { title = marker.getTitle(); } catch (_) { title = null; }
+                if (title === null || typeof title === 'undefined') {
+                    try { marker.setTitle(''); } catch (_) { }
+                }
+            }
+            if (typeof marker.getContent === 'function' && typeof marker.setContent === 'function') {
+                var content = null;
+                try { content = marker.getContent(); } catch (_) { content = null; }
+                if (content === null || typeof content === 'undefined') {
+                    try { marker.setContent('<div class="marker-dot marker-default"></div>'); } catch (_) { }
+                }
+            }
+            out.push(marker);
+        });
+        if (dropped > 0) {
+            console.warn('[marker-manager] sanitizeClusterMarkers dropped invalid markers', {
+                type: String(typeKey || ''),
+                dropped: dropped,
+                input: Array.isArray(list) ? list.length : 0,
+                output: out.length,
+                samples: samples
+            });
+        }
+        return out;
+    };
+
+    MarkerManager.prototype.logCoordinateHealth = function (reason, options) {
+        var opts = options && typeof options === 'object' ? options : {};
+        var force = !!opts.force;
+        var sampleLimit = Math.max(1, Number(opts.sampleLimit) || 5);
+        var throttleMs = Math.max(0, Number(opts.throttleMs) || 1200);
+        var now = Date.now();
+        if (!force && (now - this._coordHealthLastLogAt) < throttleMs) {
+            return null;
+        }
+        this._coordHealthLastLogAt = now;
+
+        var total = 0;
+        var invalidPositionCount = 0;
+        var invalidDataCount = 0;
+        var samples = [];
+        (this.markers || []).forEach(function (marker, idx) {
+            if (!marker) return;
+            total += 1;
+            var point = marker.__data || null;
+            var dataPair = normalizeLngLatPair(point);
+            if (!dataPair) {
+                invalidDataCount += 1;
+                if (samples.length < sampleLimit) {
+                    samples.push({
+                        issue: 'marker_data_invalid',
+                        marker_idx: idx,
+                        sample: buildPointSample(point, idx)
+                    });
+                }
+            }
+
+            var pos = null;
+            try {
+                pos = (typeof marker.getPosition === 'function') ? marker.getPosition() : null;
+            } catch (_) {
+                pos = null;
+            }
+            var posPair = normalizeLngLatPair(pos);
+            if (!posPair) {
+                invalidPositionCount += 1;
+                if (samples.length < sampleLimit) {
+                    samples.push({
+                        issue: 'marker_position_invalid',
+                        marker_idx: idx,
+                        has_map: !!(marker && typeof marker.getMap === 'function' && marker.getMap()),
+                        sample: buildPointSample(point, idx)
+                    });
+                }
+            }
+        });
+
+        if (force || invalidPositionCount > 0 || invalidDataCount > 0) {
+            var level = (invalidPositionCount > 0 || invalidDataCount > 0) ? 'warn' : 'info';
+            console[level]('[marker-manager] coordinate health', {
+                reason: String(reason || ''),
+                total_markers: total,
+                invalid_marker_position: invalidPositionCount,
+                invalid_marker_data: invalidDataCount,
+                samples: samples
+            });
+        }
+        return {
+            totalMarkers: total,
+            invalidMarkerPosition: invalidPositionCount,
+            invalidMarkerData: invalidDataCount
+        };
+    };
+
     MarkerManager.prototype.applyFilters = function () {
         var self = this;
         var needCluster = this.showMarkers;
@@ -443,6 +642,22 @@
         this.markers.forEach(function (marker) {
             var point = marker.__data;
             if (!point) return;
+            var pos = (marker && typeof marker.getPosition === 'function') ? marker.getPosition() : null;
+            var posLng = pos && typeof pos.getLng === 'function' ? Number(pos.getLng()) : NaN;
+            var posLat = pos && typeof pos.getLat === 'function' ? Number(pos.getLat()) : NaN;
+            if (!Number.isFinite(posLng) || !Number.isFinite(posLat)) {
+                if (!self._invalidRuntimePositionWarned) {
+                    console.warn('[marker-manager] runtime marker position invalid; marker will be hidden', {
+                        sample: buildPointSample(point, -1)
+                    });
+                    self._invalidRuntimePositionWarned = true;
+                }
+                try {
+                    marker.setMap(null);
+                    marker.setLabel(null);
+                } catch (_) { }
+                return;
+            }
 
             var isActiveType = point.type === 'center' || self.activeTypes.has(point.type);
             var isEnabled = self.isPointEnabled(point);
@@ -501,21 +716,58 @@
             clusterMaxZoom = Math.max(3, this.map.getMaxZoom() - 1);
         }
 
-        Object.keys(self.markersByType).forEach(function (typeKey) {
-            var list = self.markersByType[typeKey];
-            var clusterer = self.typeClusterers[typeKey];
+        if (this.clustererDegraded) {
+            Object.keys(self.markersByType).forEach(function (typeKey) {
+                var list = self.sanitizeClusterMarkers(self.markersByType[typeKey], typeKey);
+                list.forEach(function (marker) {
+                    if (!marker) return;
+                    if (!marker.getMap()) {
+                        marker.setMap(self.map);
+                    }
+                    self.setMarkerLabel(marker);
+                });
+            });
+            this.mapCore.updateCityCirclesVisibility(this.lastVisibleMarkerPids);
+            return;
+        }
 
-            if (clusterer) {
-                clusterer.setMarkers(list);
-            } else {
-                self.typeClusterers[typeKey] = new AMap.MarkerClusterer(self.map, list, {
-                    gridSize: 80,
-                    maxZoom: clusterMaxZoom,
-                    minClusterSize: 2,
-                    renderClusterMarker: self.getClusterRenderer(typeKey)
+        Object.keys(self.markersByType).forEach(function (typeKey) {
+            var list = self.sanitizeClusterMarkers(self.markersByType[typeKey], typeKey);
+            var clusterer = self.typeClusterers[typeKey];
+            if (!list.length) return;
+
+            try {
+                if (clusterer) {
+                    clusterer.setMarkers(list);
+                } else {
+                    self.typeClusterers[typeKey] = new AMap.MarkerClusterer(self.map, list, {
+                        gridSize: 80,
+                        maxZoom: clusterMaxZoom,
+                        minClusterSize: 2,
+                        renderClusterMarker: self.getClusterRenderer(typeKey)
+                    });
+                }
+            } catch (err) {
+                self._clustererErrorCount += 1;
+                self.clustererDegraded = true;
+                self.clustererDegradeReason = err && err.message ? err.message : String(err);
+                console.error('[marker-manager] clusterer failed, fallback to non-cluster mode', {
+                    type: typeKey,
+                    error_count: self._clustererErrorCount,
+                    reason: self.clustererDegradeReason
+                });
+                list.forEach(function (marker) {
+                    if (!marker) return;
+                    try {
+                        marker.setMap(self.map);
+                        self.setMarkerLabel(marker);
+                    } catch (_) { }
                 });
             }
         });
+        if (this.clustererDegraded) {
+            this.destroyClusterers();
+        }
 
         // Clear clusterers for types that are no longer active or have no points
         Object.keys(this.typeClusterers).forEach(function (typeKey) {

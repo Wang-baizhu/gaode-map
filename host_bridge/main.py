@@ -4,11 +4,11 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Response
 from pydantic import ValidationError
 
 from .runner import ArcGISRunner, ArcGISRunnerError, ArcGISRunnerTimeout, _path_exists_cross_platform
-from .schemas import ArcGISH3AnalyzeRequest, ArcGISH3AnalyzeResponse
+from .schemas import ArcGISH3AnalyzeRequest, ArcGISH3AnalyzeResponse, ArcGISH3ExportRequest
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(name)s - %(message)s")
 logger = logging.getLogger("host_bridge")
@@ -46,13 +46,26 @@ def _resolve_script_path() -> str:
     return str(default)
 
 
+def _resolve_export_script_path() -> str:
+    explicit = str(os.getenv("ARCGIS_EXPORT_SCRIPT_PATH", "")).strip()
+    if explicit:
+        return explicit
+    default = Path(__file__).resolve().parents[1] / "scripts" / "arcgis_h3_export.py"
+    return str(default)
+
+
 _bootstrap_env()
 
 
 def _load_runner() -> ArcGISRunner:
     python_path = os.getenv("ARCGIS_PYTHON_PATH", r"C:\Python27\ArcGIS10.7\python.exe")
     script_path = _resolve_script_path()
-    return ArcGISRunner(default_python_path=python_path, script_path=script_path)
+    export_script_path = _resolve_export_script_path()
+    return ArcGISRunner(
+        default_python_path=python_path,
+        script_path=script_path,
+        export_script_path=export_script_path,
+    )
 
 
 def _mask_path(path: str) -> str:
@@ -72,14 +85,19 @@ runner = _load_runner()
 def health() -> dict:
     python_path = os.getenv("ARCGIS_PYTHON_PATH", r"C:\Python27\ArcGIS10.7\python.exe")
     script_path = _resolve_script_path()
+    export_script_path = _resolve_export_script_path()
     token = _resolve_token()
     return {
         "status": "ok",
         "python_exists": bool(_path_exists_cross_platform(python_path)),
         "script_exists": bool(_path_exists_cross_platform(script_path)) if script_path else False,
+        "export_script_exists": bool(_path_exists_cross_platform(export_script_path)) if export_script_path else False,
         "token_configured": bool(token),
         "python_path": _mask_path(python_path),
         "script_path": _mask_path(script_path),
+        "export_script_path": _mask_path(export_script_path),
+        "analyze_cache_ttl_sec": runner.analyze_cache_ttl_sec,
+        "analyze_cache_max_entries": runner.analyze_cache_max_entries,
     }
 
 
@@ -115,3 +133,39 @@ def analyze_h3(
         error=None,
         trace_id=trace_id,
     )
+
+
+@app.post("/v1/arcgis/h3/export")
+def export_h3(
+    payload: ArcGISH3ExportRequest,
+    x_arcgis_token: Optional[str] = Header(default=None),
+):
+    expected_token = _resolve_token()
+    if not expected_token:
+        raise HTTPException(status_code=500, detail="ARCGIS_TOKEN/ARCGIS_BRIDGE_TOKEN is not configured")
+    if str(x_arcgis_token or "").strip() != expected_token:
+        raise HTTPException(status_code=401, detail="invalid arcgis token")
+
+    trace_id = str(payload.run_id or uuid.uuid4().hex)
+    logger.info(
+        "[ArcGISHostBridge] export trace_id=%s format=%s grids=%d poi=%d",
+        trace_id,
+        payload.format,
+        len(payload.grid_features or []),
+        len(payload.poi_features or []),
+    )
+
+    try:
+        result = runner.run_export(payload, trace_id=trace_id)
+    except ArcGISRunnerTimeout as exc:
+        logger.error("[ArcGISHostBridge] export timeout trace_id=%s err=%s", trace_id, exc)
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
+    except (ArcGISRunnerError, ValidationError) as exc:
+        logger.error("[ArcGISHostBridge] export failed trace_id=%s err=%s", trace_id, exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    filename = str(result.get("filename") or f"h3_analysis_{trace_id}.bin")
+    content_type = str(result.get("content_type") or "application/octet-stream")
+    content = result.get("content") or b""
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return Response(content=content, media_type=content_type, headers=headers)

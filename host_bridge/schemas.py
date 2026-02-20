@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -38,3 +38,15 @@ class ArcGISH3AnalyzeResponse(BaseModel):
     preview_svg: Optional[str] = None
     error: Optional[str] = None
     trace_id: str
+
+
+class ArcGISH3ExportRequest(BaseModel):
+    format: Literal["gpkg", "arcgis_package"] = "gpkg"
+    include_poi: bool = True
+    style_mode: Literal["density", "gi_z", "lisa_i"] = "density"
+    grid_features: List[Dict[str, Any]] = Field(default_factory=list)
+    poi_features: List[Dict[str, Any]] = Field(default_factory=list)
+    style_meta: Dict[str, Any] = Field(default_factory=dict)
+    timeout_sec: int = Field(300, ge=30, le=3600)
+    run_id: Optional[str] = None
+    arcgis_python_path: Optional[str] = None

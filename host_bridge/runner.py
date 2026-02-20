@@ -3,11 +3,13 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
+import hashlib
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .schemas import ArcGISH3AnalyzeRequest
+from .schemas import ArcGISH3AnalyzeRequest, ArcGISH3ExportRequest
 
 
 class ArcGISRunnerError(RuntimeError):
@@ -214,9 +216,13 @@ def _render_preview_svg(rows: List[Dict[str, Any]], cells_map: Dict[str, Dict[st
 
 
 class ArcGISRunner:
-    def __init__(self, default_python_path: str, script_path: str):
+    def __init__(self, default_python_path: str, script_path: str, export_script_path: str = ""):
         self.default_python_path = str(default_python_path or "").strip()
         self.script_path = str(script_path or "").strip()
+        self.export_script_path = str(export_script_path or "").strip()
+        self.analyze_cache_ttl_sec = max(0, int(os.getenv("ARCGIS_ANALYZE_CACHE_TTL_SEC", "900") or 900))
+        self.analyze_cache_max_entries = max(4, int(os.getenv("ARCGIS_ANALYZE_CACHE_MAX_ENTRIES", "32") or 32))
+        self._analyze_cache: Dict[str, Dict[str, Any]] = {}
 
     def _resolve_python_path(self, override_path: Optional[str] = None) -> str:
         python_path = str(override_path or self.default_python_path or "").strip()
@@ -233,6 +239,105 @@ class ArcGISRunner:
         if not _path_exists_cross_platform(script_path):
             raise ArcGISRunnerError(f"ArcGIS script not found: {script_path}")
         return script_path
+
+    def _resolve_export_script_path(self) -> str:
+        script_path = str(self.export_script_path or "").strip()
+        if not script_path:
+            raise ArcGISRunnerError("ARCGIS_EXPORT_SCRIPT_PATH is empty")
+        if not _path_exists_cross_platform(script_path):
+            raise ArcGISRunnerError(f"ArcGIS export script not found: {script_path}")
+        return script_path
+
+    def _run_subprocess(self, cmd: List[str], timeout_sec: int) -> subprocess.CompletedProcess:
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="ignore",
+                timeout=int(timeout_sec),
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ArcGISRunnerTimeout(f"ArcGIS subprocess timeout after {timeout_sec}s") from exc
+
+        if proc.returncode != 0:
+            err_msg = proc.stderr.strip() or proc.stdout.strip() or "unknown subprocess error"
+            raise ArcGISRunnerError(f"ArcGIS subprocess failed({proc.returncode}): {err_msg}")
+        return proc
+
+    def _build_analyze_cache_key(
+        self,
+        rows: List[Dict[str, Any]],
+        knn_neighbors: int,
+        python_path: str,
+        script_path: str,
+    ) -> str:
+        script_mtime = 0
+        try:
+            script_mtime = int(Path(script_path).stat().st_mtime)
+        except Exception:
+            script_mtime = 0
+        payload = {
+            "rows": rows,
+            "knn_neighbors": int(knn_neighbors),
+            "python_path": str(python_path or ""),
+            "script_path": str(script_path or ""),
+            "script_mtime": script_mtime,
+        }
+        raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def _gc_analyze_cache(self, now_ts: float) -> None:
+        if not self._analyze_cache:
+            return
+        if self.analyze_cache_ttl_sec > 0:
+            expire_before = now_ts - float(self.analyze_cache_ttl_sec)
+            drop_keys = [
+                key for key, entry in self._analyze_cache.items()
+                if float(entry.get("created_ts", 0.0)) < expire_before
+            ]
+            for key in drop_keys:
+                self._analyze_cache.pop(key, None)
+        if len(self._analyze_cache) <= self.analyze_cache_max_entries:
+            return
+        ordered = sorted(
+            self._analyze_cache.items(),
+            key=lambda item: float((item[1] or {}).get("created_ts", 0.0)),
+        )
+        for key, _entry in ordered[: max(0, len(ordered) - self.analyze_cache_max_entries)]:
+            self._analyze_cache.pop(key, None)
+
+    def _get_cached_analyze(self, cache_key: str, now_ts: float) -> Optional[Dict[str, Any]]:
+        self._gc_analyze_cache(now_ts)
+        entry = self._analyze_cache.get(cache_key)
+        if not entry:
+            return None
+        # Return a detached copy to avoid accidental mutation.
+        return {
+            "status": str(entry.get("status") or "ok"),
+            "cells": list(entry.get("cells") or []),
+            "global_moran": dict(entry.get("global_moran") or {}),
+            "stderr": str(entry.get("stderr") or ""),
+            "stdout": str(entry.get("stdout") or ""),
+            "timings": dict(entry.get("timings") or {}),
+            "cache_hit": True,
+        }
+
+    def _put_cached_analyze(self, cache_key: str, payload: Dict[str, Any], now_ts: float) -> None:
+        if self.analyze_cache_ttl_sec <= 0:
+            return
+        self._analyze_cache[cache_key] = {
+            "created_ts": float(now_ts),
+            "status": str(payload.get("status") or "ok"),
+            "cells": list(payload.get("cells") or []),
+            "global_moran": dict(payload.get("global_moran") or {}),
+            "stderr": str(payload.get("stderr") or ""),
+            "stdout": str(payload.get("stdout") or ""),
+            "timings": dict(payload.get("timings") or {}),
+        }
+        self._gc_analyze_cache(now_ts)
 
     def run(self, req: ArcGISH3AnalyzeRequest, trace_id: str) -> Dict[str, Any]:
         rows = [row.model_dump() if hasattr(row, "model_dump") else row.dict() for row in req.rows]
@@ -253,6 +358,34 @@ class ArcGISRunner:
             "rows": rows,
             "knn_neighbors": int(req.knn_neighbors),
         }
+        now_ts = time.time()
+        cache_key = self._build_analyze_cache_key(
+            rows=rows,
+            knn_neighbors=int(req.knn_neighbors),
+            python_path=python_path,
+            script_path=script_path,
+        )
+        cached = self._get_cached_analyze(cache_key, now_ts)
+        if cached is not None:
+            cells = cached.get("cells") or []
+            cells_map: Dict[str, Dict[str, Any]] = {}
+            for item in cells:
+                h3_id = str((item or {}).get("h3_id") or "")
+                if h3_id:
+                    cells_map[h3_id] = item
+            preview_svg = None
+            if req.export_image:
+                preview_svg = _render_preview_svg(rows, cells_map)
+            return {
+                "status": f"{cached.get('status') or 'ok'} [cache]",
+                "cells": cells,
+                "global_moran": cached.get("global_moran") or {},
+                "preview_svg": preview_svg,
+                "stderr": cached.get("stderr") or "",
+                "stdout": cached.get("stdout") or "",
+                "timings": cached.get("timings") or {},
+                "cache_hit": True,
+            }
 
         tmp_dir = tempfile.mkdtemp(prefix=f"arcgis_bridge_{trace_id}_")
         try:
@@ -271,22 +404,7 @@ class ArcGISRunner:
                 str(int(req.knn_neighbors)),
             ]
 
-            try:
-                proc = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="ignore",
-                    timeout=int(req.timeout_sec),
-                    check=False,
-                )
-            except subprocess.TimeoutExpired as exc:
-                raise ArcGISRunnerTimeout(f"ArcGIS subprocess timeout after {req.timeout_sec}s") from exc
-
-            if proc.returncode != 0:
-                err_msg = proc.stderr.strip() or proc.stdout.strip() or "unknown subprocess error"
-                raise ArcGISRunnerError(f"ArcGIS subprocess failed({proc.returncode}): {err_msg}")
+            proc = self._run_subprocess(cmd, timeout_sec=int(req.timeout_sec))
             if not output_path.exists():
                 raise ArcGISRunnerError("ArcGIS output file missing")
 
@@ -297,6 +415,10 @@ class ArcGISRunner:
             cells = output.get("cells") or []
             global_moran = output.get("global_moran") or {}
             status = str(output.get("status") or "ok")
+            timings = dict(output.get("timings") or {})
+            total_sec = _safe_float(timings.get("total_sec"))
+            if total_sec is not None:
+                status = f"{status} ({total_sec:.2f}s)"
             cells_map: Dict[str, Dict[str, Any]] = {}
             for item in cells:
                 h3_id = str((item or {}).get("h3_id") or "")
@@ -307,11 +429,77 @@ class ArcGISRunner:
             if req.export_image:
                 preview_svg = _render_preview_svg(rows, cells_map)
 
-            return {
+            result = {
                 "status": status,
                 "cells": cells,
                 "global_moran": global_moran,
                 "preview_svg": preview_svg,
+                "stderr": proc.stderr.strip(),
+                "stdout": proc.stdout.strip(),
+                "timings": timings,
+                "cache_hit": False,
+            }
+            self._put_cached_analyze(cache_key, result, now_ts=time.time())
+            return result
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    def run_export(self, req: ArcGISH3ExportRequest, trace_id: str) -> Dict[str, Any]:
+        grid_features = list(req.grid_features or [])
+        if not grid_features:
+            raise ArcGISRunnerError("grid_features is empty")
+
+        python_path = self._resolve_python_path(req.arcgis_python_path)
+        script_path = self._resolve_export_script_path()
+        use_windows_path_args = _needs_windows_path_args(python_path)
+
+        normalized_format = "arcgis_package" if str(req.format) == "arcgis_package" else "gpkg"
+        output_ext = ".zip" if normalized_format == "arcgis_package" else ".gpkg"
+        output_name = f"h3_analysis_{trace_id}{output_ext}"
+
+        payload = {
+            "format": normalized_format,
+            "include_poi": bool(req.include_poi),
+            "style_mode": str(req.style_mode or "density"),
+            "grid_features": grid_features,
+            "poi_features": list(req.poi_features or []),
+            "style_meta": dict(req.style_meta or {}),
+        }
+
+        tmp_dir = tempfile.mkdtemp(prefix=f"arcgis_export_{trace_id}_")
+        try:
+            input_path = Path(tmp_dir) / "input.json"
+            output_path = Path(tmp_dir) / output_name
+            input_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+            cmd = [
+                _to_executable_path(python_path),
+                _to_subprocess_path(script_path, use_windows_path_args),
+                "--input",
+                _to_subprocess_path(str(input_path), use_windows_path_args),
+                "--output",
+                _to_subprocess_path(str(output_path), use_windows_path_args),
+                "--format",
+                normalized_format,
+            ]
+            if req.include_poi:
+                cmd.extend(["--include-poi", "1"])
+            else:
+                cmd.extend(["--include-poi", "0"])
+
+            proc = self._run_subprocess(cmd, timeout_sec=int(req.timeout_sec))
+            if not output_path.exists():
+                raise ArcGISRunnerError("ArcGIS export output file missing")
+
+            content = output_path.read_bytes()
+            if not content:
+                raise ArcGISRunnerError("ArcGIS export output is empty")
+
+            return {
+                "status": "ok",
+                "filename": output_name,
+                "content_type": "application/zip" if normalized_format == "arcgis_package" else "application/geopackage+sqlite3",
+                "content": content,
                 "stderr": proc.stderr.strip(),
                 "stdout": proc.stdout.strip(),
             }

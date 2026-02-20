@@ -1,6 +1,53 @@
 ### 说明
 - fastapi开发的高德/本地map后端 + 使用html原生jinjia2模板开发的高德地图
 - 请确保安装核心依赖: `pip install -r requirements.txt` (包含 `h3` 网格计算库)
+- 空间句法路网分析已切换为 `depthmapXcli` 引擎，请确保已安装并在 `.env` 配置 `DEPTHMAPX_CLI_PATH`
+
+### Docker 一键部署（含 depthmapXcli）
+- 镜像已在 `docker/Dockerfile` 内自动安装 `depthmapXcli`（默认 `v0.8.0`）。
+- 云端部署前至少配置 `.env` 的 `AMAP_WEB_SERVICE_KEY`。
+- 启动命令：
+```bash
+docker compose up -d --build
+```
+- 如果需要切换 depthmapX 版本：
+```bash
+docker compose build --build-arg DEPTHMAPX_VERSION=v0.8.0 app
+docker compose up -d
+```
+- `valhalla` 的 `custom_files` 挂载目录可通过环境变量覆盖：
+```bash
+export VALHALLA_CUSTOM_FILES_DIR=/data/valhalla/custom_files
+docker compose up -d
+```
+- 路网句法分析仅使用本地/私有 Overpass。请在 `.env` 配置：
+```bash
+OVERPASS_ENDPOINT=http://overpass/api/interpreter
+```
+  说明：建议 Overpass 和 Valhalla 使用同一份 OSM 源数据（同一批 PBF），这样等时圈与句法路网是一致同源的。
+
+### 本地 Overpass（句法路网）配置
+1. 将 `*.osm.pbf` 放到外部目录（建议 `D:/MapData/osm_source`），文件名与 `.env` 中 `OVERPASS_PBF_FILE` 一致（默认 `hunan-260201.osm.pbf`）。
+2. Overpass 持久化目录建议使用独立外部目录（如 `D:/MapData/overpass_db`，首次导入会写入大量索引文件）。
+   注意：Overpass DB 不能放在 Windows 挂载盘（`D:/` 或 `/mnt/d`），需要 Linux 文件系统路径（例如 `/home/qkdawn/MapData/overpass_db`），否则 dispatcher 无法创建 Unix socket。
+3. 确认 `.env`：
+```bash
+OVERPASS_ENDPOINT=http://overpass/api/interpreter
+OVERPASS_PBF_FILE=hunan-260201.osm.pbf
+VALHALLA_CUSTOM_FILES_DIR=D:/MapData/osm_source
+VALHALLA_TILES_DIR=D:/MapData/valhalla_tiles
+OVERPASS_DB_DIR=/home/qkdawn/MapData/overpass_db
+OVERPASS_SOURCE_DIR=D:/MapData/osm_source
+```
+   这样 Valhalla 与 Overpass 会共用同一份 PBF（同源），但各自输出目录独立。
+4. 启动：
+```bash
+docker compose up -d --build
+```
+5. 首次导入完成后可用此地址自测：
+```bash
+http://localhost:12345/api/interpreter
+```
 
 ### 天地图本地开发配置
 - `TIANDITU_KEY` 只需要配置在 `.env`，例如：`TIANDITU_KEY=your_tianditu_key`。

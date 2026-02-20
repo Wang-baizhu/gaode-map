@@ -1,12 +1,10 @@
 import json
 import math
-import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 import h3
 import numpy as np
-from libpysal.weights import lag_spatial
 from scipy.stats import entropy as scipy_entropy
 
 from modules.gaode_service.utils.transform_posi import gcj02_to_wgs84
@@ -207,15 +205,6 @@ def _build_lisa_render_meta(lisa_i_stats: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _to_list(value: Any) -> List[Any]:
-    if value is None:
-        return []
-    try:
-        return list(value)
-    except Exception:
-        return []
-
-
 def _new_local_spatial_stat() -> Dict[str, Any]:
     return {
         "lisa_i": None,
@@ -281,6 +270,18 @@ def _ring_to_arcgis_knn(ring_size: Any) -> int:
     # H3 disk neighbors (excluding self): ring=1 -> 6, ring=2 -> 18, ring=3 -> 36
     ring = _normalize_neighbor_ring(ring_size, default=1)
     return int(3 * ring * (ring + 1))
+
+
+def _has_density_variance(stats_by_cell: Dict[str, Dict[str, Any]], tol: float = 1e-12) -> bool:
+    if not stats_by_cell:
+        return False
+    values = [
+        float(bucket.get("density_poi_per_km2") or 0.0)
+        for bucket in stats_by_cell.values()
+    ]
+    if len(values) < 2:
+        return False
+    return (max(values) - min(values)) > float(tol)
 
 
 def _shannon_entropy(category_counts: Dict[CategoryKey, int]) -> float:
@@ -360,42 +361,33 @@ def compute_neighbor_metrics(
     stats_by_cell: Dict[str, Dict[str, Any]],
     neighbor_ring: int = 1,
 ) -> None:
-    weights, id_order = _build_pysal_weights(stats_by_cell, neighbor_ring=neighbor_ring)
-    if not weights or not id_order:
-        for stats in stats_by_cell.values():
-            stats["neighbor_mean_density"] = 0.0
-            stats["neighbor_mean_entropy"] = 0.0
-            stats["neighbor_count"] = 0
+    cell_ids = list(stats_by_cell.keys())
+    if not cell_ids:
         return
 
-    density_values = np.asarray(
-        [float(stats_by_cell[cid].get("density_poi_per_km2", 0.0) or 0.0) for cid in id_order],
-        dtype=float,
-    )
-    entropy_values = np.asarray(
-        [float(stats_by_cell[cid].get("local_entropy", 0.0) or 0.0) for cid in id_order],
-        dtype=float,
-    )
-
-    try:
-        weights.transform = "R"  # Row-standardized: lag_spatial output is neighbor mean.
-    except Exception:
-        pass
-
-    lag_density = np.asarray(lag_spatial(weights, density_values), dtype=float).reshape(-1)
-    lag_entropy = np.asarray(lag_spatial(weights, entropy_values), dtype=float).reshape(-1)
-
-    for idx, cid in enumerate(id_order):
-        neighbors = weights.neighbors.get(cid, []) or []
-        neighbor_count = int(len(neighbors))
+    cell_set = set(cell_ids)
+    for cid in cell_ids:
+        neighbor_ids = [
+            nid for nid in _neighbors(cid, neighbor_ring)
+            if nid in cell_set and nid != cid
+        ]
+        neighbor_count = int(len(neighbor_ids))
         stats = stats_by_cell[cid]
         stats["neighbor_count"] = neighbor_count
         if neighbor_count <= 0:
             stats["neighbor_mean_density"] = 0.0
             stats["neighbor_mean_entropy"] = 0.0
             continue
-        stats["neighbor_mean_density"] = float(lag_density[idx])
-        stats["neighbor_mean_entropy"] = float(lag_entropy[idx])
+
+        density_sum = 0.0
+        entropy_sum = 0.0
+        for nid in neighbor_ids:
+            nstats = stats_by_cell.get(nid) or {}
+            density_sum += float(nstats.get("density_poi_per_km2", 0.0) or 0.0)
+            entropy_sum += float(nstats.get("local_entropy", 0.0) or 0.0)
+
+        stats["neighbor_mean_density"] = float(density_sum / neighbor_count)
+        stats["neighbor_mean_entropy"] = float(entropy_sum / neighbor_count)
 
 
 def compute_global_moran_i(
@@ -427,196 +419,6 @@ def compute_global_moran_i(
         return None
     moran_i = (n / s0) * (numerator / denominator)
     return _safe_round(moran_i, 6)
-
-
-def _build_pysal_weights(
-    stats_by_cell: Dict[str, Dict[str, Any]],
-    neighbor_ring: int = 1,
-):
-    from libpysal.weights import W
-
-    cell_ids = list(stats_by_cell.keys())
-    if len(cell_ids) < 2:
-        return None, []
-
-    cell_set = set(cell_ids)
-    neighbors_map: Dict[str, List[str]] = {}
-    for cid in cell_ids:
-        raw_neighbors = _neighbors(cid, neighbor_ring)
-        filtered_neighbors = sorted({nid for nid in raw_neighbors if nid in cell_set and nid != cid})
-        neighbors_map[cid] = filtered_neighbors
-
-    if sum(len(items) for items in neighbors_map.values()) <= 0:
-        return None, []
-
-    try:
-        weights = W(neighbors_map, silence_warnings=True)
-    except TypeError:
-        weights = W(neighbors_map)
-    id_order = list(getattr(weights, "id_order", []) or [])
-    if not id_order:
-        return None, []
-    return weights, id_order
-
-
-def compute_global_moran_significance(
-    stats_by_cell: Dict[str, Dict[str, Any]],
-    value_key: str = "density_poi_per_km2",
-    neighbor_ring: int = 1,
-    permutations: int = 4999,
-    seed: Optional[int] = 42,
-) -> Tuple[Optional[float], Optional[float]]:
-    try:
-        from esda.moran import Moran
-    except Exception as exc:
-        raise RuntimeError(
-            "缺少 PySAL 依赖，请安装 esda 与 libpysal 后再进行空间结构计算"
-        ) from exc
-
-    try:
-        weights, id_order = _build_pysal_weights(stats_by_cell, neighbor_ring=neighbor_ring)
-    except Exception as exc:
-        raise RuntimeError("构建空间权重失败") from exc
-    if not weights or not id_order:
-        return None, None
-
-    values = [float(stats_by_cell[cid].get(value_key, 0.0) or 0.0) for cid in id_order]
-    if not values or len(values) < 2:
-        return None, None
-
-    if seed is not None:
-        try:
-            import numpy as np  # type: ignore
-            np.random.seed(int(seed))
-        except Exception:
-            pass
-
-    moran_kwargs: Dict[str, Any] = {"permutations": max(0, int(permutations))}
-    moran_obj = None
-    if seed is None:
-        moran_obj = Moran(values, weights, **moran_kwargs)
-    else:
-        for seed_key in ("seed", "random_state"):
-            try:
-                moran_obj = Moran(values, weights, **moran_kwargs, **{seed_key: int(seed)})
-                break
-            except TypeError:
-                continue
-        if moran_obj is None:
-            moran_obj = Moran(values, weights, **moran_kwargs)
-
-    observed_i = _safe_round(getattr(moran_obj, "I", None), 6)
-    if observed_i is None:
-        return None, None
-
-    z_sim = _safe_float(getattr(moran_obj, "z_sim", None))
-    z_norm = _safe_float(getattr(moran_obj, "z_norm", None))
-    z_score = _safe_round(z_sim if z_sim is not None else z_norm, 6)
-    return observed_i, z_score
-
-
-def compute_local_spatial_significance(
-    stats_by_cell: Dict[str, Dict[str, Any]],
-    value_key: str = "density_poi_per_km2",
-    neighbor_ring: int = 1,
-    permutations: int = 0,
-    seed: Optional[int] = 42,
-) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, int]]:
-    local_stats: Dict[str, Dict[str, Any]] = {
-        cid: _new_local_spatial_stat()
-        for cid in stats_by_cell.keys()
-    }
-
-    try:
-        from esda.moran import Moran_Local
-        from esda.getisord import G_Local
-    except Exception as exc:
-        raise RuntimeError(
-            "缺少 PySAL 依赖，请安装 esda 与 libpysal 后再进行局部空间结构计算"
-        ) from exc
-
-    weights, id_order = _build_pysal_weights(stats_by_cell, neighbor_ring=neighbor_ring)
-    if not weights or not id_order:
-        return _finalize_native_spatial_fields(local_stats)
-
-    values = [float(stats_by_cell[cid].get(value_key, 0.0) or 0.0) for cid in id_order]
-    if len(values) < 2:
-        return _finalize_native_spatial_fields(local_stats)
-
-    mean_value = sum(values) / len(values)
-    if all(abs(v - mean_value) < 1e-12 for v in values):
-        return _finalize_native_spatial_fields(local_stats)
-
-    if seed is not None:
-        try:
-            import numpy as np  # type: ignore
-            np.random.seed(int(seed))
-        except Exception:
-            pass
-
-    kwargs: Dict[str, Any] = {"permutations": max(0, int(permutations))}
-    local_moran = None
-    with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore",
-            message="invalid value encountered in divide",
-            category=RuntimeWarning,
-            module=r"esda\.moran",
-        )
-        if seed is None:
-            local_moran = Moran_Local(values, weights, **kwargs)
-        else:
-            for seed_key in ("seed", "random_state"):
-                try:
-                    local_moran = Moran_Local(values, weights, **kwargs, **{seed_key: int(seed)})
-                    break
-                except TypeError:
-                    continue
-            if local_moran is None:
-                local_moran = Moran_Local(values, weights, **kwargs)
-
-    lisa_is = _to_list(getattr(local_moran, "Is", None))
-    lisa_z = _to_list(getattr(local_moran, "z_sim", None))
-    if not lisa_z:
-        lisa_z = _to_list(getattr(local_moran, "z", None))
-
-    gi_local = None
-    with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore",
-            message="invalid value encountered in divide",
-            category=RuntimeWarning,
-            module=r"esda\.getisord",
-        )
-        if seed is None:
-            gi_local = G_Local(values, weights, star=True, **kwargs)
-        else:
-            for seed_key in ("seed", "random_state"):
-                try:
-                    gi_local = G_Local(values, weights, star=True, **kwargs, **{seed_key: int(seed)})
-                    break
-                except TypeError:
-                    continue
-            if gi_local is None:
-                gi_local = G_Local(values, weights, star=True, **kwargs)
-
-    gi_vals = _to_list(getattr(gi_local, "Gs", None))
-    gi_z_vals = _to_list(getattr(gi_local, "Zs", None))
-
-    for idx, cid in enumerate(id_order):
-        lisa_i = _safe_round(_safe_float(lisa_is[idx] if idx < len(lisa_is) else None), 6)
-        lisa_z_score = _safe_round(_safe_float(lisa_z[idx] if idx < len(lisa_z) else None), 6)
-        gi_star_value = _safe_round(_safe_float(gi_vals[idx] if idx < len(gi_vals) else None), 6)
-        gi_star_z = _safe_round(_safe_float(gi_z_vals[idx] if idx < len(gi_z_vals) else None), 6)
-
-        local_stats[cid] = {
-            "lisa_i": lisa_i,
-            "lisa_z_score": lisa_z_score,
-            "gi_star_value": gi_star_value,
-            "gi_star_z_score": gi_star_z,
-        }
-
-    return _finalize_native_spatial_fields(local_stats)
 
 
 def build_local_spatial_stats_from_arcgis(
@@ -700,7 +502,7 @@ def analyze_h3_grid(
     pois: Optional[List[Dict[str, Any]]] = None,
     poi_coord_type: Literal["gcj02", "wgs84"] = "gcj02",
     neighbor_ring: int = 1,
-    use_arcgis: bool = False,
+    use_arcgis: bool = True,
     arcgis_python_path: Optional[str] = None,
     arcgis_neighbor_ring: int = 1,
     arcgis_knn_neighbors: Optional[int] = None,
@@ -729,7 +531,7 @@ def analyze_h3_grid(
                 "avg_local_entropy": 0.0,
                 "global_moran_i_density": None,
                 "global_moran_z_score": None,
-                "analysis_engine": "arcgis" if use_arcgis else "pysal",
+                "analysis_engine": "arcgis",
                 "arcgis_status": None,
                 "arcgis_image_url": None,
                 "arcgis_image_url_gi": None,
@@ -752,34 +554,19 @@ def analyze_h3_grid(
     neighbor_ring = _normalize_neighbor_ring(neighbor_ring, default=1)
     compute_neighbor_metrics(stats_by_cell, neighbor_ring=neighbor_ring)
 
-    def _compute_by_pysal() -> Tuple[
-        Optional[float],
-        Optional[float],
-        Dict[str, Dict[str, Any]],
-        Dict[str, int],
-    ]:
-        gm_i, gm_z = compute_global_moran_significance(
-            stats_by_cell,
-            value_key="density_poi_per_km2",
-            neighbor_ring=neighbor_ring,
-            permutations=999,
-            seed=42,
-        )
-        local_stats, local_counts = compute_local_spatial_significance(
-            stats_by_cell,
-            value_key="density_poi_per_km2",
-            neighbor_ring=neighbor_ring,
-            permutations=0,
-            seed=42,
-        )
-        return gm_i, gm_z, local_stats, local_counts
+    if not use_arcgis:
+        raise RuntimeError("当前仅支持 ArcGIS 引擎")
 
-    analysis_engine: Literal["pysal", "arcgis"] = "pysal"
+    analysis_engine: Literal["arcgis"] = "arcgis"
     arcgis_status: Optional[str] = None
     arcgis_image_url: Optional[str] = None
     arcgis_image_url_gi: Optional[str] = None
     arcgis_image_url_lisa: Optional[str] = None
-    if use_arcgis:
+    global_moran_i: Optional[float] = None
+    global_moran_z_score: Optional[float] = None
+    local_spatial_stats = {cell_id: _new_local_spatial_stat() for cell_id in stats_by_cell.keys()}
+
+    if _has_density_variance(stats_by_cell):
         try:
             arcgis_ring = _normalize_neighbor_ring(arcgis_neighbor_ring, default=neighbor_ring)
             arcgis_knn = _ring_to_arcgis_knn(arcgis_ring)
@@ -798,7 +585,6 @@ def analyze_h3_grid(
                 stats_by_cell,
                 arcgis_result.get("cells") or [],
             )
-            analysis_engine = "arcgis"
             arcgis_status = str(arcgis_result.get("status") or "ArcGIS计算完成")
             arcgis_image_url = arcgis_result.get("image_url")
             arcgis_image_url_gi = arcgis_result.get("image_url_gi") or arcgis_image_url
@@ -806,12 +592,16 @@ def analyze_h3_grid(
         except Exception as exc:
             raise RuntimeError(f"ArcGIS桥接失败: {exc}") from exc
     else:
-        (
-            global_moran_i,
-            global_moran_z_score,
-            local_spatial_stats,
-            _,
-        ) = _compute_by_pysal()
+        for stat in local_spatial_stats.values():
+            stat.update(
+                {
+                    "lisa_i": 0.0,
+                    "lisa_z_score": 0.0,
+                    "gi_star_value": 0.0,
+                    "gi_star_z_score": 0.0,
+                }
+            )
+        arcgis_status = "ArcGIS已跳过：密度无差异"
 
     density_values: List[float] = []
     entropy_values: List[float] = []

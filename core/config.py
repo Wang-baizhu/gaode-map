@@ -99,6 +99,11 @@ class Settings(BaseSettings):
         validation_alias="VALHALLA_TIMEOUT_S",
         description="Valhalla 请求超时时间（秒）",
     )
+    overpass_endpoint: str = Field(
+        "http://overpass/api/interpreter",
+        validation_alias="OVERPASS_ENDPOINT",
+        description="Local Overpass API endpoint",
+    )
 
     # ArcGIS HTTP bridge config
     arcgis_bridge_enabled: bool = Field(
@@ -120,6 +125,33 @@ class Settings(BaseSettings):
         300,
         validation_alias="ARCGIS_BRIDGE_TIMEOUT_S",
         description="ArcGIS bridge request timeout in seconds",
+    )
+    arcgis_export_timeout_s: int = Field(
+        600,
+        validation_alias="ARCGIS_EXPORT_TIMEOUT_S",
+        description="ArcGIS export timeout in seconds",
+    )
+    arcgis_export_max_mb: int = Field(
+        512,
+        validation_alias="ARCGIS_EXPORT_MAX_MB",
+        description="Maximum export file size accepted from bridge (MB)",
+    )
+
+    # depthmapX CLI config
+    depthmapx_cli_path: str = Field(
+        "depthmapXcli",
+        validation_alias="DEPTHMAPX_CLI_PATH",
+        description="Executable path of depthmapXcli",
+    )
+    depthmapx_timeout_s: int = Field(
+        300,
+        validation_alias="DEPTHMAPX_TIMEOUT_S",
+        description="Timeout for one depthmapXcli command (seconds)",
+    )
+    depthmapx_tulip_bins: int = Field(
+        1024,
+        validation_alias="DEPTHMAPX_TULIP_BINS",
+        description="Tulip bins for segment tulip analysis (4-1024)",
     )
 
 

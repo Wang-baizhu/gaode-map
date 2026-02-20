@@ -1,9 +1,12 @@
 import json
 import logging
+import math
 import uuid
+import base64
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import unquote
 
 import httpx
 
@@ -35,6 +38,14 @@ def _cleanup_old_arcgis_previews(output_root: Path, ttl_hours: int) -> None:
             continue
 
 
+def _svg_to_data_uri(svg_text: str) -> str:
+    # In-memory snapshot, no disk persistence.
+    # Use base64 to avoid malformed URI caused by unescaped '%' in raw SVG (e.g. "100%").
+    raw = str(svg_text or "").encode("utf-8")
+    encoded = base64.b64encode(raw).decode("ascii")
+    return f"data:image/svg+xml;base64,{encoded}"
+
+
 def _safe_float(value: Any) -> Optional[float]:
     try:
         if value is None:
@@ -49,6 +60,23 @@ def _safe_float(value: Any) -> Optional[float]:
 
 def _clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
+
+
+def _quantile(sorted_values: List[float], q: float) -> Optional[float]:
+    if not sorted_values:
+        return None
+    if len(sorted_values) == 1:
+        return float(sorted_values[0])
+    ratio = _clamp(float(q), 0.0, 1.0)
+    pos = ratio * (len(sorted_values) - 1)
+    lo = int(math.floor(pos))
+    hi = int(math.ceil(pos))
+    if lo == hi:
+        return float(sorted_values[lo])
+    lv = float(sorted_values[lo])
+    hv = float(sorted_values[hi])
+    frac = pos - lo
+    return lv + (hv - lv) * frac
 
 
 def _mix_hex_color(from_hex: str, to_hex: str, ratio: float) -> str:
@@ -102,10 +130,15 @@ def _resolve_lisa_render_meta(cell_map: Dict[str, Dict[str, Any]]) -> Dict[str, 
             "clip_max": 0.0,
             "degraded": True,
         }
-    n = float(len(values))
+    sorted_values = sorted(values)
+    n = float(len(sorted_values))
     mean = sum(values) / n
     variance = sum((v - mean) * (v - mean) for v in values) / n
     std = variance ** 0.5
+    min_v = sorted_values[0]
+    max_v = sorted_values[-1]
+    p10 = _quantile(sorted_values, 0.10)
+    p90 = _quantile(sorted_values, 0.90)
     degraded = std <= 1e-12
     if degraded:
         return {
@@ -115,11 +148,24 @@ def _resolve_lisa_render_meta(cell_map: Dict[str, Dict[str, Any]]) -> Dict[str, 
             "clip_max": mean,
             "degraded": True,
         }
+    std_clip_min = mean - 2.0 * std
+    std_clip_max = mean + 2.0 * std
+    clip_min_raw = max(v for v in [std_clip_min, p10, min_v] if v is not None and math.isfinite(v))
+    clip_max_raw = min(v for v in [std_clip_max, p90, max_v] if v is not None and math.isfinite(v))
+    if clip_max_raw <= clip_min_raw:
+        clip_min_raw = p10 if p10 is not None else min_v
+        clip_max_raw = p90 if p90 is not None else max_v
+    if clip_max_raw <= clip_min_raw:
+        clip_min_raw = min_v
+        clip_max_raw = max_v
+    if clip_max_raw <= clip_min_raw:
+        clip_min_raw = mean - 2.0 * std
+        clip_max_raw = mean + 2.0 * std
     return {
         "mean": mean,
         "std": std,
-        "clip_min": mean - 3.0 * std,
-        "clip_max": mean + 3.0 * std,
+        "clip_min": clip_min_raw,
+        "clip_max": clip_max_raw,
         "degraded": False,
     }
 
@@ -130,7 +176,7 @@ def _resolve_gi_z_style(z_value: Optional[float]) -> Dict[str, Any]:
         return {"fill": "#000000", "fill_opacity": 0.0}
     min_v, max_v, center = -3.0, 3.0, 0.0
     vv = _clamp(z, min_v, max_v)
-    min_opacity, max_opacity = 0.10, 0.52
+    min_opacity, max_opacity = 0.06, 0.42
     threshold = 0.2
     if vv >= center:
         span = max(1e-9, max_v - center)
@@ -151,14 +197,14 @@ def _resolve_lisa_i_style(lisa_i: Optional[float], lisa_meta: Dict[str, Any]) ->
     if v is None:
         return {"fill": "#000000", "fill_opacity": 0.0}
     if bool((lisa_meta or {}).get("degraded")):
-        return {"fill": "#cbd5e1", "fill_opacity": 0.10}
+        return {"fill": "#cbd5e1", "fill_opacity": 0.06}
     mean = _safe_float((lisa_meta or {}).get("mean")) or 0.0
     clip_min = _safe_float((lisa_meta or {}).get("clip_min"))
     clip_max = _safe_float((lisa_meta or {}).get("clip_max"))
     if clip_min is None or clip_max is None or clip_max <= clip_min:
         return {"fill": "#cbd5e1", "fill_opacity": 0.10}
     vv = _clamp(v, clip_min, clip_max)
-    min_opacity, max_opacity = 0.10, 0.48
+    min_opacity, max_opacity = 0.06, 0.38
     if vv >= mean:
         span = max(1e-9, clip_max - mean)
         ratio = (vv - mean) / span
@@ -362,17 +408,10 @@ def run_arcgis_h3_analysis(
     image_url_gi = None
     image_url_lisa = None
     if export_image:
-        output_root = Path(settings.static_dir) / "generated" / "arcgis"
-        output_root.mkdir(parents=True, exist_ok=True)
-        _cleanup_old_arcgis_previews(output_root, settings.file_lifetime_hours)
         gi_svg = _render_preview_svg_from_rows(rows, cell_map, mode="gi_z")
         lisa_svg = _render_preview_svg_from_rows(rows, cell_map, mode="lisa_i")
-        image_path_gi = output_root / f"arcgis_h3_preview_{run_id}_gi.svg"
-        image_path_lisa = output_root / f"arcgis_h3_preview_{run_id}_lisa.svg"
-        image_path_gi.write_text(gi_svg, encoding="utf-8")
-        image_path_lisa.write_text(lisa_svg, encoding="utf-8")
-        image_url_gi = f"/static/generated/arcgis/{image_path_gi.name}"
-        image_url_lisa = f"/static/generated/arcgis/{image_path_lisa.name}"
+        image_url_gi = _svg_to_data_uri(gi_svg)
+        image_url_lisa = _svg_to_data_uri(lisa_svg)
         image_url = image_url_gi
 
     if trace_id:
@@ -385,4 +424,123 @@ def run_arcgis_h3_analysis(
         "image_url": image_url,
         "image_url_gi": image_url_gi,
         "image_url_lisa": image_url_lisa,
+    }
+
+
+def _parse_content_disposition_filename(content_disposition: str) -> Optional[str]:
+    text = str(content_disposition or "").strip()
+    if not text:
+        return None
+    # RFC 5987 format
+    if "filename*=" in text:
+        part = text.split("filename*=", 1)[1].split(";", 1)[0].strip().strip('"')
+        if "''" in part:
+            _, encoded = part.split("''", 1)
+            return unquote(encoded)
+        return unquote(part)
+    if "filename=" in text:
+        part = text.split("filename=", 1)[1].split(";", 1)[0].strip().strip('"')
+        return part or None
+    return None
+
+
+def run_arcgis_h3_export(
+    export_format: str,
+    include_poi: bool,
+    style_mode: str,
+    grid_features: List[Dict[str, Any]],
+    poi_features: Optional[List[Dict[str, Any]]] = None,
+    style_meta: Optional[Dict[str, Any]] = None,
+    arcgis_python_path: Optional[str] = None,
+    timeout_sec: int = 300,
+) -> Dict[str, Any]:
+    if not settings.arcgis_bridge_enabled:
+        raise ArcGISBridgeError("ArcGIS bridge is disabled by ARCGIS_BRIDGE_ENABLED")
+
+    token = str(settings.arcgis_bridge_token or "").strip()
+    if not token:
+        raise ArcGISBridgeError("ARCGIS_BRIDGE_TOKEN is not configured")
+
+    normalized_format = "arcgis_package" if str(export_format or "") == "arcgis_package" else "gpkg"
+    normalized_style_mode = str(style_mode or "density").strip().lower()
+    if normalized_style_mode not in {"density", "gi_z", "lisa_i"}:
+        normalized_style_mode = "density"
+
+    feature_list = list(grid_features or [])
+    if not feature_list:
+        raise ArcGISBridgeError("Grid feature list is empty, cannot export")
+
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f") + "_" + uuid.uuid4().hex[:8]
+    bridge_timeout = max(
+        int(settings.arcgis_bridge_timeout_s or 300),
+        int(getattr(settings, "arcgis_export_timeout_s", 600) or 600),
+        int(timeout_sec or 300),
+    )
+    payload: Dict[str, Any] = {
+        "format": normalized_format,
+        "include_poi": bool(include_poi),
+        "style_mode": normalized_style_mode,
+        "grid_features": feature_list,
+        "poi_features": list(poi_features or []),
+        "style_meta": dict(style_meta or {}),
+        "timeout_sec": int(max(30, int(timeout_sec or 300))),
+        "run_id": run_id,
+    }
+    if arcgis_python_path:
+        payload["arcgis_python_path"] = str(arcgis_python_path)
+
+    endpoint = str(settings.arcgis_bridge_base_url or "").rstrip("/") + "/v1/arcgis/h3/export"
+    headers = {
+        "X-ArcGIS-Token": token,
+        "Content-Type": "application/json",
+    }
+
+    logger.info(
+        "[ArcGISBridge] export request %s format=%s grids=%d poi=%d run_id=%s",
+        endpoint,
+        normalized_format,
+        len(feature_list),
+        len(payload["poi_features"]),
+        run_id,
+    )
+
+    try:
+        with httpx.Client(timeout=float(bridge_timeout)) as client:
+            resp = client.post(endpoint, headers=headers, json=payload)
+    except httpx.TimeoutException as exc:
+        raise ArcGISBridgeError(f"ArcGIS export timeout after {bridge_timeout}s") from exc
+    except httpx.RequestError as exc:
+        raise ArcGISBridgeError(f"ArcGIS bridge unreachable: {exc}") from exc
+
+    if resp.status_code != 200:
+        detail = ""
+        try:
+            parsed = resp.json()
+            if isinstance(parsed, dict):
+                detail = str(parsed.get("detail") or parsed.get("error") or "")
+            else:
+                detail = str(parsed)
+        except Exception:
+            detail = str(resp.text or "")
+        raise ArcGISBridgeError(f"ArcGIS bridge HTTP {resp.status_code}: {detail[:500]}")
+
+    content = resp.content or b""
+    if not content:
+        raise ArcGISBridgeError("ArcGIS export returned empty file content")
+
+    max_mb = max(16, int(getattr(settings, "arcgis_export_max_mb", 512) or 512))
+    max_bytes = max_mb * 1024 * 1024
+    if len(content) > max_bytes:
+        raise ArcGISBridgeError(f"ArcGIS export file is too large ({len(content)} bytes > {max_bytes} bytes)")
+
+    content_type = str(resp.headers.get("content-type") or "application/octet-stream").strip()
+    filename = _parse_content_disposition_filename(resp.headers.get("content-disposition"))
+    if not filename:
+        suffix = ".zip" if normalized_format == "arcgis_package" else ".gpkg"
+        filename = f"h3_analysis_{run_id}{suffix}"
+
+    return {
+        "filename": filename,
+        "content_type": content_type,
+        "content": content,
     }

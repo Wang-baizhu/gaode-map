@@ -40,7 +40,10 @@ class H3MetricsRequest(BaseModel):
         description="Coordinate system of POI locations",
     )
     neighbor_ring: int = Field(1, ge=1, le=3, description="Neighbor ring size for neighborhood metrics")
-    use_arcgis: bool = Field(False, description="Whether to run ArcGIS(ArcPy) as spatial analysis engine")
+    use_arcgis: bool = Field(
+        True,
+        description="Deprecated. ArcGIS engine is always used and this field is ignored.",
+    )
     arcgis_python_path: Optional[str] = Field(
         None,
         description=r"Optional ArcPy python path, e.g. C:\Python27\ArcGIS10.7\python.exe",
@@ -76,7 +79,7 @@ class H3AnalysisSummary(BaseModel):
     avg_local_entropy: float = 0.0
     global_moran_i_density: Optional[float] = None
     global_moran_z_score: Optional[float] = None
-    analysis_engine: Literal["pysal", "arcgis"] = "pysal"
+    analysis_engine: Literal["arcgis"] = "arcgis"
     arcgis_status: Optional[str] = None
     arcgis_image_url: Optional[str] = None
     arcgis_image_url_gi: Optional[str] = None
@@ -106,3 +109,42 @@ class H3MetricsResponse(BaseModel):
     grid: GridResponse
     summary: H3AnalysisSummary
     charts: H3AnalysisCharts
+
+
+class H3ExportRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    format: Literal["gpkg", "arcgis_package"] = Field(
+        "gpkg",
+        description="Export format: gpkg or arcgis_package(zip: lpk+mpk)",
+    )
+    include_poi: bool = Field(
+        True,
+        description="Whether POI points should be included in export layers",
+    )
+    style_mode: Literal["density", "gi_z", "lisa_i"] = Field(
+        "density",
+        description="Active style mode used to prepare exported rendering fields",
+    )
+    grid_features: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="H3 grid features (GeoJSON Feature list)",
+    )
+    poi_features: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="POI point features (GeoJSON Feature list)",
+    )
+    style_meta: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Optional render metadata from frontend (breaks/colors)",
+    )
+    arcgis_python_path: Optional[str] = Field(
+        None,
+        description=r"Optional ArcPy python path, e.g. C:\Python27\ArcGIS10.7\python.exe",
+    )
+    arcgis_timeout_sec: int = Field(
+        300,
+        ge=30,
+        le=3600,
+        description="ArcGIS export timeout in seconds",
+    )

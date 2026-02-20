@@ -67,7 +67,7 @@ def test_h3_metrics_api_shape():
     assert "grid" in data and "summary" in data and "charts" in data
     assert data["grid"]["type"] == "FeatureCollection"
     assert data["summary"]["grid_count"] == len(data["grid"]["features"])
-    assert data["summary"]["analysis_engine"] in ("pysal", "arcgis")
+    assert data["summary"]["analysis_engine"] == "arcgis"
     assert data["summary"].get("gi_render_meta", {}).get("mode") == "fixed_z"
     assert data["summary"].get("lisa_render_meta", {}).get("mode") == "stddev"
     assert "gi_z_stats" in data["summary"]
@@ -190,6 +190,48 @@ def test_h3_metrics_arcgis_failure_returns_502():
     assert resp.status_code == 502
     body = resp.json()
     assert "ArcGIS桥接失败" in str(body.get("detail") or "")
+
+
+def test_h3_export_api_stream(monkeypatch):
+    client = TestClient(app)
+
+    def _fake_export(**kwargs):
+        assert kwargs.get("export_format") == "gpkg"
+        return {
+            "filename": "h3_analysis_test.gpkg",
+            "content_type": "application/geopackage+sqlite3",
+            "content": b"gpkg-binary",
+        }
+
+    monkeypatch.setattr("router.app.run_arcgis_h3_export", _fake_export)
+
+    payload = {
+        "format": "gpkg",
+        "include_poi": True,
+        "style_mode": "density",
+        "grid_features": [
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[121.47, 31.23], [121.48, 31.23], [121.48, 31.24], [121.47, 31.24], [121.47, 31.23]]],
+                },
+                "properties": {"h3_id": "test", "density_poi_per_km2": 1.0},
+            }
+        ],
+        "poi_features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [121.475, 31.235]},
+                "properties": {"id": "1", "name": "poi-1", "type": "050000"},
+            }
+        ],
+        "style_meta": {},
+    }
+    resp = client.post("/api/v1/analysis/h3/export", json=payload)
+    assert resp.status_code == 200
+    assert resp.content == b"gpkg-binary"
+    assert "attachment; filename=\"h3_analysis_test.gpkg\"" in str(resp.headers.get("content-disposition") or "")
 
 
 if __name__ == "__main__":

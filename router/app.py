@@ -30,12 +30,21 @@ from modules.map_manage.schemas import (
 from modules import generate_map_json
 from modules.isochrone import get_isochrone_polygon
 from modules.isochrone.schemas import IsochroneRequest, IsochroneResponse
-from modules.poi.schemas import PoiRequest, PoiResponse, HistorySaveRequest
-from modules.poi.core import fetch_pois_by_polygon
+from modules.poi.schemas import (
+    PoiRequest,
+    PoiResponse,
+    HistorySaveRequest,
+    AoiSampleRequest,
+    AoiSampleResponse,
+)
+from modules.poi.core import fetch_pois_by_polygon, fetch_aois_by_polygon_sampling
 from modules.grid_h3.analysis import analyze_h3_grid
-from modules.grid_h3.analysis_schemas import H3MetricsRequest, H3MetricsResponse
+from modules.grid_h3.analysis_schemas import H3MetricsRequest, H3MetricsResponse, H3ExportRequest
+from modules.grid_h3.arcgis_bridge import run_arcgis_h3_export
 from modules.grid_h3.core import build_h3_grid_feature_collection
 from modules.grid_h3.schemas import GridRequest, GridResponse
+from modules.road_syntax.core import analyze_road_syntax
+from modules.road_syntax.schemas import RoadSyntaxRequest, RoadSyntaxResponse
 from modules.gaode_service.utils.transform_posi import gcj02_to_wgs84, wgs84_to_gcj02
 
 # Stores
@@ -350,7 +359,7 @@ async def analyze_h3_metrics(payload: H3MetricsRequest):
             pois=poi_payload,
             poi_coord_type=payload.poi_coord_type,
             neighbor_ring=payload.neighbor_ring,
-            use_arcgis=payload.use_arcgis,
+            use_arcgis=True,
             arcgis_python_path=payload.arcgis_python_path,
             arcgis_neighbor_ring=payload.arcgis_neighbor_ring,
             # Grid analysis is ring-based; keep legacy KNN field accepted but ignored.
@@ -359,9 +368,58 @@ async def analyze_h3_metrics(payload: H3MetricsRequest):
             arcgis_timeout_sec=payload.arcgis_timeout_sec,
         )
     except RuntimeError as exc:
-        if payload.use_arcgis:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return result
+
+
+@router.post("/api/v1/analysis/h3/export")
+async def export_h3_analysis(payload: H3ExportRequest):
+    try:
+        export_result = await asyncio.to_thread(
+            run_arcgis_h3_export,
+            export_format=payload.format,
+            include_poi=payload.include_poi,
+            style_mode=payload.style_mode,
+            grid_features=[
+                feature.model_dump() if hasattr(feature, "model_dump") else feature
+                for feature in (payload.grid_features or [])
+            ],
+            poi_features=[
+                feature.model_dump() if hasattr(feature, "model_dump") else feature
+                for feature in (payload.poi_features or [])
+            ],
+            style_meta=payload.style_meta,
+            arcgis_python_path=payload.arcgis_python_path,
+            timeout_sec=payload.arcgis_timeout_sec,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=f"ArcGIS导出失败: {exc}") from exc
+
+    filename = str(export_result.get("filename") or "h3_analysis_export.bin")
+    content_type = str(export_result.get("content_type") or "application/octet-stream")
+    content = export_result.get("content") or b""
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return Response(content=content, media_type=content_type, headers=headers)
+
+
+@router.post("/api/v1/analysis/road-syntax", response_model=RoadSyntaxResponse)
+async def analyze_road_syntax_api(payload: RoadSyntaxRequest):
+    try:
+        result = await asyncio.to_thread(
+            analyze_road_syntax,
+            polygon=payload.polygon,
+            coord_type=payload.coord_type,
+            mode=payload.mode,
+            include_geojson=payload.include_geojson,
+            max_edge_features=payload.max_edge_features,
+            merge_geojson_edges=payload.merge_geojson_edges,
+            merge_bucket_step=payload.merge_bucket_step,
+            radii_m=payload.radii_m,
+            metric=payload.metric,
+            depthmap_cli_path=payload.depthmap_cli_path,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     return result
 
 
@@ -401,6 +459,18 @@ async def fetch_pois_analysis(payload: PoiRequest):
         )
         
     return {"pois": results, "count": len(results)}
+
+
+@router.post("/api/v1/analysis/aois", response_model=AoiSampleResponse)
+async def fetch_aois_analysis(payload: AoiSampleRequest):
+    result = await fetch_aois_by_polygon_sampling(
+        polygon=payload.polygon,
+        spacing_m=payload.spacing_m,
+        h3_resolution=payload.h3_resolution,
+        max_points=payload.max_points,
+        regeo_radius=payload.regeo_radius,
+    )
+    return result
 
 @router.post("/api/v1/analysis/history/save")
 async def save_history_manually(payload: HistorySaveRequest):

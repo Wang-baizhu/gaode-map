@@ -395,6 +395,10 @@
                                             </div>
                                         </div>
                                         <div class="h3-params-chips">
+                                            <label class="h3-check-chip h3-check-chip-compact">
+                                                <input type="checkbox" v-model="h3UseArcgis">
+                                                ArcGIS引擎
+                                            </label>
                                             <span class="count-badge">网格数 {% raw %}{{ h3GridCount }}{% endraw %}</span>
                                         </div>
                                         <div class="h3-params-actions">
@@ -531,14 +535,9 @@
                                             <div style="font-size:12px; color:#374151; font-weight:600; margin-bottom:6px;">
                                                 {% raw %}{{ getArcgisSnapshotTitle() }}{% endraw %}
                                             </div>
-                                            <img :src="getArcgisSnapshotSrc()"
-                                                @load="h3ArcgisSnapshotLoadError = false"
-                                                @error="h3ArcgisSnapshotLoadError = true"
+                                            <img :src="`${getArcgisSnapshotUrl()}?v=${h3ArcgisImageVersion}`"
                                                 alt="ArcGIS结构图"
                                                 style="width:100%; border-radius:8px; border:1px solid #dbe2ea;" />
-                                            <div v-if="h3ArcgisSnapshotLoadError" class="h3-analysis-hint" style="margin-top:8px;">
-                                                ArcGIS结构快照加载失败，请重算一次或切换结构图层后重试。
-                                            </div>
                                         </div>
                                         <div class="h3-decision-cards">
                                             <div class="h3-decision-card">
@@ -749,6 +748,9 @@
             <!-- Sidebar Footer (Only in Wizard Mode) -->
             <div v-if="sidebarView === 'wizard'" class="sidebar-footer"
                 style="padding: 20px; border-top: 1px solid #f0f0f0; background: #fff; display: flex; flex-direction: column; gap: 10px;">
+                <button v-if="step === 3" class="btn-black" @click="saveAndRestart">
+                    保存并开启新分析
+                </button>
                 <button class="btn-outline"
                     style="margin-top:0; border:1px solid #eee; display:flex; justify-content:center; align-items:center;"
                     @click="openHistoryView()">
@@ -761,134 +763,12 @@
 
         <!-- Middle: Map -->
         <main class="main-content">
-            <div v-if="sidebarView === 'wizard' && step === 3" class="h3-map-toolbar">
-                <button type="button" class="h3-map-tool-btn h3-map-save-btn" @click="saveAndRestart" title="保存并开启新分析">
-                    <svg class="h3-map-tool-icon" viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h10.2l4.3 4.3V18.5A1.5 1.5 0 0 1 18.5 20h-13A1.5 1.5 0 0 1 4 18.5z"></path>
-                        <path d="M8 4.5v5h7v-5"></path>
-                        <path d="M8 20v-5h8v5"></path>
-                    </svg>
-                    <span class="h3-map-tool-text">保存并新建</span>
-                </button>
-
-                <button type="button" class="h3-map-tool-btn h3-map-simplify-btn"
-                    :class="{ active: h3BasemapMuted }"
-                    @click="toggleH3BasemapMuted"
-                    title="底图简化">
-                    <svg class="h3-map-tool-icon" viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="M4 7h16"></path>
-                        <path d="M4 12h16"></path>
-                        <path d="M4 17h16"></path>
-                    </svg>
-                    <span class="h3-map-tool-text">{% raw %}{{ h3BasemapMuted ? '简化：开' : '简化：关' }}{% endraw %}</span>
-                </button>
-
-                <div class="h3-export-wrap">
-                    <button type="button" class="h3-map-tool-btn h3-map-export-btn"
-                        :class="{ active: h3ExportMenuOpen }"
-                        :disabled="activeStep3Panel !== 'h3'"
-                        @click="toggleH3ExportMenu"
-                        title="导出">
-                        <svg class="h3-map-tool-icon" viewBox="0 0 24 24" aria-hidden="true">
-                            <path d="M12 4v10"></path>
-                            <path d="M8.5 10.5 12 14l3.5-3.5"></path>
-                            <path d="M5 18h14"></path>
-                        </svg>
-                        <span class="h3-map-tool-text">导出</span>
-                        <svg class="h3-map-tool-caret" viewBox="0 0 24 24" aria-hidden="true">
-                            <path d="m6 9 6 6 6-6"></path>
-                        </svg>
-                    </button>
-                    <div v-if="activeStep3Panel === 'h3' && h3ExportMenuOpen" class="h3-export-menu">
-                        <label class="h3-export-check">
-                            <input type="checkbox" v-model="h3ExportIncludePoi">
-                            包含POI点
-                        </label>
-                        <div class="h3-export-field">
-                            <span class="h3-export-field-label">导出范围</span>
-                            <select class="h3-export-select" v-model="h3ExportScope">
-                                <option value="grid_only">仅网格</option>
-                                <option value="analysis_result" :disabled="!hasH3AnalysisForExport()">分析结果</option>
-                            </select>
-                        </div>
-                        <div v-if="h3ExportScope === 'analysis_result' && !hasH3AnalysisForExport()" class="h3-export-tip">
-                            请先完成计算分析，再导出分析结果。
-                        </div>
-                        <button type="button" class="h3-export-item"
-                            :disabled="isExportingH3 || !hasH3GridForExport()"
-                            @click="exportH3Analysis('gpkg')">
-                            快速导出（.gpkg）
-                        </button>
-                        <button type="button" class="h3-export-item"
-                            :disabled="isExportingH3 || !hasH3GridForExport()"
-                            @click="exportH3Analysis('arcgis_package')">
-                            高级导出（LPK+MPK）
-                        </button>
-                    </div>
-                </div>
-
-                <div class="h3-task-wrap">
-                    <button type="button" class="h3-map-tool-btn h3-map-task-btn"
-                        :class="{ active: h3ExportTasksOpen }"
-                        :disabled="activeStep3Panel !== 'h3'"
-                        @click="toggleH3ExportTasks"
-                        title="任务">
-                        <svg class="h3-map-tool-icon" viewBox="0 0 24 24" aria-hidden="true">
-                            <rect x="4" y="5" width="16" height="14" rx="2"></rect>
-                            <path d="M8 10h8"></path>
-                            <path d="M8 14h6"></path>
-                        </svg>
-                        <span class="h3-map-tool-text">任务</span>
-                        <span v-if="getH3PendingTaskCount() > 0" class="h3-task-count">{% raw %}{{ getH3PendingTaskCount() }}{% endraw %}</span>
-                    </button>
-                </div>
-            </div>
-
-            <div v-if="sidebarView === 'wizard' && step === 3 && activeStep3Panel === 'h3' && h3ExportTasksOpen" class="h3-export-task-panel">
-                <div class="h3-export-task-panel-header">
-                    <span>导出任务</span>
-                    <button type="button" class="h3-export-task-close" @click="closeH3ExportTasks">关闭</button>
-                </div>
-                <div v-if="!h3ExportTasks.length" class="h3-export-task-empty">暂无任务</div>
-                <template v-else>
-                    <div v-for="task in h3ExportTasks" :key="task.id" class="h3-export-task-item">
-                        <div class="h3-export-task-row">
-                            <div class="h3-export-task-name">{% raw %}{{ task.title }}{% endraw %}</div>
-                            <span class="h3-export-task-state"
-                                :class="{
-                                    'is-running': task.status === 'running',
-                                    'is-success': task.status === 'success',
-                                    'is-failed': task.status === 'failed'
-                                }">
-                                {% raw %}{{ task.status_label }}{% endraw %}
-                            </span>
-                        </div>
-                        <div class="h3-export-task-meta">
-                            {% raw %}{{ task.scope_label }} · {{ task.created_at_text }}{% endraw %}
-                        </div>
-                        <div v-if="task.filename" class="h3-export-task-meta">
-                            文件：{% raw %}{{ task.filename }}{% endraw %}
-                        </div>
-                        <div v-if="task.error" class="h3-export-task-error">{% raw %}{{ task.error }}{% endraw %}</div>
-                    </div>
-                    <div class="h3-export-task-actions">
-                        <button type="button" class="h3-export-task-clear" @click="clearH3CompletedTasks">清理已完成</button>
-                    </div>
-                </template>
-            </div>
-
-            <div v-if="sidebarView === 'wizard' && step === 3 && h3Toast.message"
-                class="h3-export-toast"
-                :class="{
-                    'is-success': h3Toast.type === 'success',
-                    'is-error': h3Toast.type === 'error',
-                    'is-warning': h3Toast.type === 'warning'
-                }">
-                {% raw %}{{ h3Toast.message }}{% endraw %}
-            </div>
-
             <div id="tianditu-container" aria-hidden="true"></div>
             <div id="container"></div>
+            <button v-if="sidebarView === 'wizard' && step === 3 && activeStep3Panel === 'h3'" type="button"
+                class="h3-map-simplify-btn" :class="{ active: h3BasemapMuted }" @click="toggleH3BasemapMuted">
+                {% raw %}{{ h3BasemapMuted ? '简化：开' : '简化：关' }}{% endraw %}
+            </button>
             <div v-if="basemapSource === 'osm'" style="position:absolute; right:8px; bottom:6px; z-index:2; background:rgba(255,255,255,0.9); border:1px solid #e5e7eb; border-radius:6px; padding:2px 6px; font-size:10px; color:#4b5563;">
                 © OpenStreetMap contributors
             </div>
@@ -907,7 +787,6 @@
     <script src="/static/js/map-core.js?v={{ static_version }}"></script>
     <script src="/static/js/map-markers.js?v={{ static_version }}"></script>
     <script src="/static/js/map-filters.js?v={{ static_version }}"></script>
-    <script src="/static/js/road_syntax_ui.js?v={{ static_version }}"></script>
     <!-- 引入 analysis.js 也可以，但我们大部分逻辑移入 Vue methods 更好，这里依然引入以兼容 MapCore 依赖 -->
 
     <script>
@@ -1871,10 +1750,6 @@
                     const panel = this.activeStep3Panel || '';
                     const showMarkers = panel !== 'syntax';
 
-                    if (this.mapCore && typeof this.mapCore.setBasemapMuted === 'function') {
-                        this.mapCore.setBasemapMuted(hide);
-                    }
-
                     if (this.markerManager && typeof this.markerManager.setHideAllPoints === 'function') {
                         if (typeof this.markerManager.setShowMarkers === 'function') {
                             this.markerManager.setShowMarkers(showMarkers);
@@ -2085,8 +1960,7 @@
                     const url = this.getArcgisSnapshotUrl();
                     if (!url) return '';
                     if (String(url).startsWith('data:')) return url;
-                    const joiner = String(url).includes('?') ? '&' : '?';
-                    return `${url}${joiner}v=${this.h3ArcgisImageVersion}`;
+                    return `${url}?v=${this.h3ArcgisImageVersion}`;
                 },
                 _normalizeArcgisSnapshotUrl(rawUrl) {
                     const raw = String(rawUrl || '').trim();
@@ -3837,7 +3711,6 @@
                     }
                     if (panelId !== 'h3') {
                         this.h3ExportMenuOpen = false;
-                        this.h3ExportTasksOpen = false;
                     }
                     if (panelId === 'poi') {
                         this.applySimplifyPointVisibility();
