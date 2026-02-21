@@ -42,4 +42,11 @@ ARCGIS_BRIDGE_TOKEN=<same token as ARCGIS_TOKEN>
 ARCGIS_BRIDGE_TIMEOUT_S=300
 ```
 
+If your backend runs in Linux Docker, ensure compose includes:
+
+```yaml
+extra_hosts:
+  - "host.docker.internal:host-gateway"
+```
+
 Then restart backend container/app.

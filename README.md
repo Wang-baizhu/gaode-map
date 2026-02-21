@@ -34,6 +34,7 @@ OVERPASS_ENDPOINT=http://overpass/api/interpreter
 OVERPASS_ENDPOINT=http://overpass/api/interpreter
 OVERPASS_PBF_FILE=hunan-260201.osm.pbf
 DEPTHMAPX_CLI_PATH=/usr/local/bin/depthmapXcli
+VALHALLA_SERVER_THREADS=2
 VALHALLA_CUSTOM_FILES_DIR=D:\MapData\osm_source
 VALHALLA_TILES_DIR=D:\MapData\valhalla_tiles
 OVERPASS_DB_DIR=D:\MapData\overpass_db

@@ -3,7 +3,6 @@ import json
 import logging
 from typing import List, Tuple, Union
 from shapely.geometry import Point, Polygon
-from shapely.geometry import Point, Polygon
 from core.config import settings
 
 logger = logging.getLogger(__name__)

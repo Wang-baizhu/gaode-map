@@ -6,6 +6,8 @@ services:
     container_name: gaode-map-app
     ports:
       - "8000:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - VALHALLA_BASE_URL=http://valhalla:8002
       - AMAP_WEB_SERVICE_KEY
@@ -34,7 +36,7 @@ services:
       - build_elevation=False
       - build_admins=False
       - build_time_zones=False
-      - server_threads=8
+      - server_threads=${VALHALLA_SERVER_THREADS:-8}
       - use_tiles_ignore_pbf=False
       - use_default_speeds_config=True
       - default_speeds_config_url=https://raw.githubusercontent.com/OpenStreetMapSpeeds/schema/master/default_speeds.json
