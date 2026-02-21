@@ -417,6 +417,10 @@ async def analyze_road_syntax_api(payload: RoadSyntaxRequest):
             radii_m=payload.radii_m,
             metric=payload.metric,
             depthmap_cli_path=payload.depthmap_cli_path,
+            use_arcgis_webgl=payload.use_arcgis_webgl,
+            arcgis_python_path=payload.arcgis_python_path,
+            arcgis_timeout_sec=payload.arcgis_timeout_sec,
+            arcgis_metric_field=payload.arcgis_metric_field,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc

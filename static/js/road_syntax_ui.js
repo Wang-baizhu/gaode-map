@@ -28,6 +28,14 @@
                     return Number(defaultZoom) || 16;
                 }
             },
+            roadSyntaxShouldUseLegacyViewportRefresh() {
+                if (!this.roadSyntaxUseArcgisWebgl) return true;
+                if (this.roadSyntaxWebglActive) return false;
+                if (typeof this.roadSyntaxCanUseArcgisWebglPayload === 'function') {
+                    return !this.roadSyntaxCanUseArcgisWebglPayload(this.roadSyntaxWebglPayload);
+                }
+                return true;
+            },
             roadSyntaxResolveBackboneRankScore(item) {
                 const props = (item && item.props) || {};
                 const scoreFields = [
@@ -37,6 +45,8 @@
                     'accessibility_score',
                     'integration_score',
                     'choice_score',
+                    'control_score',
+                    'depth_score',
                 ];
                 for (let i = 0; i < scoreFields.length; i += 1) {
                     const val = Number(props[scoreFields[i]]);
@@ -117,21 +127,32 @@
                 if (zoom <= 15) return { cap: Math.max(200, Math.min(320, totalVisible || 320)), backboneOnly: true };
                 return { cap: Math.max(1, totalVisible || Number.MAX_SAFE_INTEGER), backboneOnly: false };
             },
-                roadSyntaxEnterLowFidelityMode() {
-                    if (!this.isRoadSyntaxMetricViewActive()) return;
-                    this.roadSyntaxInteractionLowFidelity = true;
-                    this.roadSyntaxBumpViewportRefreshToken();
-                    this.roadSyntaxClearViewportRefreshHandles();
-                    this.roadSyntaxResetVisibleIndexCache();
-                    this.roadSyntaxApplyViewportFilter({
-                        layerKey: this.roadSyntaxActiveLayerKey || this.resolveRoadSyntaxLayerKey(this.resolveRoadSyntaxActiveMetric()),
-                        applyStyle: false,
-                        styleMode: 'new',
+            roadSyntaxEnterLowFidelityMode() {
+                if (!this.isRoadSyntaxMetricViewActive()) return;
+                if (!this.roadSyntaxShouldUseLegacyViewportRefresh()) {
+                    this.roadSyntaxLeaveLowFidelityMode();
+                    return;
+                }
+                this.roadSyntaxInteractionLowFidelity = true;
+                this.roadSyntaxBumpViewportRefreshToken();
+                this.roadSyntaxClearViewportRefreshHandles();
+                const activeLayerKey = this.roadSyntaxActiveLayerKey || this.resolveRoadSyntaxLayerKey(this.resolveRoadSyntaxActiveMetric());
+                this.roadSyntaxResetVisibleIndexCache();
+                this.roadSyntaxApplyViewportFilter({
+                    layerKey: activeLayerKey,
+                    applyStyle: false,
+                    styleMode: 'new',
+                });
+                if (typeof this.switchRoadSyntaxLayerByKey === 'function' && activeLayerKey) {
+                    this.switchRoadSyntaxLayerByKey(activeLayerKey, {
+                        trackPerf: false,
+                        preferVariant: 'lod',
                     });
-                    if (typeof this.roadSyntaxLogOverlayHealth === 'function') {
-                        this.roadSyntaxLogOverlayHealth('enter-low-fidelity');
-                    }
-                },
+                }
+                if (typeof this.roadSyntaxLogOverlayHealth === 'function') {
+                    this.roadSyntaxLogOverlayHealth('enter-low-fidelity');
+                }
+            },
             roadSyntaxLeaveLowFidelityMode() {
                 this.roadSyntaxInteractionLowFidelity = false;
             },
@@ -225,6 +246,12 @@
             },
             scheduleRoadSyntaxViewportRefresh(reason = '') {
                 if (!this.isRoadSyntaxMetricViewActive()) return;
+                if (!this.roadSyntaxShouldUseLegacyViewportRefresh()) {
+                    if (reason === 'moveend' || reason === 'zoomend') {
+                        this.roadSyntaxLeaveLowFidelityMode();
+                    }
+                    return;
+                }
                 this.roadSyntaxBumpViewportRefreshToken();
                 const token = this.roadSyntaxViewportRefreshToken;
                 this.roadSyntaxClearViewportRefreshHandles();
@@ -240,12 +267,22 @@
                         if (isInteractionEnd) {
                             this.roadSyntaxLeaveLowFidelityMode();
                         }
+                        const activeLayerKey = this.roadSyntaxActiveLayerKey || this.resolveRoadSyntaxLayerKey(this.resolveRoadSyntaxActiveMetric());
                         this.roadSyntaxResetVisibleIndexCache();
                         this.roadSyntaxApplyViewportFilter({
-                            layerKey: this.roadSyntaxActiveLayerKey || this.resolveRoadSyntaxLayerKey(this.resolveRoadSyntaxActiveMetric()),
+                            layerKey: activeLayerKey,
                             applyStyle: true,
                             styleMode: 'new',
                         });
+                        if (typeof this.switchRoadSyntaxLayerByKey === 'function' && activeLayerKey) {
+                            const variant = (typeof this.roadSyntaxResolveDesiredLayerVariant === 'function')
+                                ? this.roadSyntaxResolveDesiredLayerVariant()
+                                : 'full';
+                            this.switchRoadSyntaxLayerByKey(activeLayerKey, {
+                                trackPerf: false,
+                                preferVariant: variant,
+                            });
+                        }
                         if (typeof this.roadSyntaxLogOverlayHealth === 'function') {
                             this.roadSyntaxLogOverlayHealth(`viewport-refresh:${reason}`);
                         }
@@ -437,9 +474,10 @@
                 return this.roadSyntaxBoundsRectIntersects(dataset, boundsRect);
             },
             roadSyntaxCollectVisibleLineIndexes() {
-                const lines = Array.isArray(this.roadSyntaxPolylines) ? this.roadSyntaxPolylines : [];
-                if (!lines.length) return [];
-                const all = lines.map((_, idx) => idx);
+                const items = Array.isArray(this.roadSyntaxPolylineItems) ? this.roadSyntaxPolylineItems : [];
+                const total = items.length;
+                if (!total) return [];
+                const all = Array.from({ length: total }, (_, idx) => idx);
                 const applyPolicy = (indexes) => {
                     const list = Array.isArray(indexes) ? indexes : [];
                     const policy = this.roadSyntaxResolveLodPolicy(list.length);
@@ -462,7 +500,6 @@
                     ) {
                         return applyPolicy(this.roadSyntaxVisibleIndexCacheList.slice());
                     }
-                    const items = Array.isArray(this.roadSyntaxPolylineItems) ? this.roadSyntaxPolylineItems : [];
                     const candidates = this.roadSyntaxCollectSpatialCandidates(boundsRect);
                     const source = candidates.length ? candidates : all;
                     const visible = [];
@@ -484,105 +521,65 @@
                 }
             },
             roadSyntaxApplyViewportFilter(options = {}) {
-                const map = this.roadSyntaxMap();
-                const lines = Array.isArray(this.roadSyntaxPolylines) ? this.roadSyntaxPolylines : [];
-                if (!map || !lines.length) return { visible: 0, total: lines.length };
+                const items = Array.isArray(this.roadSyntaxPolylineItems) ? this.roadSyntaxPolylineItems : [];
                 const layerKey = String(
                     options && options.layerKey
                         ? options.layerKey
                         : (this.roadSyntaxActiveLayerKey || this.resolveRoadSyntaxLayerKey(this.resolveRoadSyntaxActiveMetric()))
                 );
-                const applyStyle = !!(options && options.applyStyle);
-                const styleMode = String((options && options.styleMode) || 'new');
-                const styleCache = this.roadSyntaxLayerStyleCache || {};
-                const styles = Array.isArray(styleCache[layerKey]) ? styleCache[layerKey] : [];
-                const prevSet = this.roadSyntaxVisibleLineSet || {};
-                let visibleIndexes = this.roadSyntaxCollectVisibleLineIndexes();
-                if (!Array.isArray(visibleIndexes)) visibleIndexes = [];
-                if (!visibleIndexes.length) {
-                    const prevIndexes = Object.keys(prevSet)
-                        .map((v) => Number(v))
-                        .filter((v) => Number.isFinite(v) && v >= 0 && v < lines.length);
-                    const boundsRect = this.roadSyntaxCurrentMapBoundsRect();
-                    if (prevIndexes.length && this.roadSyntaxDatasetMayIntersect(boundsRect)) {
-                        visibleIndexes = prevIndexes;
+                if (!items.length) {
+                    this.roadSyntaxTargetVisibleLineSet = {};
+                    return {
+                        visible: 0,
+                        total: 0,
+                        path: 'pool_only',
+                        handle: null,
+                        nextVisibleSet: {},
+                        visibleIndexes: [],
+                    };
+                }
+                const desiredVariant = (typeof this.roadSyntaxResolveDesiredLayerVariant === 'function')
+                    ? this.roadSyntaxResolveDesiredLayerVariant()
+                    : 'full';
+                const layer = (typeof this.roadSyntaxGetLayer === 'function') ? this.roadSyntaxGetLayer(layerKey) : null;
+                const runtimeLayer = (typeof this.roadSyntaxResolveLayerRuntimeEntry === 'function')
+                    ? this.roadSyntaxResolveLayerRuntimeEntry(layer, desiredVariant)
+                    : null;
+                let nextSet = null;
+                if (runtimeLayer && runtimeLayer.indexSet && typeof runtimeLayer.indexSet === 'object') {
+                    if (typeof this.roadSyntaxCloneIndexSet === 'function') {
+                        nextSet = this.roadSyntaxCloneIndexSet(runtimeLayer.indexSet);
+                    } else {
+                        nextSet = Object.assign({}, runtimeLayer.indexSet);
                     }
                 }
-                const nextSet = {};
-                visibleIndexes.forEach((idx) => {
-                    nextSet[idx] = true;
-                });
-
-                Object.keys(prevSet).forEach((key) => {
-                    if (nextSet[key]) return;
-                    const idx = Number(key);
-                    const line = Number.isFinite(idx) ? lines[idx] : null;
-                    if (line && typeof line.setMap === 'function') {
-                        line.setMap(null);
-                    }
-                });
-                visibleIndexes.forEach((idx) => {
-                    const line = lines[idx];
-                    if (!line) return;
-                    const isNewVisible = !prevSet[idx];
-                    if (isNewVisible && typeof line.setMap === 'function') {
-                        line.setMap(map);
-                    }
-                    const shouldStyle = styleMode === 'all' ? true : isNewVisible;
-                    if (applyStyle && shouldStyle && styles.length === lines.length && typeof line.setOptions === 'function') {
-                        try {
-                            line.setOptions(styles[idx]);
-                        } catch (_) { }
-                    }
-                });
-                this.roadSyntaxVisibleLineSet = nextSet;
-                return { visible: visibleIndexes.length, total: lines.length };
+                if (!nextSet) {
+                    let visibleIndexes = this.roadSyntaxCollectVisibleLineIndexes();
+                    if (!Array.isArray(visibleIndexes)) visibleIndexes = [];
+                    nextSet = {};
+                    visibleIndexes.forEach((idx) => {
+                        nextSet[idx] = true;
+                    });
+                }
+                this.roadSyntaxTargetVisibleLineSet = nextSet;
+                const visibleIndexes = Object.keys(nextSet)
+                    .map((v) => Number(v))
+                    .filter((v) => Number.isFinite(v))
+                    .sort((a, b) => a - b);
+                return {
+                    visible: Object.keys(nextSet).length,
+                    total: items.length,
+                    path: `pool_${desiredVariant}`,
+                    handle: null,
+                    nextVisibleSet: Object.assign({}, nextSet),
+                    visibleIndexes,
+                };
             },
             resolveRoadSyntaxInteractionStride() {
-                const baseStride = Math.max(1, Math.floor(Number(this.roadSyntaxInteractionStride) || 1));
-                const visibleCount = Object.keys(this.roadSyntaxVisibleLineSet || {}).length;
-                const count = visibleCount > 0 ? visibleCount : this.roadSyntaxCollectVisibleLineIndexes().length;
-                if (count >= 1000) return Math.max(baseStride, 5);
-                if (count >= 800) return Math.max(baseStride, 4);
-                if (count >= 550) return Math.max(baseStride, 3);
-                if (count >= 320) return Math.max(baseStride, 2);
                 return 1;
             },
             roadSyntaxApplyInteractionStride(strideValue = 1, options = {}) {
-                const map = this.roadSyntaxMap();
-                const lines = Array.isArray(this.roadSyntaxPolylines) ? this.roadSyntaxPolylines : [];
-                if (!map || !lines.length) return;
-                const stride = Math.max(1, Math.floor(Number(strideValue) || 1));
-                const force = !!(options && options.force);
-                if (!force && stride === this.roadSyntaxCurrentStride) return;
-                this.roadSyntaxCurrentStride = stride;
-                const visibleIndexes = Object.keys(this.roadSyntaxVisibleLineSet || {})
-                    .map((v) => Number(v))
-                    .filter((v) => Number.isFinite(v));
-                const hideLines = [];
-                const showLines = [];
-                visibleIndexes.forEach((lineIdx, orderIdx) => {
-                    const line = lines[lineIdx];
-                    if (!line) return;
-                    if (stride > 1 && (orderIdx % stride) !== 0) {
-                        hideLines.push(line);
-                    } else {
-                        showLines.push(line);
-                    }
-                });
-                if (this.roadSyntaxTryBatchLineSwitch(hideLines, showLines, map)) {
-                    return;
-                }
-                hideLines.forEach((line) => {
-                    if (line && typeof line.setMap === 'function') {
-                        line.setMap(null);
-                    }
-                });
-                showLines.forEach((line) => {
-                    if (line && typeof line.setMap === 'function') {
-                        line.setMap(map);
-                    }
-                });
+                this.roadSyntaxCurrentStride = 1;
             },
         };
     }

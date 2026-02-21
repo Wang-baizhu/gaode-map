@@ -21,11 +21,11 @@ class RoadSyntaxRequest(BaseModel):
         True,
         description="Whether to include road edge GeoJSON in response",
     )
-    max_edge_features: int = Field(
-        1200,
+    max_edge_features: int | None = Field(
+        None,
         ge=100,
         le=5000,
-        description="Maximum number of road edge features in GeoJSON output",
+        description="Maximum number of road edge features in GeoJSON output (null means no cap)",
     )
     merge_geojson_edges: bool = Field(
         True,
@@ -49,6 +49,24 @@ class RoadSyntaxRequest(BaseModel):
         None,
         description="Optional override path of depthmapXcli executable",
     )
+    use_arcgis_webgl: bool = Field(
+        False,
+        description="Whether to run ArcGIS bridge post-processing and return WebGL-ready road features",
+    )
+    arcgis_python_path: str | None = Field(
+        None,
+        description="Optional override ArcGIS python path used by host bridge",
+    )
+    arcgis_timeout_sec: int = Field(
+        20,
+        ge=5,
+        le=3600,
+        description="ArcGIS bridge timeout in seconds",
+    )
+    arcgis_metric_field: str | None = Field(
+        None,
+        description="Preferred metric field used by ArcGIS WebGL styling (e.g. accessibility_score)",
+    )
 
 
 class RoadSyntaxNode(BaseModel):
@@ -71,6 +89,12 @@ class RoadSyntaxSummary(BaseModel):
     avg_choice: float = 0.0
     avg_accessibility_global: float = 0.0
     avg_connectivity: float = 0.0
+    avg_control: float = 0.0
+    avg_depth: float = 0.0
+    control_source_column: str = ""
+    control_valid_count: int = 0
+    depth_source_column: str = ""
+    depth_valid_count: int = 0
     avg_intelligibility: float = 0.0
     avg_intelligibility_r2: float = 0.0
     avg_integration_global: float = 0.0
@@ -135,9 +159,20 @@ class RoadSyntaxDiagnostics(BaseModel):
     regression: RoadSyntaxRegression = Field(default_factory=RoadSyntaxRegression)
 
 
+class RoadSyntaxWebGLPayload(BaseModel):
+    enabled: bool = False
+    backend: str = "none"
+    status: str = "disabled"
+    metric_field: str = ""
+    coord_type: str = "gcj02"
+    roads: RoadSyntaxFeatureCollection = Field(default_factory=RoadSyntaxFeatureCollection)
+    elapsed_ms: float = 0.0
+
+
 class RoadSyntaxResponse(BaseModel):
     summary: RoadSyntaxSummary
     top_nodes: List[RoadSyntaxNode] = Field(default_factory=list)
     roads: RoadSyntaxFeatureCollection = Field(default_factory=RoadSyntaxFeatureCollection)
     nodes: RoadSyntaxNodeFeatureCollection = Field(default_factory=RoadSyntaxNodeFeatureCollection)
     diagnostics: RoadSyntaxDiagnostics = Field(default_factory=RoadSyntaxDiagnostics)
+    webgl: RoadSyntaxWebGLPayload = Field(default_factory=RoadSyntaxWebGLPayload)

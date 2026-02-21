@@ -1,10 +1,12 @@
 import csv
 import bisect
+import logging
 import math
 import re
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
@@ -14,9 +16,11 @@ from shapely.prepared import prep
 
 from core.config import settings
 from modules.gaode_service.utils.transform_posi import gcj02_to_wgs84, wgs84_to_gcj02
+from modules.road_syntax.arcgis_bridge import ArcGISRoadSyntaxBridgeError, run_arcgis_road_syntax_webgl
 
 
 OverpassMode = Literal["walking", "bicycling", "driving"]
+logger = logging.getLogger(__name__)
 
 MODE_HIGHWAY_REGEX: Dict[OverpassMode, str] = {
     "walking": (
@@ -245,6 +249,96 @@ def _select_metric_columns(fieldnames: List[str], metric_key: str) -> Dict[str, 
             chosen[label] = name
             best_len[label] = length
     return chosen
+
+
+def _extract_finite_column_values(rows: List[Dict[str, Any]], column_name: str) -> List[float]:
+    values: List[float] = []
+    if not column_name:
+        return values
+    for row in rows:
+        try:
+            value = float(row.get(column_name, ""))
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(value):
+            values.append(value)
+    return values
+
+
+def _column_numeric_stats(rows: List[Dict[str, Any]], column_name: str) -> Tuple[int, float, int]:
+    values = _extract_finite_column_values(rows, column_name)
+    if not values:
+        return 0, 0.0, 0
+    spread = float(max(values) - min(values))
+    distinct_count = len({round(v, 10) for v in values})
+    return len(values), spread, distinct_count
+
+
+def _select_single_metric_column(
+    fieldnames: List[str],
+    include_patterns: List[Tuple[str, ...]],
+    rows: Optional[List[Dict[str, Any]]] = None,
+    preferred_tokens: Optional[Tuple[str, ...]] = None,
+) -> Optional[str]:
+    excluded_tokens = (
+        "wgt",
+        "route weight",
+        "[slw]",
+        "segment id",
+        "axial line id",
+        "line id",
+        "point id",
+        "entity id",
+        "p-value",
+        "pvalue",
+        "zscore",
+        "z-score",
+        "quantile",
+        "percentile",
+        "rank",
+    )
+    best_name: Optional[str] = None
+    best_rank: Optional[Tuple[int, int, int, float, int, int, int, int]] = None
+    for name in fieldnames:
+        lower = (name or "").strip().lower()
+        if not lower:
+            continue
+        if any(token in lower for token in excluded_tokens):
+            continue
+        matched_rank: Optional[int] = None
+        for idx, pattern in enumerate(include_patterns):
+            if pattern and all((token or "").lower() in lower for token in pattern):
+                matched_rank = idx
+                break
+        if matched_rank is None:
+            continue
+        valid_count = 0
+        spread = 0.0
+        distinct_count = 0
+        if rows is not None and rows:
+            valid_count, spread, distinct_count = _column_numeric_stats(rows, name)
+        preferred_hit = 0
+        if preferred_tokens:
+            preferred_hit = 1 if any((token or "").lower() in lower for token in preferred_tokens) else 0
+        # Higher tuple is better:
+        # 1) has numeric values, 2) valid sample count, 3) has variance,
+        # 4) variance magnitude, 5) distinct values, 6) explicit preferred token hit,
+        # 7) include pattern priority (earlier pattern is better via negative index),
+        # 8) shorter header name as tie-breaker.
+        rank = (
+            1 if valid_count > 0 else 0,
+            valid_count,
+            1 if spread > 1e-12 else 0,
+            spread,
+            distinct_count,
+            preferred_hit,
+            -matched_rank,
+            -len(name),
+        )
+        if best_rank is None or rank > best_rank:
+            best_rank = rank
+            best_name = name
+    return best_name
 
 
 def _metric_bounds(values_by_label: Dict[str, List[float]]) -> Dict[str, Tuple[float, float]]:
@@ -671,6 +765,12 @@ def _empty_result(
             "avg_choice": 0.0,
             "avg_accessibility_global": 0.0,
             "avg_connectivity": 0.0,
+            "avg_control": 0.0,
+            "avg_depth": 0.0,
+            "control_source_column": "",
+            "control_valid_count": 0,
+            "depth_source_column": "",
+            "depth_valid_count": 0,
             "avg_intelligibility": 0.0,
             "avg_intelligibility_r2": 0.0,
             "avg_integration_global": 0.0,
@@ -693,6 +793,15 @@ def _empty_result(
             "intelligibility_scatter": [],
             "regression": {"slope": 0.0, "intercept": 0.0, "r": 0.0, "r2": 0.0, "n": 0},
         },
+        "webgl": {
+            "enabled": False,
+            "backend": "none",
+            "status": "disabled",
+            "metric_field": "",
+            "coord_type": coord_type,
+            "roads": {"type": "FeatureCollection", "features": [], "count": 0},
+            "elapsed_ms": 0.0,
+        },
     }
 
 
@@ -701,12 +810,16 @@ def analyze_road_syntax(
     coord_type: Literal["gcj02", "wgs84"] = "gcj02",
     mode: OverpassMode = "walking",
     include_geojson: bool = True,
-    max_edge_features: int = 1200,
+    max_edge_features: Optional[int] = None,
     radii_m: Optional[List[int]] = None,
     metric: Literal["choice", "integration"] = "choice",
     depthmap_cli_path: Optional[str] = None,
     merge_geojson_edges: bool = True,
     merge_bucket_step: float = 0.025,
+    use_arcgis_webgl: bool = False,
+    arcgis_python_path: Optional[str] = None,
+    arcgis_timeout_sec: int = 300,
+    arcgis_metric_field: Optional[str] = None,
 ) -> Dict[str, Any]:
     local_radii = sorted({int(r) for r in (radii_m or [800, 2000]) if int(r) > 0})[:5]
     local_labels = [_normalize_label(r) for r in local_radii]
@@ -921,18 +1034,85 @@ def analyze_road_syntax(
 
     choice_columns = _select_metric_columns(fieldnames, "choice")
     integration_columns = _select_metric_columns(fieldnames, "integration")
+    connectivity_columns = _select_metric_columns(fieldnames, "connectivity")
+    control_col = _select_single_metric_column(
+        fieldnames,
+        include_patterns=[
+            ("controllability",),
+            ("control",),
+        ],
+        rows=rows,
+        preferred_tokens=("controllability", "control"),
+    )
+    depth_col = _select_single_metric_column(
+        fieldnames,
+        include_patterns=[
+            ("mean", "depth"),
+            ("meandepth",),
+            ("depth",),
+        ],
+        rows=rows,
+        preferred_tokens=("mean depth", "meandepth", "depth"),
+    )
+    connectivity_col = _select_single_metric_column(
+        fieldnames,
+        include_patterns=[
+            ("connectivity",),
+        ],
+        rows=rows,
+        preferred_tokens=("connectivity",),
+    )
 
     # Keep only requested local radii and global metric columns.
     allow_labels = set(local_labels)
     allow_labels.add("global")
     choice_columns = {k: v for k, v in choice_columns.items() if k in allow_labels}
     integration_columns = {k: v for k, v in integration_columns.items() if k in allow_labels}
+    connectivity_columns = {k: v for k, v in connectivity_columns.items() if k in allow_labels}
+    if not connectivity_col:
+        connectivity_col = connectivity_columns.get("global")
+    if not connectivity_col and connectivity_columns:
+        connectivity_col = sorted(connectivity_columns.values(), key=len)[0]
+    if connectivity_col:
+        conn_valid_count, conn_spread, conn_distinct = _column_numeric_stats(rows, connectivity_col)
+        logger.info(
+            "[road-syntax] connectivity column selected=%s valid=%d spread=%.6g distinct=%d",
+            connectivity_col,
+            conn_valid_count,
+            conn_spread,
+            conn_distinct,
+        )
+    if not control_col:
+        logger.warning("[road-syntax] control column not found in depthmap output headers")
+    else:
+        control_valid_count_dbg, control_spread_dbg, control_distinct_dbg = _column_numeric_stats(rows, control_col)
+        logger.info(
+            "[road-syntax] control column selected=%s valid=%d spread=%.6g distinct=%d",
+            control_col,
+            control_valid_count_dbg,
+            control_spread_dbg,
+            control_distinct_dbg,
+        )
+    if not depth_col:
+        logger.warning("[road-syntax] depth column not found in depthmap output headers")
+    else:
+        depth_valid_count_dbg, depth_spread_dbg, depth_distinct_dbg = _column_numeric_stats(rows, depth_col)
+        logger.info(
+            "[road-syntax] depth column selected=%s valid=%d spread=%.6g distinct=%d",
+            depth_col,
+            depth_valid_count_dbg,
+            depth_spread_dbg,
+            depth_distinct_dbg,
+        )
     default_choice_has_local = default_radius_label != "global" and default_radius_label in choice_columns
     default_integration_has_local = default_radius_label != "global" and default_radius_label in integration_columns
 
     prepared_poly = prep(wgs_poly)
     metric_values_choice: Dict[str, List[float]] = {k: [] for k in choice_columns}
     metric_values_integ: Dict[str, List[float]] = {k: [] for k in integration_columns}
+    metric_values_conn_raw: List[float] = []
+    metric_values_control_raw: List[float] = []
+    metric_values_depth_raw: List[float] = []
 
     parsed_edges: List[Dict[str, Any]] = []
     neighbor_sets: Dict[Tuple[float, float], set] = {}
@@ -953,6 +1133,9 @@ def analyze_road_syntax(
 
         raw_choice: Dict[str, Optional[float]] = {}
         raw_integration: Dict[str, Optional[float]] = {}
+        raw_connectivity: Optional[float] = None
+        raw_control: Optional[float] = None
+        raw_depth: Optional[float] = None
 
         for label, col in choice_columns.items():
             try:
@@ -971,6 +1154,33 @@ def analyze_road_syntax(
             raw_integration[label] = val
             if val is not None and math.isfinite(val):
                 metric_values_integ[label].append(val)
+
+        if connectivity_col:
+            try:
+                conn_val = float(row.get(connectivity_col, ""))
+            except (TypeError, ValueError):
+                conn_val = None
+            if conn_val is not None and math.isfinite(conn_val):
+                raw_connectivity = conn_val
+                metric_values_conn_raw.append(conn_val)
+
+        if control_col:
+            try:
+                control_val = float(row.get(control_col, ""))
+            except (TypeError, ValueError):
+                control_val = None
+            if control_val is not None and math.isfinite(control_val):
+                raw_control = control_val
+                metric_values_control_raw.append(control_val)
+
+        if depth_col:
+            try:
+                depth_val = float(row.get(depth_col, ""))
+            except (TypeError, ValueError):
+                depth_val = None
+            if depth_val is not None and math.isfinite(depth_val):
+                raw_depth = depth_val
+                metric_values_depth_raw.append(depth_val)
 
         key1 = (_safe_round(x1, 7), _safe_round(y1, 7))
         key2 = (_safe_round(x2, 7), _safe_round(y2, 7))
@@ -992,17 +1202,81 @@ def analyze_road_syntax(
                 "length_m": length_m,
                 "raw_choice": raw_choice,
                 "raw_integration": raw_integration,
+                "raw_connectivity": raw_connectivity,
+                "raw_control": raw_control,
+                "raw_depth": raw_depth,
             }
         )
 
     if not parsed_edges:
         return _empty_result(mode, coord_type="gcj02", radii_m=local_radii, metric=render_metric)
 
+    # Control can be missing or mapped to an almost-constant column in some depthmap exports.
+    # In that case we fall back to a topology-derived control proxy so rendering does not collapse.
+    def _build_topology_control_values() -> Tuple[List[float], Dict[Tuple[float, float], float]]:
+        deg_by_node = {key: len(neighbors) for key, neighbors in neighbor_sets.items()}
+        control_by_node: Dict[Tuple[float, float], float] = {}
+        for key, neighbors in neighbor_sets.items():
+            control_val = 0.0
+            for nb in neighbors:
+                nb_deg = int(deg_by_node.get(nb, 0))
+                if nb_deg > 0:
+                    control_val += 1.0 / float(nb_deg)
+            control_by_node[key] = control_val
+        edge_values: List[float] = []
+        for item in parsed_edges:
+            c1 = control_by_node.get(item["key1"])
+            c2 = control_by_node.get(item["key2"])
+            finite_vals = [float(v) for v in (c1, c2) if v is not None and math.isfinite(float(v))]
+            if not finite_vals:
+                item["raw_control_topology"] = None
+                continue
+            value = sum(finite_vals) / float(len(finite_vals))
+            item["raw_control_topology"] = value
+            edge_values.append(value)
+        return edge_values, control_by_node
+
+    control_values_from_depthmap = list(metric_values_control_raw)
+    control_col_source = str(control_col or "")
+    control_topology_values, _ = _build_topology_control_values()
+    control_depthmap_spread = 0.0
+    if control_values_from_depthmap:
+        control_depthmap_spread = float(max(control_values_from_depthmap) - min(control_values_from_depthmap))
+    use_topology_control_fallback = (
+        (not control_values_from_depthmap)
+        or (control_depthmap_spread <= 1e-12 and len(control_topology_values) > 0)
+    )
+    if use_topology_control_fallback and control_topology_values:
+        logger.warning(
+            "[road-syntax] control fallback activated source=%s depthmap_valid=%d depthmap_spread=%.6g topology_valid=%d",
+            str(control_col or ""),
+            len(control_values_from_depthmap),
+            control_depthmap_spread,
+            len(control_topology_values),
+        )
+        metric_values_control_raw = control_topology_values
+        control_col_source = "topology_fallback"
+        for item in parsed_edges:
+            raw_topology = item.get("raw_control_topology")
+            item["raw_control"] = raw_topology if raw_topology is not None else item.get("raw_control")
+
     choice_bounds = _metric_bounds(metric_values_choice)
     integ_bounds = _metric_bounds(metric_values_integ)
+    conn_bounds: Optional[Tuple[float, float]] = None
+    if metric_values_conn_raw:
+        conn_bounds = (min(metric_values_conn_raw), max(metric_values_conn_raw))
+    control_bounds: Optional[Tuple[float, float]] = None
+    if metric_values_control_raw:
+        control_bounds = (min(metric_values_control_raw), max(metric_values_control_raw))
+    depth_bounds: Optional[Tuple[float, float]] = None
+    if metric_values_depth_raw:
+        depth_bounds = (min(metric_values_depth_raw), max(metric_values_depth_raw))
 
     global_choice_values: List[float] = []
     global_integ_values: List[float] = []
+    global_conn_values_raw: List[float] = []
+    global_control_values: List[float] = []
+    global_depth_values: List[float] = []
     local_choice_values: Dict[str, List[float]] = {label: [] for label in local_labels}
     local_integ_values: Dict[str, List[float]] = {label: [] for label in local_labels}
     node_integ_sum: Dict[Tuple[float, float], float] = {}
@@ -1025,6 +1299,22 @@ def analyze_road_syntax(
 
         default_choice = choice_by_label.get(default_radius_label, choice_by_label.get("global", 0.0))
         default_integ = integ_by_label.get(default_radius_label, integ_by_label.get("global", 0.0))
+        raw_connectivity = item.get("raw_connectivity")
+        connectivity_score = _norm(raw_connectivity, conn_bounds)
+        raw_control = item.get("raw_control")
+        control_score: Optional[float] = None
+        if raw_control is not None and control_bounds is not None and math.isfinite(float(raw_control)):
+            control_score = _norm(float(raw_control), control_bounds)
+        raw_depth = item.get("raw_depth")
+        depth_score: Optional[float] = None
+        if raw_depth is not None and depth_bounds is not None and math.isfinite(float(raw_depth)):
+            depth_score = _norm(float(raw_depth), depth_bounds)
+        if raw_connectivity is not None and math.isfinite(float(raw_connectivity)):
+            global_conn_values_raw.append(float(raw_connectivity))
+        if control_score is not None:
+            global_control_values.append(float(control_score))
+        if depth_score is not None:
+            global_depth_values.append(float(depth_score))
 
         out1 = _to_output_coord(item["x1"], item["y1"], output_coord_type="gcj02")
         out2 = _to_output_coord(item["x2"], item["y2"], output_coord_type="gcj02")
@@ -1034,6 +1324,7 @@ def analyze_road_syntax(
             "choice_score": _safe_round(default_choice, 8),
             "integration_score": _safe_round(default_integ, 8),
             "accessibility_score": _safe_round(default_integ, 8),
+            "connectivity_score": _safe_round(connectivity_score, 8),
             "degree_score": 0.0,
             "intelligibility_score": 0.0,
             "choice_global": _safe_round(choice_by_label.get("global", 0.0), 8),
@@ -1049,6 +1340,12 @@ def analyze_road_syntax(
             props[f"choice_{label}"] = _safe_round(choice_by_label.get(label, 0.0), 8)
             props[f"integration_{label}"] = _safe_round(integ_by_label.get(label, 0.0), 8)
             props[f"accessibility_{label}"] = _safe_round(integ_by_label.get(label, 0.0), 8)
+        if control_score is not None:
+            props["control_score"] = _safe_round(control_score, 8)
+            props["control_global"] = _safe_round(control_score, 8)
+        if depth_score is not None:
+            props["depth_score"] = _safe_round(depth_score, 8)
+            props["depth_global"] = _safe_round(depth_score, 8)
 
         edge_integ_global = float(integ_by_label.get("global", 0.0))
         endpoint_keys = [item["key1"], item["key2"]]
@@ -1100,14 +1397,14 @@ def analyze_road_syntax(
 
     intelligibility_x: List[float] = []
     intelligibility_y: List[float] = []
-    for key, degree_value in degree_by_node.items():
-        if int(node_integ_cnt.get(key, 0)) <= 0:
+    for scored in scored_edges:
+        props = ((scored.get("feature") or {}).get("properties") or {})
+        connectivity_value = float(props.get("connectivity_score", 0.0))
+        integration_value = float(props.get("integration_global", 0.0))
+        if not (math.isfinite(connectivity_value) and math.isfinite(integration_value)):
             continue
-        integration_value = float(integ_global_by_node.get(key, 0.0))
-        if not (math.isfinite(degree_value) and math.isfinite(integration_value)):
-            continue
-        intelligibility_x.append(float(degree_value))
-        intelligibility_y.append(float(integration_value))
+        intelligibility_x.append(connectivity_value)
+        intelligibility_y.append(integration_value)
     intelligibility_corr = _pearson_corr(intelligibility_x, intelligibility_y)
     intelligibility_r2 = intelligibility_corr * intelligibility_corr
     reg_slope, reg_intercept = _linear_regression(intelligibility_x, intelligibility_y)
@@ -1147,14 +1444,16 @@ def analyze_road_syntax(
         key2 = scored.get("key2")
         degree_1 = float(degree_score_by_node.get(key1, 0.0))
         degree_2 = float(degree_score_by_node.get(key2, 0.0))
-        integ_1 = float(integ_global_by_node.get(key1, 0.0))
-        integ_2 = float(integ_global_by_node.get(key2, 0.0))
         degree_score = max(0.0, min(1.0, (degree_1 + degree_2) / 2.0))
-        accessibility_score = max(0.0, min(1.0, (integ_1 + integ_2) / 2.0))
-        intelligibility_score = math.sqrt(max(0.0, degree_score * accessibility_score))
         props = ((scored.get("feature") or {}).get("properties") or {})
+        connectivity_score = float(props.get("connectivity_score", degree_score))
+        if not math.isfinite(connectivity_score):
+            connectivity_score = degree_score
+        connectivity_score = max(0.0, min(1.0, connectivity_score))
+        props["connectivity_score"] = _safe_round(connectivity_score, 8)
         props["degree_score"] = _safe_round(degree_score, 8)
-        props["intelligibility_score"] = _safe_round(intelligibility_score, 8)
+        # Keep per-edge field for compatibility, but bind it to the global intelligibility result.
+        props["intelligibility_score"] = _safe_round(intelligibility_corr, 8)
 
         choice_rank = _percentile_rank(choice_sorted, _resolve_rank_metric(props, "choice"))
         integ_rank = _percentile_rank(integ_sorted, _resolve_rank_metric(props, "integration"))
@@ -1189,8 +1488,10 @@ def analyze_road_syntax(
             }
         )
 
-    scored_edges.sort(key=lambda item: float(item.get("metric", 0.0)), reverse=True)
-    max_features = max(100, int(max_edge_features))
+    if max_edge_features is None:
+        max_features = len(scored_edges)
+    else:
+        max_features = max(100, int(max_edge_features))
     features_out = [item["feature"] for item in scored_edges[:max_features]] if include_geojson else []
     pre_merge_feature_count = len(features_out)
     if include_geojson and merge_geojson_edges and len(features_out) >= 2:
@@ -1219,6 +1520,11 @@ def analyze_road_syntax(
 
     avg_choice_global = _avg(global_choice_values)
     avg_integration_global = _avg(global_integ_values)
+    avg_connectivity_value = _avg(global_conn_values_raw) if global_conn_values_raw else avg_degree
+    avg_control_value = _avg(global_control_values)
+    avg_depth_value = _avg(global_depth_values)
+    control_valid_count = len(metric_values_control_raw)
+    depth_valid_count = len(metric_values_depth_raw)
 
     avg_choice_by_radius: Dict[str, float] = {
         label: _avg(local_choice_values.get(label, []))
@@ -1232,6 +1538,61 @@ def analyze_road_syntax(
     avg_choice_local = avg_choice_by_radius.get(default_radius_label, avg_choice_global)
     avg_integration_local = avg_integration_by_radius.get(default_radius_label, avg_integration_global)
 
+    default_webgl_metric_field = str(arcgis_metric_field or "").strip()
+    if not default_webgl_metric_field:
+        default_webgl_metric_field = "integration_score" if render_metric == "integration" else "accessibility_score"
+    webgl_payload: Dict[str, Any] = {
+        "enabled": False,
+        "backend": "none",
+        "status": "disabled",
+        "metric_field": default_webgl_metric_field,
+        "coord_type": "gcj02",
+        "roads": {
+            "type": "FeatureCollection",
+            "features": [],
+            "count": 0,
+        },
+        "elapsed_ms": 0.0,
+    }
+    if use_arcgis_webgl and include_geojson and features_out:
+        bridge_started = time.perf_counter()
+        try:
+            arcgis_result = run_arcgis_road_syntax_webgl(
+                road_features=features_out,
+                metric_field=default_webgl_metric_field,
+                target_coord_type="gcj02",
+                arcgis_python_path=arcgis_python_path,
+                timeout_sec=int(max(5, int(arcgis_timeout_sec or 20))),
+            )
+            webgl_payload = {
+                "enabled": True,
+                "backend": "arcgis_bridge",
+                "status": str(arcgis_result.get("status") or "ok"),
+                "metric_field": str(arcgis_result.get("metric_field") or default_webgl_metric_field),
+                "coord_type": str(arcgis_result.get("coord_type") or "gcj02"),
+                "roads": arcgis_result.get("roads")
+                or {
+                    "type": "FeatureCollection",
+                    "features": [],
+                    "count": 0,
+                },
+                "elapsed_ms": _safe_round((time.perf_counter() - bridge_started) * 1000.0, 2),
+            }
+        except ArcGISRoadSyntaxBridgeError as exc:
+            webgl_payload = {
+                "enabled": False,
+                "backend": "arcgis_bridge",
+                "status": f"bridge_error: {exc}",
+                "metric_field": default_webgl_metric_field,
+                "coord_type": "gcj02",
+                "roads": {
+                    "type": "FeatureCollection",
+                    "features": [],
+                    "count": 0,
+                },
+                "elapsed_ms": _safe_round((time.perf_counter() - bridge_started) * 1000.0, 2),
+            }
+
     return {
         "summary": {
             "node_count": int(node_count),
@@ -1243,7 +1604,13 @@ def analyze_road_syntax(
             "avg_closeness": _safe_round(avg_integration_global, 8),
             "avg_choice": _safe_round(avg_choice_global, 8),
             "avg_accessibility_global": _safe_round(avg_integration_global, 8),
-            "avg_connectivity": _safe_round(avg_degree, 4),
+            "avg_connectivity": _safe_round(avg_connectivity_value, 8),
+            "avg_control": _safe_round(avg_control_value, 8),
+            "avg_depth": _safe_round(avg_depth_value, 8),
+            "control_source_column": str(control_col_source or ""),
+            "control_valid_count": int(control_valid_count),
+            "depth_source_column": str(depth_col or ""),
+            "depth_valid_count": int(depth_valid_count),
             "avg_intelligibility": _safe_round(intelligibility_corr, 8),
             "avg_intelligibility_r2": _safe_round(intelligibility_r2, 8),
             "avg_integration_global": _safe_round(avg_integration_global, 8),
@@ -1289,4 +1656,5 @@ def analyze_road_syntax(
                 "n": int(len(intelligibility_x)),
             },
         },
+        "webgl": webgl_payload,
     }

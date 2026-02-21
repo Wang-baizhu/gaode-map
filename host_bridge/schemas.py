@@ -50,3 +50,25 @@ class ArcGISH3ExportRequest(BaseModel):
     timeout_sec: int = Field(300, ge=30, le=3600)
     run_id: Optional[str] = None
     arcgis_python_path: Optional[str] = None
+
+
+class ArcGISRoadSyntaxWebGLRequest(BaseModel):
+    roads_features: List[Dict[str, Any]] = Field(default_factory=list)
+    metric_field: str = "accessibility_score"
+    target_coord_type: Literal["gcj02", "wgs84"] = "gcj02"
+    timeout_sec: int = Field(300, ge=5, le=3600)
+    run_id: Optional[str] = None
+    arcgis_python_path: Optional[str] = None
+
+
+class ArcGISRoadSyntaxWebGLResponse(BaseModel):
+    ok: bool = True
+    status: str = "ok"
+    metric_field: str = "accessibility_score"
+    coord_type: Literal["gcj02", "wgs84"] = "gcj02"
+    roads: Dict[str, Any] = Field(
+        default_factory=lambda: {"type": "FeatureCollection", "features": [], "count": 0}
+    )
+    elapsed_ms: float = 0.0
+    error: Optional[str] = None
+    trace_id: str

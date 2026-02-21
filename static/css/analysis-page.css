@@ -1232,6 +1232,49 @@ label {
     color: #92400e;
 }
 
+.map-recenter-btn {
+    position: absolute;
+    right: 14px;
+    bottom: 34px;
+    z-index: 1210;
+    width: 36px;
+    height: 36px;
+    border: 1px solid rgba(148, 163, 184, 0.45);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.94);
+    color: #1f2937;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+    backdrop-filter: blur(6px);
+    transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+
+.map-recenter-btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+    border-color: #90a4c4;
+    background: #ffffff;
+    box-shadow: 0 14px 28px rgba(15, 23, 42, 0.22);
+}
+
+.map-recenter-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    box-shadow: none;
+}
+
+.map-recenter-btn svg {
+    width: 18px;
+    height: 18px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
 .h3-export-check {
     display: flex;
     align-items: center;
@@ -1510,6 +1553,30 @@ label {
     max-height: none;
 }
 
+.wizard-step-step3 .panel-area-fill .panel.poi-panel {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    height: 100%;
+    overflow: hidden;
+}
+
+.wizard-step-step3 .panel-area-fill .panel.poi-panel #filtersContainer {
+    flex: 1 1 62%;
+    max-height: 64%;
+    min-height: 0;
+    overflow: auto;
+}
+
+.wizard-step-step3 .panel-area-fill .panel.poi-panel .poi-panel-header {
+    margin-bottom: 0;
+}
+
+.wizard-step-step3 .panel-area-fill .panel.poi-panel .legacy-filters-wrapper.modern-poi-tree {
+    max-height: none;
+    min-height: 0;
+}
+
 .legacy-filters-wrapper.modern-poi-tree .poi-group-card {
     margin: 0;
     border: 1px solid #e6e9ef;
@@ -1746,7 +1813,8 @@ label {
 }
 
 .poi-chart {
-    height: 220px;
+    height: auto;
+    min-height: 220px;
     margin-top: 12px;
     border: 1px solid #eee;
     border-radius: 12px;
@@ -1756,6 +1824,13 @@ label {
 .poi-panel-fill .poi-chart {
     margin-top: 0;
     flex-shrink: 0;
+}
+
+.wizard-step-step3 .panel-area-fill .panel.poi-panel .poi-chart {
+    margin-top: 10px;
+    flex: 0 1 34%;
+    min-height: 170px;
+    height: auto;
 }
 
 .panel-placeholder {
@@ -2039,6 +2114,14 @@ label {
         top: 54px;
         width: min(92vw, 320px);
         max-height: min(62vh, 420px);
+    }
+
+    .map-recenter-btn {
+        right: 10px;
+        bottom: 30px;
+        width: 34px;
+        height: 34px;
+        border-radius: 11px;
     }
 }
 

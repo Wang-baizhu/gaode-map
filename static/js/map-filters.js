@@ -5,6 +5,9 @@
         this.mapData = (config && config.mapData) || {};
         this.mapTypeConfig = (config && config.mapTypeConfig) || {};
         this.flatMode = (config && config.flatMode) || false;
+        this.autoFitView = (config && Object.prototype.hasOwnProperty.call(config, 'autoFitView'))
+            ? !!config.autoFitView
+            : true;
 
         this.filterGroups = [];
         this.typeCountMap = {};
@@ -17,6 +20,7 @@
         this.typeExpandState = {};
         this.typeToGroupMap = {};
         this.onFiltersChange = null;
+        this._applyFiltersToken = 0;
 
         this.poiTotalCountEl = document.getElementById('poiTotalCount');
         this.toggleAllPoiBtn = document.getElementById('toggleAllPoi');
@@ -29,7 +33,33 @@
         }.bind(this));
     }
 
+    FilterPanel.prototype.bindExclusiveClick = function (el, handler) {
+        if (!el || typeof handler !== 'function') return;
+        // Use onclick assignment to avoid accumulating listeners across panel re-inits.
+        el.onclick = handler;
+    };
+
+    FilterPanel.prototype.replaceNodeToDropLegacyListeners = function (el) {
+        if (!el || !el.parentNode) return el || null;
+        var cloned = el.cloneNode(true);
+        try {
+            el.parentNode.replaceChild(cloned, el);
+            return cloned;
+        } catch (_) {
+            return el;
+        }
+    };
+
+    FilterPanel.prototype.refreshGlobalControlRefs = function () {
+        this.poiTotalCountEl = document.getElementById('poiTotalCount');
+        this.toggleAllPoiBtn = this.replaceNodeToDropLegacyListeners(document.getElementById('toggleAllPoi'));
+        this.toggleNamesBtn = this.replaceNodeToDropLegacyListeners(document.getElementById('toggleNames'));
+        this.toggleAllBtn = this.replaceNodeToDropLegacyListeners(document.getElementById('toggleAll'));
+        this.toggleExpandAllBtn = this.replaceNodeToDropLegacyListeners(document.getElementById('toggleExpandAll'));
+    };
+
     FilterPanel.prototype.init = function () {
+        this.refreshGlobalControlRefs();
         this.buildFilters();
         Object.keys(this.groupExpandState).forEach(function (gid) {
             this.setGroupExpanded(gid, false);
@@ -609,20 +639,20 @@
         }
 
         if (this.toggleExpandAllBtn) {
-            this.toggleExpandAllBtn.addEventListener('click', function () {
+            this.bindExclusiveClick(this.toggleExpandAllBtn, function () {
                 self.toggleAllGroupExpand();
             });
         }
 
         if (this.toggleNamesBtn) {
-            this.toggleNamesBtn.addEventListener('click', function () {
+            this.bindExclusiveClick(this.toggleNamesBtn, function () {
                 var visible = self.markerManager.toggleLabels();
                 self.toggleNamesBtn.textContent = visible ? '隐藏名称' : '显示名称';
             });
         }
 
         if (this.toggleAllBtn) {
-            this.toggleAllBtn.addEventListener('click', function () {
+            this.bindExclusiveClick(this.toggleAllBtn, function () {
                 self.toggleAllTypes();
             });
         }
@@ -632,7 +662,7 @@
         }
 
         if (this.toggleAllPoiBtn) {
-            this.toggleAllPoiBtn.addEventListener('click', function () {
+            this.bindExclusiveClick(this.toggleAllPoiBtn, function () {
                 self.toggleAllTypes();
                 self.updateToggleAllPoiText();
             });
@@ -708,7 +738,7 @@
         if (!checkboxes.length) return;
         var allChecked = true;
         checkboxes.forEach(function (cb) {
-            if (!cb.checked) allChecked = false;
+            if (!cb.checked || cb.indeterminate) allChecked = false;
         });
         var desired = !allChecked;
         var changed = false;
@@ -756,12 +786,36 @@
     };
 
     FilterPanel.prototype.applyFilters = function () {
-        this.markerManager.applyFilters();
-        this.mapCore.updateFitView(this.markerManager.getVisibleMarkers());
-        this.updateTypeCountDisplay();
-        if (typeof this.onFiltersChange === 'function') {
-            this.onFiltersChange();
+        var self = this;
+        this._applyFiltersToken = Number(this._applyFiltersToken || 0) + 1;
+        var currentToken = this._applyFiltersToken;
+        var finalize = function (result) {
+            if (currentToken !== self._applyFiltersToken) {
+                return result || { ok: false, skipped: true, reason: 'stale_filter_finalize' };
+            }
+            var committed = !!(result && result.ok === true && !result.skipped);
+            if (self.autoFitView && committed && self.mapCore && typeof self.mapCore.updateFitView === 'function') {
+                self.mapCore.updateFitView(self.markerManager.getVisibleMarkers());
+            }
+            self.updateTypeCountDisplay();
+            if (committed && typeof self.onFiltersChange === 'function') {
+                self.onFiltersChange(result || null);
+            }
+            return result || { ok: true, reason: 'filter_finalize' };
+        };
+        var handle = this.markerManager.applyFilters();
+        if (handle && handle.promise && typeof handle.promise.then === 'function') {
+            return handle.promise.then(function (result) {
+                return finalize(result);
+            }).catch(function (err) {
+                return finalize({
+                    ok: false,
+                    reason: 'apply_filters_failed',
+                    error: err && err.message ? err.message : String(err)
+                });
+            });
         }
+        return Promise.resolve(finalize({ ok: true, reason: 'apply_filters_sync' }));
     };
 
     FilterPanel.prototype.updateTypeCountDisplay = function () {

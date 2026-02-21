@@ -9,7 +9,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .schemas import ArcGISH3AnalyzeRequest, ArcGISH3ExportRequest
+from .schemas import (
+    ArcGISH3AnalyzeRequest,
+    ArcGISH3ExportRequest,
+    ArcGISRoadSyntaxWebGLRequest,
+)
 
 
 class ArcGISRunnerError(RuntimeError):
@@ -216,10 +220,17 @@ def _render_preview_svg(rows: List[Dict[str, Any]], cells_map: Dict[str, Dict[st
 
 
 class ArcGISRunner:
-    def __init__(self, default_python_path: str, script_path: str, export_script_path: str = ""):
+    def __init__(
+        self,
+        default_python_path: str,
+        script_path: str,
+        export_script_path: str = "",
+        road_syntax_script_path: str = "",
+    ):
         self.default_python_path = str(default_python_path or "").strip()
         self.script_path = str(script_path or "").strip()
         self.export_script_path = str(export_script_path or "").strip()
+        self.road_syntax_script_path = str(road_syntax_script_path or "").strip()
         self.analyze_cache_ttl_sec = max(0, int(os.getenv("ARCGIS_ANALYZE_CACHE_TTL_SEC", "900") or 900))
         self.analyze_cache_max_entries = max(4, int(os.getenv("ARCGIS_ANALYZE_CACHE_MAX_ENTRIES", "32") or 32))
         self._analyze_cache: Dict[str, Dict[str, Any]] = {}
@@ -246,6 +257,14 @@ class ArcGISRunner:
             raise ArcGISRunnerError("ARCGIS_EXPORT_SCRIPT_PATH is empty")
         if not _path_exists_cross_platform(script_path):
             raise ArcGISRunnerError(f"ArcGIS export script not found: {script_path}")
+        return script_path
+
+    def _resolve_road_syntax_script_path(self) -> str:
+        script_path = str(self.road_syntax_script_path or "").strip()
+        if not script_path:
+            raise ArcGISRunnerError("ARCGIS_ROAD_SYNTAX_SCRIPT_PATH is empty")
+        if not _path_exists_cross_platform(script_path):
+            raise ArcGISRunnerError(f"ArcGIS road-syntax script not found: {script_path}")
         return script_path
 
     def _run_subprocess(self, cmd: List[str], timeout_sec: int) -> subprocess.CompletedProcess:
@@ -500,6 +519,68 @@ class ArcGISRunner:
                 "filename": output_name,
                 "content_type": "application/zip" if normalized_format == "arcgis_package" else "application/geopackage+sqlite3",
                 "content": content,
+                "stderr": proc.stderr.strip(),
+                "stdout": proc.stdout.strip(),
+            }
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    def run_road_syntax_webgl(self, req: ArcGISRoadSyntaxWebGLRequest, trace_id: str) -> Dict[str, Any]:
+        roads_features = list(req.roads_features or [])
+        if not roads_features:
+            raise ArcGISRunnerError("roads_features is empty")
+
+        python_path = self._resolve_python_path(req.arcgis_python_path)
+        script_path = self._resolve_road_syntax_script_path()
+        use_windows_path_args = _needs_windows_path_args(python_path)
+
+        payload = {
+            "roads_features": roads_features,
+            "metric_field": str(req.metric_field or "accessibility_score"),
+            "target_coord_type": str(req.target_coord_type or "gcj02"),
+        }
+
+        tmp_dir = tempfile.mkdtemp(prefix=f"arcgis_road_syntax_{trace_id}_")
+        started_at = time.perf_counter()
+        try:
+            input_path = Path(tmp_dir) / "input.json"
+            output_path = Path(tmp_dir) / "output.json"
+            input_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+            cmd = [
+                _to_executable_path(python_path),
+                _to_subprocess_path(script_path, use_windows_path_args),
+                "--input",
+                _to_subprocess_path(str(input_path), use_windows_path_args),
+                "--output",
+                _to_subprocess_path(str(output_path), use_windows_path_args),
+            ]
+
+            proc = self._run_subprocess(cmd, timeout_sec=int(req.timeout_sec))
+            if not output_path.exists():
+                raise ArcGISRunnerError("ArcGIS road-syntax output file missing")
+
+            output = json.loads(output_path.read_text(encoding="utf-8"))
+            if not bool(output.get("ok")):
+                raise ArcGISRunnerError(str(output.get("error") or "ArcGIS returned non-ok status"))
+
+            roads = output.get("roads") if isinstance(output.get("roads"), dict) else {}
+            features = roads.get("features") if isinstance(roads.get("features"), list) else []
+            normalized_roads = {
+                "type": "FeatureCollection",
+                "features": features,
+                "count": int(roads.get("count")) if isinstance(roads.get("count"), int) else len(features),
+            }
+            elapsed_ms = _safe_float(output.get("elapsed_ms"))
+            if elapsed_ms is None:
+                elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+
+            return {
+                "status": str(output.get("status") or "ok"),
+                "metric_field": str(output.get("metric_field") or payload["metric_field"]),
+                "coord_type": str(output.get("coord_type") or payload["target_coord_type"]),
+                "roads": normalized_roads,
+                "elapsed_ms": round(float(elapsed_ms), 2),
                 "stderr": proc.stderr.strip(),
                 "stdout": proc.stdout.strip(),
             }

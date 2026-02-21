@@ -21,11 +21,49 @@
         };
     }
 
+    function cloneStringArray(input) {
+        if (!Array.isArray(input)) return [];
+        return input
+            .map(function (v) { return typeof v === 'string' ? v : String(v || ''); })
+            .filter(function (v) { return v.length > 0; });
+    }
+
+    function buildMarkerDataSnapshot(point) {
+        var p = point && typeof point === 'object' ? point : {};
+        var lng = Number(p.lng);
+        var lat = Number(p.lat);
+        return {
+            _pid: p._pid ? String(p._pid) : '',
+            id: p.id === null || typeof p.id === 'undefined' ? '' : String(p.id),
+            name: p.name === null || typeof p.name === 'undefined' ? '' : String(p.name),
+            type: p.type === null || typeof p.type === 'undefined' ? '' : String(p.type),
+            address: p.address === null || typeof p.address === 'undefined' ? '' : String(p.address),
+            lines: cloneStringArray(p.lines),
+            distance: p.distance === null || typeof p.distance === 'undefined' ? '' : String(p.distance),
+            disabled: !!p.disabled,
+            lng: Number.isFinite(lng) ? lng : NaN,
+            lat: Number.isFinite(lat) ? lat : NaN,
+        };
+    }
+
+    function markRawMapObject(value) {
+        if (window.Vue && typeof window.Vue.markRaw === 'function') {
+            return window.Vue.markRaw(value);
+        }
+        return value;
+    }
+
     function MarkerManager(mapCore, config) {
         this.mapCore = mapCore;
         this.map = mapCore.map;
         this.mapData = (config && config.mapData) || {};
         this.mapTypeConfig = (config && config.mapTypeConfig) || {};
+        this.enqueueMapWrite = (config && typeof config.enqueueMapWrite === 'function')
+            ? config.enqueueMapWrite
+            : null;
+        this.isWriteAllowed = (config && typeof config.isWriteAllowed === 'function')
+            ? config.isWriteAllowed
+            : null;
 
         this.centerPoint = this.mapData.center || { lng: 0, lat: 0, name: '中心点', type: 'center' };
 
@@ -53,9 +91,125 @@
         this.clustererDegraded = false;
         this.clustererDegradeReason = '';
         this._clustererErrorCount = 0;
+        this._mapWriteToken = 0;
+        this._inMapWriteTask = false;
+        this._disposed = false;
 
         this.onMarkerClick = null;
     }
+
+    MarkerManager.prototype.dispose = function () {
+        this._disposed = true;
+        this._mapWriteToken = Number(this._mapWriteToken || 0) + 1;
+        try {
+            this.destroyClusterers({ immediate: true });
+        } catch (_) { }
+    };
+
+    MarkerManager.prototype.runMapWrite = function (fn, options) {
+        var self = this;
+        if (typeof fn !== 'function') {
+            return { accepted: false, promise: Promise.resolve({ ok: false, reason: 'invalid_fn' }) };
+        }
+        var opts = options && typeof options === 'object' ? options : {};
+        var key = typeof opts.key === 'string' && opts.key ? opts.key : 'write';
+        var replaceExisting = opts.replaceExisting !== false;
+        var guard = typeof opts.guard === 'function' ? opts.guard : null;
+        var meta = (opts.meta && typeof opts.meta === 'object') ? Object.assign({}, opts.meta) : {};
+        if (!meta.reason) meta.reason = 'marker_manager_write';
+        var evaluateGuard = function (taskMeta) {
+            if (typeof guard !== 'function') return { ok: true };
+            var guardMeta = taskMeta && typeof taskMeta === 'object' ? taskMeta : {};
+            try {
+                var allowed = !!guard(guardMeta);
+                if (!allowed) {
+                    return { ok: false, skipped: true, reason: 'guard_rejected' };
+                }
+                return { ok: true };
+            } catch (err) {
+                return {
+                    ok: false,
+                    skipped: true,
+                    reason: 'guard_error',
+                    error: err && err.message ? err.message : String(err)
+                };
+            }
+        };
+
+        var executeSafely = function (taskMeta) {
+            if (!self.canWriteToMap()) {
+                return { ok: false, skipped: true, reason: 'manager_disposed' };
+            }
+            var mergedMeta = Object.assign({}, meta, taskMeta || {});
+            var guardResult = evaluateGuard(mergedMeta);
+            if (!guardResult || guardResult.ok === false) {
+                return guardResult || { ok: false, skipped: true, reason: 'guard_rejected' };
+            }
+            self._inMapWriteTask = true;
+            try {
+                var value = fn(mergedMeta);
+                if (value === false) return { ok: false, value: value };
+                if (value && typeof value === 'object' && Object.prototype.hasOwnProperty.call(value, 'ok')) {
+                    return value;
+                }
+                return { ok: true, value: value };
+            } catch (err) {
+                return {
+                    ok: false,
+                    reason: 'marker_write_error',
+                    error: err && err.message ? err.message : String(err)
+                };
+            } finally {
+                self._inMapWriteTask = false;
+            }
+        };
+
+        if (!self.canWriteToMap()) {
+            return {
+                accepted: true,
+                promise: Promise.resolve({ ok: false, skipped: true, reason: 'manager_disposed' })
+            };
+        }
+        if (self._inMapWriteTask || typeof self.enqueueMapWrite !== 'function') {
+            return {
+                accepted: true,
+                promise: Promise.resolve(executeSafely(meta))
+            };
+        }
+        return self.enqueueMapWrite(function (taskMeta) {
+            return executeSafely(taskMeta);
+        }, {
+            key: 'poi:' + key,
+            replaceExisting: replaceExisting,
+            guard: guard,
+            meta: meta
+        });
+    };
+
+    MarkerManager.prototype.canWriteToMap = function () {
+        if (this._disposed) return false;
+        if (typeof this.isWriteAllowed !== 'function') return true;
+        try {
+            return !!this.isWriteAllowed();
+        } catch (_) {
+            return false;
+        }
+    };
+
+    MarkerManager.prototype.safeSetMap = function (overlay, targetMap) {
+        if (!overlay || typeof overlay.setMap !== 'function') return false;
+        if (targetMap && !this.canWriteToMap()) {
+            try { overlay.setMap(null); } catch (__){ }
+            return false;
+        }
+        try {
+            overlay.setMap(targetMap || null);
+            return true;
+        } catch (_) {
+            try { overlay.setMap(null); } catch (__){ }
+            return false;
+        }
+    };
 
     MarkerManager.prototype.init = function () {
         this.map = this.mapCore.map;
@@ -200,10 +354,11 @@
 
     MarkerManager.prototype.renderMarkers = function () {
         var self = this;
-        this.destroyClusterers();
+        if (this._disposed) return;
+        this.destroyClusterers({ immediate: true });
         this.markers.forEach(function (marker) {
-            marker.setMap(null);
-            marker.setLabel(null);
+            self.safeSetMap(marker, null);
+            try { marker.setLabel(null); } catch (_) { }
         });
         this.markers = [];
         this.markersByType = {};
@@ -237,15 +392,16 @@
         point.lng = normalized[0];
         point.lat = normalized[1];
         var isCenter = point.type === 'center';
-        var marker = new AMap.Marker({
+        var marker = markRawMapObject(new AMap.Marker({
             position: [normalized[0], normalized[1]],
             title: point.name,
             map: isCenter ? this.map : null,
             content: '<div class="marker-dot ' + MapUtils.getMarkerClass(point.type, this.markerClassMap) + '"></div>',
             offset: new AMap.Pixel(-8, -8)
-        });
+        }));
 
-        marker.__data = point;
+        marker.__pid = point && point._pid ? String(point._pid) : '';
+        marker.__data = buildMarkerDataSnapshot(point);
         this.markersByPid[point._pid] = marker;
         this.setMarkerLabel(marker);
 
@@ -264,14 +420,25 @@
     };
 
     MarkerManager.prototype.setMarkerLabel = function (marker) {
+        var data = marker && marker.__data ? marker.__data : {};
+        var title = data && data.name ? String(data.name) : '';
         if (this.labelsVisible) {
             marker.setLabel({
-                content: '<div class="marker-label">' + marker.__data.name + '</div>',
+                content: '<div class="marker-label">' + title + '</div>',
                 offset: new AMap.Pixel(0, -30)
             });
         } else {
             marker.setLabel(null);
         }
+    };
+
+    MarkerManager.prototype.resolveMarkerPoint = function (marker) {
+        if (!marker) return null;
+        var pid = marker.__pid ? String(marker.__pid) : '';
+        if (pid && this.pointsByPid && this.pointsByPid[pid]) {
+            return this.pointsByPid[pid];
+        }
+        return marker.__data || null;
     };
 
     MarkerManager.prototype.setLabelsVisible = function (visible) {
@@ -292,7 +459,7 @@
     };
 
     MarkerManager.prototype.openMarkerInfoWindow = function (marker) {
-        var point = marker.__data;
+        var point = this.resolveMarkerPoint(marker) || marker.__data || {};
         var typeLabel = this.getTypeLabel(point.type);
         if (point.type === 'center') {
             typeLabel = '中心点';
@@ -419,7 +586,7 @@
         var marker = this.markersByPid[pid];
         if (!marker) return;
         if (!marker.getMap()) {
-            marker.setMap(this.map);
+            this.safeSetMap(marker, this.map);
         }
         this.map.setCenter(marker.getPosition());
         if (this.map.getZoom && this.map.getZoom() < 15) {
@@ -430,20 +597,49 @@
         }
     };
 
-    MarkerManager.prototype.destroyClusterers = function () {
+    MarkerManager.prototype._destroyClusterersNow = function () {
         Object.keys(this.typeClusterers).forEach(function (key) {
             var clusterer = this.typeClusterers[key];
-            if (clusterer && typeof clusterer.setMap === 'function') {
-                clusterer.setMap(null);
-            }
+            if (!clusterer) return;
+            try {
+                if (typeof clusterer.setMap === 'function') {
+                    clusterer.setMap(null);
+                }
+            } catch (_) { }
+            try {
+                if (typeof clusterer.setMarkers === 'function') {
+                    clusterer.setMarkers([]);
+                } else if (typeof clusterer.clearMarkers === 'function') {
+                    clusterer.clearMarkers();
+                }
+            } catch (_) { }
         }, this);
         this.typeClusterers = {};
+    };
+
+    MarkerManager.prototype.destroyClusterers = function (options) {
+        var opts = options && typeof options === 'object' ? options : {};
+        if (this._disposed || opts.immediate || this._inMapWriteTask || typeof this.enqueueMapWrite !== 'function') {
+            this._destroyClusterersNow();
+            return;
+        }
+        this.runMapWrite(function () {
+            this._destroyClusterersNow();
+            return { ok: true };
+        }.bind(this), {
+            key: 'destroy_clusterers',
+            replaceExisting: true,
+            meta: { reason: 'destroy_clusterers' }
+        });
     };
 
     MarkerManager.prototype.createClusterRenderer = function (type) {
         var color = MapUtils.getTypeColor(type, this.mapTypeConfig);
         return function (context) {
-            var count = context.count;
+            var marker = context && context.marker ? context.marker : null;
+            if (!marker || typeof marker.setContent !== 'function') return;
+            var rawCount = Number(context && context.count);
+            var count = Number.isFinite(rawCount) && rawCount > 0 ? rawCount : 1;
             var size = Math.max(32, Math.min(50, 18 + count));
             var div = document.createElement('div');
             div.style.width = size + 'px';
@@ -458,9 +654,11 @@
             div.style.fontWeight = 'bold';
             div.style.boxShadow = '0 2px 6px rgba(0,0,0,0.25)';
             div.style.border = '2px solid #fff';
-            div.textContent = count;
-            context.marker.setContent(div);
-            context.marker.setOffset(new AMap.Pixel(-size / 2, -size / 2));
+            div.textContent = String(Math.round(count));
+            marker.setContent(div);
+            if (typeof marker.setOffset === 'function' && Number.isFinite(size)) {
+                marker.setOffset(new AMap.Pixel(-size / 2, -size / 2));
+            }
         };
     };
 
@@ -499,6 +697,7 @@
     };
 
     MarkerManager.prototype.sanitizeClusterMarkers = function (list, typeKey) {
+        var self = this;
         var out = [];
         var dropped = 0;
         var samples = [];
@@ -523,9 +722,7 @@
                 if (samples.length < 3) {
                     samples.push({ reason: 'position-invalid', idx: idx });
                 }
-                try {
-                    marker.setMap(null);
-                } catch (_) { }
+                self.safeSetMap(marker, null);
                 return;
             }
             if (typeof marker.getTitle === 'function' && typeof marker.setTitle === 'function') {
@@ -557,6 +754,7 @@
     };
 
     MarkerManager.prototype.logCoordinateHealth = function (reason, options) {
+        var self = this;
         var opts = options && typeof options === 'object' ? options : {};
         var force = !!opts.force;
         var sampleLimit = Math.max(1, Number(opts.sampleLimit) || 5);
@@ -574,7 +772,7 @@
         (this.markers || []).forEach(function (marker, idx) {
             if (!marker) return;
             total += 1;
-            var point = marker.__data || null;
+            var point = self.resolveMarkerPoint(marker) || marker.__data || null;
             var dataPair = normalizeLngLatPair(point);
             if (!dataPair) {
                 invalidDataCount += 1;
@@ -625,163 +823,277 @@
     };
 
     MarkerManager.prototype.applyFilters = function () {
+        if (!this.canWriteToMap()) {
+            return {
+                accepted: true,
+                promise: Promise.resolve({
+                    ok: false,
+                    skipped: true,
+                    reason: 'manager_disposed'
+                })
+            };
+        }
         var self = this;
+        var resolvedHandle = function (payload) {
+            var result = (payload && typeof payload === 'object')
+                ? Object.assign({}, payload)
+                : { ok: payload !== false, value: payload };
+            return {
+                accepted: true,
+                promise: Promise.resolve(result)
+            };
+        };
         var needCluster = this.showMarkers;
         if (needCluster && !this.mapCore.clusterPluginReady) {
-            this.mapCore.loadPlugins().then(function () {
-                self.applyFilters();
+            var loadThenApplyPromise = this.mapCore.loadPlugins().then(function () {
+                if (!self.canWriteToMap()) {
+                    return {
+                        ok: false,
+                        skipped: true,
+                        reason: 'manager_disposed'
+                    };
+                }
+                var nestedHandle = self.applyFilters();
+                if (nestedHandle && nestedHandle.promise && typeof nestedHandle.promise.then === 'function') {
+                    return nestedHandle.promise;
+                }
+                return { ok: true, reason: 'cluster_plugin_ready_sync' };
+            }).catch(function (err) {
+                return {
+                    ok: false,
+                    skipped: true,
+                    reason: 'cluster_plugin_load_failed',
+                    error: err && err.message ? err.message : String(err)
+                };
             });
-            return;
+            return {
+                accepted: true,
+                promise: Promise.resolve(loadThenApplyPromise).then(function (result) {
+                    return result && typeof result === 'object'
+                        ? result
+                        : { ok: result !== false, value: result };
+                })
+            };
         }
-
-        this.destroyClusterers();
-        this.lastVisibleMarkerPids.clear();
-        this.lastFilteredPoints = [];
-        this.markersByType = {};
-
-        this.markers.forEach(function (marker) {
-            var point = marker.__data;
-            if (!point) return;
-            var pos = (marker && typeof marker.getPosition === 'function') ? marker.getPosition() : null;
-            var posLng = pos && typeof pos.getLng === 'function' ? Number(pos.getLng()) : NaN;
-            var posLat = pos && typeof pos.getLat === 'function' ? Number(pos.getLat()) : NaN;
-            if (!Number.isFinite(posLng) || !Number.isFinite(posLat)) {
-                if (!self._invalidRuntimePositionWarned) {
-                    console.warn('[marker-manager] runtime marker position invalid; marker will be hidden', {
-                        sample: buildPointSample(point, -1)
-                    });
-                    self._invalidRuntimePositionWarned = true;
+        var applyToken = Number(this._mapWriteToken || 0) + 1;
+        this._mapWriteToken = applyToken;
+        var guardLatest = function () {
+            return self.canWriteToMap() && applyToken === self._mapWriteToken;
+        };
+        var applyNow = function () {
+            if (!guardLatest()) {
+                return { ok: false, skipped: true, reason: 'stale_apply_filters' };
+            }
+            this._destroyClusterersNow();
+            this.lastVisibleMarkerPids.clear();
+            this.lastFilteredPoints = [];
+            this.markersByType = {};
+            var aborted = false;
+            var markerList = Array.isArray(this.markers) ? this.markers : [];
+            for (var mi = 0; mi < markerList.length; mi += 1) {
+                if (!guardLatest()) {
+                    aborted = true;
+                    break;
                 }
-                try {
-                    marker.setMap(null);
-                    marker.setLabel(null);
-                } catch (_) { }
-                return;
-            }
-
-            var isActiveType = point.type === 'center' || self.activeTypes.has(point.type);
-            var isEnabled = self.isPointEnabled(point);
-            var withinRadius = true;
-            if (self.mapCore.mapMode === 'around' && self.mapCore.currentRadius && point.type !== 'center') {
-                withinRadius = MapUtils.isWithinRadius(point, self.mapCore.center, self.mapCore.currentRadius);
-            }
-            var withinPolygon = true;
-            if (self.spatialFilter) {
-                withinPolygon = self.spatialFilter(point);
-            }
-
-            var isVisible = isActiveType && isEnabled && withinRadius && withinPolygon;
-
-            if (isVisible) {
-                self.lastVisibleMarkerPids.add(point._pid);
-                if (point.type !== 'center') {
-                    self.lastFilteredPoints.push(point);
-                }
-            }
-
-            // Optimization: Only call setMap when state changes or for center point
-            if (point.type === 'center') {
-                if (!self.hideAllPoints && isVisible && !marker.getMap()) {
-                    marker.setMap(self.map);
-                    self.setMarkerLabel(marker);
-                } else if ((self.hideAllPoints || !isVisible) && marker.getMap()) {
-                    marker.setMap(null);
-                    marker.setLabel(null);
-                }
-                return;
-            }
-
-            // For POI markers, if not visible, ensure they are off the map.
-            // If visible, DON'T call setMap(map) here, let MarkerClusterer handle it.
-            if (!isVisible || !self.showMarkers || self.hideAllPoints) {
-                if (marker.getMap()) {
-                    marker.setMap(null);
-                }
-                marker.setLabel(null);
-            } else {
-                // Marker is visible and we want to show markers, it will be added to buckets
-                var list = self.markersByType[point.type] || [];
-                list.push(marker);
-                self.markersByType[point.type] = list;
-            }
-        });
-
-        if (!this.showMarkers) {
-            this.mapCore.updateCityCirclesVisibility(this.lastVisibleMarkerPids);
-            return;
-        }
-
-        var clusterMaxZoom = 17;
-        if (this.map.getMaxZoom) {
-            clusterMaxZoom = Math.max(3, this.map.getMaxZoom() - 1);
-        }
-
-        if (this.clustererDegraded) {
-            Object.keys(self.markersByType).forEach(function (typeKey) {
-                var list = self.sanitizeClusterMarkers(self.markersByType[typeKey], typeKey);
-                list.forEach(function (marker) {
-                    if (!marker) return;
-                    if (!marker.getMap()) {
-                        marker.setMap(self.map);
+                var marker = markerList[mi];
+                var point = self.resolveMarkerPoint(marker);
+                if (!point) continue;
+                var pos = (marker && typeof marker.getPosition === 'function') ? marker.getPosition() : null;
+                var posLng = pos && typeof pos.getLng === 'function' ? Number(pos.getLng()) : NaN;
+                var posLat = pos && typeof pos.getLat === 'function' ? Number(pos.getLat()) : NaN;
+                if (!Number.isFinite(posLng) || !Number.isFinite(posLat)) {
+                    if (!self._invalidRuntimePositionWarned) {
+                        console.warn('[marker-manager] runtime marker position invalid; marker will be hidden', {
+                            sample: buildPointSample(point, -1)
+                        });
+                        self._invalidRuntimePositionWarned = true;
                     }
-                    self.setMarkerLabel(marker);
-                });
-            });
-            this.mapCore.updateCityCirclesVisibility(this.lastVisibleMarkerPids);
-            return;
-        }
+                    self.safeSetMap(marker, null);
+                    try { marker.setLabel(null); } catch (_) { }
+                    continue;
+                }
 
-        Object.keys(self.markersByType).forEach(function (typeKey) {
-            var list = self.sanitizeClusterMarkers(self.markersByType[typeKey], typeKey);
-            var clusterer = self.typeClusterers[typeKey];
-            if (!list.length) return;
+                var isActiveType = point.type === 'center' || self.activeTypes.has(point.type);
+                var isEnabled = self.isPointEnabled(point);
+                var withinRadius = true;
+                if (self.mapCore.mapMode === 'around' && self.mapCore.currentRadius && point.type !== 'center') {
+                    withinRadius = MapUtils.isWithinRadius(point, self.mapCore.center, self.mapCore.currentRadius);
+                }
+                var withinPolygon = true;
+                if (self.spatialFilter) {
+                    withinPolygon = self.spatialFilter(point);
+                }
+                var isVisible = isActiveType && isEnabled && withinRadius && withinPolygon;
 
-            try {
-                if (clusterer) {
-                    clusterer.setMarkers(list);
+                if (isVisible) {
+                    self.lastVisibleMarkerPids.add(point._pid);
+                    if (point.type !== 'center') {
+                        self.lastFilteredPoints.push(point);
+                    }
+                }
+
+                if (point.type === 'center') {
+                    if (!self.hideAllPoints && isVisible && !marker.getMap()) {
+                        self.safeSetMap(marker, self.map);
+                        self.setMarkerLabel(marker);
+                    } else if ((self.hideAllPoints || !isVisible) && marker.getMap()) {
+                        self.safeSetMap(marker, null);
+                        try { marker.setLabel(null); } catch (_) { }
+                    }
+                    continue;
+                }
+
+                if (!isVisible || !self.showMarkers || self.hideAllPoints) {
+                    if (marker.getMap()) {
+                        self.safeSetMap(marker, null);
+                    }
+                    try { marker.setLabel(null); } catch (_) { }
                 } else {
-                    self.typeClusterers[typeKey] = new AMap.MarkerClusterer(self.map, list, {
-                        gridSize: 80,
-                        maxZoom: clusterMaxZoom,
-                        minClusterSize: 2,
-                        renderClusterMarker: self.getClusterRenderer(typeKey)
+                    var list = self.markersByType[point.type] || [];
+                    list.push(marker);
+                    self.markersByType[point.type] = list;
+                }
+            }
+            if (aborted || !guardLatest()) {
+                this._destroyClusterersNow();
+                this.lastVisibleMarkerPids.clear();
+                this.lastFilteredPoints = [];
+                this.markersByType = {};
+                this.mapCore.updateCityCirclesVisibility(this.lastVisibleMarkerPids);
+                return { ok: false, skipped: true, reason: 'stale_apply_filters_midflight' };
+            }
+
+            if (!this.showMarkers) {
+                this.mapCore.updateCityCirclesVisibility(this.lastVisibleMarkerPids);
+                return { ok: true, reason: 'markers_hidden' };
+            }
+
+            var clusterMaxZoom = 17;
+            if (this.map.getMaxZoom) {
+                clusterMaxZoom = Math.max(3, this.map.getMaxZoom() - 1);
+            }
+
+            if (this.clustererDegraded) {
+                Object.keys(self.markersByType).forEach(function (typeKey) {
+                    if (aborted || !guardLatest()) {
+                        aborted = true;
+                        return;
+                    }
+                    var list = self.sanitizeClusterMarkers(self.markersByType[typeKey], typeKey);
+                    list.forEach(function (marker) {
+                        if (!marker) return;
+                        if (!marker.getMap()) {
+                            self.safeSetMap(marker, self.map);
+                        }
+                        self.setMarkerLabel(marker);
+                    });
+                });
+                this.mapCore.updateCityCirclesVisibility(this.lastVisibleMarkerPids);
+                return { ok: true, reason: 'cluster_degraded' };
+            }
+
+            Object.keys(self.markersByType).forEach(function (typeKey) {
+                if (aborted || !guardLatest()) {
+                    aborted = true;
+                    return;
+                }
+                var list = self.sanitizeClusterMarkers(self.markersByType[typeKey], typeKey);
+                var clusterer = self.typeClusterers[typeKey];
+                if (!list.length) return;
+
+                try {
+                    if (!guardLatest()) {
+                        aborted = true;
+                        return;
+                    }
+                    if (clusterer) {
+                        clusterer.setMarkers(list);
+                    } else {
+                        self.typeClusterers[typeKey] = markRawMapObject(new AMap.MarkerClusterer(self.map, list, {
+                            gridSize: 80,
+                            maxZoom: clusterMaxZoom,
+                            minClusterSize: 2,
+                            renderClusterMarker: self.getClusterRenderer(typeKey)
+                        }));
+                    }
+                } catch (err) {
+                    self._clustererErrorCount += 1;
+                    self.clustererDegraded = true;
+                    self.clustererDegradeReason = err && err.message ? err.message : String(err);
+                    console.error('[marker-manager] clusterer failed, fallback to non-cluster mode', {
+                        type: typeKey,
+                        error_count: self._clustererErrorCount,
+                        reason: self.clustererDegradeReason
+                    });
+                    list.forEach(function (marker) {
+                        if (!marker) return;
+                        self.safeSetMap(marker, self.map);
+                        self.setMarkerLabel(marker);
                     });
                 }
-            } catch (err) {
-                self._clustererErrorCount += 1;
-                self.clustererDegraded = true;
-                self.clustererDegradeReason = err && err.message ? err.message : String(err);
-                console.error('[marker-manager] clusterer failed, fallback to non-cluster mode', {
-                    type: typeKey,
-                    error_count: self._clustererErrorCount,
-                    reason: self.clustererDegradeReason
-                });
-                list.forEach(function (marker) {
-                    if (!marker) return;
-                    try {
-                        marker.setMap(self.map);
-                        self.setMarkerLabel(marker);
-                    } catch (_) { }
-                });
+            });
+            if (aborted || !guardLatest()) {
+                this._destroyClusterersNow();
+                this.lastVisibleMarkerPids.clear();
+                this.lastFilteredPoints = [];
+                this.markersByType = {};
+                this.mapCore.updateCityCirclesVisibility(this.lastVisibleMarkerPids);
+                return { ok: false, skipped: true, reason: 'stale_apply_filters_midflight' };
             }
-        });
-        if (this.clustererDegraded) {
-            this.destroyClusterers();
-        }
+            if (this.clustererDegraded) {
+                this._destroyClusterersNow();
+            }
 
-        // Clear clusterers for types that are no longer active or have no points
-        Object.keys(this.typeClusterers).forEach(function (typeKey) {
-            if (!self.markersByType[typeKey] || self.markersByType[typeKey].length === 0) {
-                var c = self.typeClusterers[typeKey];
-                if (c) {
-                    c.clearMarkers();
-                    c.setMap(null);
-                    delete self.typeClusterers[typeKey];
+            Object.keys(this.typeClusterers).forEach(function (typeKey) {
+                if (aborted || !guardLatest()) {
+                    aborted = true;
+                    return;
                 }
+                if (!self.markersByType[typeKey] || self.markersByType[typeKey].length === 0) {
+                    var c = self.typeClusterers[typeKey];
+                    if (c) {
+                        try {
+                            if (typeof c.setMap === 'function') c.setMap(null);
+                        } catch (_) { }
+                        try {
+                            if (typeof c.setMarkers === 'function') {
+                                c.setMarkers([]);
+                            } else if (typeof c.clearMarkers === 'function') {
+                                c.clearMarkers();
+                            }
+                        } catch (_) { }
+                        delete self.typeClusterers[typeKey];
+                    }
+                }
+            });
+            if (aborted || !guardLatest()) {
+                this._destroyClusterersNow();
+                this.lastVisibleMarkerPids.clear();
+                this.lastFilteredPoints = [];
+                this.markersByType = {};
+                this.mapCore.updateCityCirclesVisibility(this.lastVisibleMarkerPids);
+                return { ok: false, skipped: true, reason: 'stale_apply_filters_midflight' };
+            }
+
+            this.mapCore.updateCityCirclesVisibility(this.lastVisibleMarkerPids);
+            return { ok: true };
+        };
+
+        var handle = this.runMapWrite(function () {
+            return applyNow.call(this);
+        }.bind(this), {
+            key: 'apply_filters',
+            replaceExisting: true,
+            guard: guardLatest,
+            meta: {
+                reason: 'apply_filters',
+                marker_count: Array.isArray(this.markers) ? this.markers.length : 0
             }
         });
-
-        this.mapCore.updateCityCirclesVisibility(this.lastVisibleMarkerPids);
+        if (handle && handle.promise && typeof handle.promise.then === 'function') {
+            return handle;
+        }
+        return resolvedHandle({ ok: true, reason: 'apply_filters_sync_fallback' });
     };
 
     MarkerManager.prototype.getVisibleMarkers = function () {
