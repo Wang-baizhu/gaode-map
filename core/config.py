@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(Path(__file__).resolve().parent.parent / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",  # 未声明的 env 变量忽略，不抛出校验错误
     )
@@ -33,6 +33,16 @@ class Settings(BaseSettings):
     static_dir: str = str(Path(__file__).resolve().parent.parent / "static")  # 静态资源根目录
     templates_dir: str = str(Path(__file__).resolve().parent.parent / "templates")  # Jinja模板目录
     template_name: str = "map_with_filters.html"  # 默认模板文件名
+    file_lifetime_hours: int = Field(
+        168,
+        validation_alias="FILE_LIFETIME_HOURS",
+        description="Generated file retention period in hours",
+    )
+    cleanup_interval_hours: int = Field(
+        24,
+        validation_alias="CLEANUP_INTERVAL_HOURS",
+        description="Background cleanup interval in hours",
+    )
     db_path: str = str(Path(__file__).resolve().parent.parent / "data" / "map.db")  # SQLite 数据文件路径
     db_url: Optional[str] = Field(None, validation_alias="DB_URL", description="数据库连接字符串")
 
@@ -56,6 +66,11 @@ class Settings(BaseSettings):
         "",
         validation_alias="AMAP_JS_SECURITY_CODE",
         description="高德 JS 安全码（若未开启可留空）",
+    )
+    tianditu_key: str = Field(
+        "",
+        validation_alias="TIANDITU_KEY",
+        description="天地图 Web 瓦片服务 Key（tk）",
     )
 
     # 本地历史数据查询服务配置
@@ -83,6 +98,60 @@ class Settings(BaseSettings):
         60,
         validation_alias="VALHALLA_TIMEOUT_S",
         description="Valhalla 请求超时时间（秒）",
+    )
+    overpass_endpoint: str = Field(
+        "http://overpass/api/interpreter",
+        validation_alias="OVERPASS_ENDPOINT",
+        description="Local Overpass API endpoint",
+    )
+
+    # ArcGIS HTTP bridge config
+    arcgis_bridge_enabled: bool = Field(
+        True,
+        validation_alias="ARCGIS_BRIDGE_ENABLED",
+        description="Whether ArcGIS HTTP bridge is enabled",
+    )
+    arcgis_bridge_base_url: str = Field(
+        "http://host.docker.internal:18081",
+        validation_alias="ARCGIS_BRIDGE_BASE_URL",
+        description="ArcGIS bridge base URL",
+    )
+    arcgis_bridge_token: str = Field(
+        "",
+        validation_alias="ARCGIS_BRIDGE_TOKEN",
+        description="Shared token used in X-ArcGIS-Token header",
+    )
+    arcgis_bridge_timeout_s: int = Field(
+        300,
+        validation_alias="ARCGIS_BRIDGE_TIMEOUT_S",
+        description="ArcGIS bridge request timeout in seconds",
+    )
+    arcgis_export_timeout_s: int = Field(
+        600,
+        validation_alias="ARCGIS_EXPORT_TIMEOUT_S",
+        description="ArcGIS export timeout in seconds",
+    )
+    arcgis_export_max_mb: int = Field(
+        512,
+        validation_alias="ARCGIS_EXPORT_MAX_MB",
+        description="Maximum export file size accepted from bridge (MB)",
+    )
+
+    # depthmapX CLI config
+    depthmapx_cli_path: str = Field(
+        "depthmapXcli",
+        validation_alias="DEPTHMAPX_CLI_PATH",
+        description="Executable path of depthmapXcli",
+    )
+    depthmapx_timeout_s: int = Field(
+        300,
+        validation_alias="DEPTHMAPX_TIMEOUT_S",
+        description="Timeout for one depthmapXcli command (seconds)",
+    )
+    depthmapx_tulip_bins: int = Field(
+        1024,
+        validation_alias="DEPTHMAPX_TULIP_BINS",
+        description="Tulip bins for segment tulip analysis (4-1024)",
     )
 
 

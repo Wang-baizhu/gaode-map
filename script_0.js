@@ -1,1126 +1,3 @@
-<!DOCTYPE html>
-<html>
-
-<head>
-    <meta charset="utf-8">
-    <title>高德地图空间分析</title>
-    <link rel="stylesheet" href="/static/css/map-common.css?v={{ static_version }}">
-    <link rel="stylesheet" href="/static/css/filter-panel.css?v={{ static_version }}">
-    <link rel="stylesheet" href="/static/css/analysis-page.css?v={{ static_version }}">
-</head>
-
-<body>
-    <!-- 立即显示的全局加载状态 -->
-    <div id="loading-overlay" class="page-loading-global">
-        <div class="spinner"></div>
-    </div>
-
-    <!-- Vue App 挂载点 -->
-    <div id="app" style="display: flex; width: 100%; height: 100%;" v-cloak>
-
-        <!-- Left Sidebar: Wizard Dashboard -->
-        <aside class="sidebar">
-            <div class="sidebar-header">
-                <div v-if="sidebarView === 'wizard'" class="step-header-nav" style="margin:0; width:100%;">
-                    <button v-if="step === 1" class="btn-text-back" @click="backToHome">← 返回主页</button>
-                </div>
-
-                <div v-if="sidebarView === 'history'" class="step-header-nav history-header-nav">
-                    <div class="history-header-slot left">
-                        <button class="btn-text-back"
-                            @click="isSelectionMode ? toggleSelectionMode(false) : backToHome()" style="margin:0;">
-                            {% raw %}{{ isSelectionMode ? '取消' : '← 返回主页' }}{% endraw %}
-                        </button>
-                    </div>
-                    <h3 class="history-header-title">历史记录</h3>
-                    <div class="history-header-slot right" style="display:flex; align-items:center; justify-content:flex-end; gap:8px;">
-                        <button v-if="!isSelectionMode" class="btn-text-back history-icon-btn"
-                            :class="{ 'is-loading': historyLoading }"
-                            @click="refreshHistoryList" :disabled="historyLoading" style="margin:0;"
-                            title="刷新历史记录" aria-label="刷新历史记录">
-                            <svg viewBox="0 0 24 24" aria-hidden="true">
-                                <path d="M20 5v5h-5"></path>
-                                <path d="M4 19v-5h5"></path>
-                                <path d="M6.2 8.2A8 8 0 0 1 18 10"></path>
-                                <path d="M17.8 15.8A8 8 0 0 1 6 14"></path>
-                            </svg>
-                        </button>
-                        <button class="btn-text-back" @click="toggleSelectionMode(!isSelectionMode)" style="margin:0;">
-                            {% raw %}{{ isSelectionMode ? '完成' : '管理' }}{% endraw %}
-                        </button>
-                    </div>
-                </div>
-            </div>
-
-            <div class="sidebar-content">
-
-                <!-- Start Screen -->
-                <div v-show="sidebarView === 'start'" class="home-menu">
-                    <div class="home-card" @click="confirmNavigation(() => resetAnalysis())">
-                        <div class="home-icon">
-                            <img src="/static/images/search.svg" alt="探索">
-                        </div>
-                        <div class="home-text">
-                            <h3>实时探索</h3>
-                            <p>Real-time Explore</p>
-                            <p style="margin-top:4px; color:#999;">基于高德实时数据分析</p>
-                        </div>
-                    </div>
-
-                    <div class="home-card"
-                        @click="confirmNavigation(() => openHistoryView())">
-                        <div class="home-icon">
-                            <img src="/static/images/history.svg" alt="档案">
-                        </div>
-                        <div class="home-text">
-                            <h3>本地档案</h3>
-                            <p>Local Archives</p>
-                            <p style="margin-top:4px; color:#999;">查看往期分析记录</p>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- History View -->
-                <div v-show="sidebarView === 'history'" class="history-list" style="padding-bottom: 80px;">
-                    <div v-if="historyLoading && historyList.length === 0">
-                        <div v-for="n in historySkeletonCount" :key="'history-skeleton-' + n" class="history-card history-skeleton-card">
-                            <div style="flex:1;">
-                                <div class="skeleton-line skeleton-line-title"></div>
-                                <div class="skeleton-line skeleton-line-meta"></div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div v-for="item in historyList" :key="item.id" class="history-card"
-                        @click="handleHistoryItemClick(item)"
-                        :class="{'selection-mode': isSelectionMode, 'selected': selectedHistoryIds.includes(item.id)}">
-
-                        <!-- Checkbox for Selection Mode -->
-                        <div v-if="isSelectionMode" class="checkbox-wrapper">
-                            <div class="custom-checkbox" :class="{checked: selectedHistoryIds.includes(item.id)}">
-                                <svg v-if="selectedHistoryIds.includes(item.id)" viewBox="0 0 24 24" fill="none"
-                                    stroke="currentColor" stroke-width="3">
-                                    <polyline points="20 6 9 17 4 12"></polyline>
-                                </svg>
-                            </div>
-                        </div>
-
-                        <div style="flex:1;">
-                            <div class="card-header">
-                                <span class="card-title">{% raw %}{{ formatHistoryTitle(item.description) }}{% endraw
-                                    %}</span>
-                            </div>
-                            <div class="card-meta">
-                                <div class="meta-row">
-                                    <span class="meta-tag mode-tag">
-                                        <span v-if="item.params && item.params.mode === 'driving'">
-                                            <img src="/static/images/driving.svg"> 驾车
-                                        </span>
-                                        <span v-else-if="item.params && item.params.mode === 'bicycling'">
-                                            <img src="/static/images/cycling.svg"> 骑行
-                                        </span>
-                                        <span v-else>
-                                            <img src="/static/images/walking.svg"> 步行
-                                        </span>
-                                    </span>
-                                    <span v-if="item.params && item.params.time_min" class="meta-tag time-tag">
-                                        <img src="/static/images/time.svg"> {% raw %}{{ item.params.time_min }}{% endraw
-                                        %}分
-                                    </span>
-                                </div>
-                                <span class="meta-date">
-                                    {% raw %}{{ item._createdDateText || item.created_at }}{% endraw %}
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Batch Delete Footer -->
-                    <div v-if="isSelectionMode"
-                        style="position:fixed; bottom:0; left:0; width:var(--sidebar-width); background:#fff; padding:15px; border-top:1px solid #eee; box-shadow:0 -2px 10px rgba(0,0,0,0.05); z-index:100; box-sizing:border-box; display:flex; gap:10px;">
-                        <button class="btn-black" :disabled="selectedHistoryIds.length === 0"
-                            @click="deleteSelectedHistory" style="background: #ff4d4f; border:none; width:100%;">
-                            删除选中 ({% raw %}{{ selectedHistoryIds.length }}{% endraw %})
-                        </button>
-                    </div>
-
-                    <div v-if="!historyLoading && historyList.length === 0"
-                        style="text-align:center; padding:40px 20px; color:#999; display:flex; flex-direction:column; align-items:center;">
-                        <img src="/static/images/empty.svg"
-                            style="width:48px; height:48px; opacity:0.3; margin-bottom:10px;">
-                        <span>暂无历史记录</span>
-                    </div>
-                </div>
-
-                <!-- Wizard View Wrapper -->
-                <div v-show="sidebarView === 'wizard'" style="display:contents;">
-
-                    <!-- Step 1: Location & Analysis -->
-                    <div v-show="step === 1" class="wizard-step">
-                        <div class="step-title">
-                            <h3>1. 地点与范围</h3>
-                        </div>
-
-                        <div class="form-group search-group">
-                            <input type="text" id="keyword" class="minimal-input" placeholder="搜索地点..."
-                                @keyup.enter="triggerSearch">
-                            <button class="btn-icon" @click="triggerSearch">
-                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                    stroke-width="2">
-                                    <circle cx="11" cy="11" r="8"></circle>
-                                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-                                </svg>
-                            </button>
-                        </div>
-
-                        <div class="form-group">
-                            <div v-if="selectedPoint" class="status-badge success">
-                                已选: {% raw %}{{ selectedPoint.lng.toFixed(4) }}, {{ selectedPoint.lat.toFixed(4) }}{%
-                                endraw
-                                %}
-                            </div>
-                            <div v-else class="status-badge warning">请在地图上点击或搜索选择起点</div>
-                        </div>
-
-                        <div class="form-group">
-                            <label>出行方式</label>
-                            <div class="mode-select">
-                                <div class="mode-select">
-                                    <div class="mode-option" :class="{active: transportMode==='walking'}"
-                                        @click="transportMode='walking'">步行 <img src="/static/images/walking.svg"></div>
-                                    <div class="mode-option" :class="{active: transportMode==='bicycling'}"
-                                        @click="transportMode='bicycling'">骑行 <img src="/static/images/cycling.svg">
-                                    </div>
-                                    <div class="mode-option" :class="{active: transportMode==='driving'}"
-                                        @click="transportMode='driving'">驾车 <img src="/static/images/driving.svg"></div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="form-group">
-                            <label>时间范围: {% raw %}{{ timeHorizon }}{% endraw %} 分钟</label>
-                            <input type="range" v-model.number="timeHorizon" class="minimal-range" min="5" max="60"
-                                step="5">
-                        </div>
-                        <div class="form-group" style="display:flex; align-items:center; gap:8px;">
-                            <label style="margin:0;">底图源</label>
-                            <select v-model="basemapSource" @change="onBasemapSourceChange"
-                                class="minimal-input" style="padding:4px 8px; max-width:180px;">
-                                <option value="tianditu">天地图（国内科研）</option>
-                                <option value="osm">OpenStreetMap（科研）</option>
-                                <option value="amap">高德（业务）</option>
-                            </select>
-                        </div>
-
-
-                        <button class="btn-black" :disabled="!selectedPoint || isCalculating" @click="startAnalysis">
-                            {% raw %}{{ isCalculating ? '计算中...' : '下一步: 生成等时圈' }}{% endraw %}
-                        </button>
-                        <div v-if="errorMessage" class="error-msg">{% raw %}{{ errorMessage }}{% endraw %}</div>
-                        <div v-if="basemapSource === 'tianditu' && tdtDiag && tdtDiag.ok === false"
-                            style="margin-top:10px; padding:10px; border:1px solid #f1b0b7; border-radius:8px; background:#fff7f7;">
-                            <div style="font-size:12px; font-weight:600; color:#9f1239; margin-bottom:6px;">天地图诊断信息</div>
-                            <div style="font-size:11px; color:#6b7280; line-height:1.5; margin-bottom:6px;">
-                                {% raw %}阶段={{ tdtDiag.phase || '-' }}；状态={{ tdtDiag.status === null || tdtDiag.status === undefined ? '-' : tdtDiag.status }}；内容类型={{ tdtDiag.contentType || '-' }}{% endraw %}
-                            </div>
-                            <pre
-                                style="margin:0; max-height:120px; overflow:auto; white-space:pre-wrap; word-break:break-all; font-size:11px; line-height:1.45; color:#4b5563; background:#fff; border:1px solid #e5e7eb; border-radius:6px; padding:8px;">{% raw %}{{ buildTdtDiagText() }}{% endraw %}</pre>
-                            <div style="display:flex; align-items:center; gap:8px; margin-top:8px;">
-                                <button type="button" class="btn-outline" style="margin-top:0; padding:6px 12px; width:auto;"
-                                    @click="copyTdtDiag">
-                                    复制诊断
-                                </button>
-                                <span style="font-size:11px; color:#6b7280;">{% raw %}{{ tdtDiagCopyStatus }}{% endraw %}</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Step 2: POI Categories -->
-                    <div v-show="step === 2" class="wizard-step">
-                        <div class="step-header-nav">
-                            <button class="btn-text-back" @click="goToStep(1)">← 返回</button>
-                            <h3>2. 选择业态</h3>
-                        </div>
-                        <p class="step-desc">选择需要在等时圈内抓取的设施类型</p>
-
-                        <div class="category-grid">
-                            <div v-for="cat in poiCategories" :key="cat.id" class="cat-card" :class="{checked: cat.checked}">
-                                <div class="cat-color" :style="{background: cat.color}"></div>
-                                <div class="cat-texts">
-                                    <div class="cat-header-row">
-                                        <label class="cat-check" @click.stop>
-                                            <input type="checkbox" :checked="cat.checked"
-                                                @change="togglePoiCategory(cat, $event.target.checked)">
-                                            <span class="cat-name">{% raw %}{{ cat.name }}{% endraw %}</span>
-                                        </label>
-                                        <button v-if="getPoiSubItems(cat.id).length" type="button" class="cat-expand-btn"
-                                            @click.stop="togglePoiCategoryExpand(cat.id)">
-                                            {% raw %}{{ expandedPoiCategoryId === cat.id ? '收起' : '展开' }}{% endraw %}
-                                        </button>
-                                    </div>
-                                    <div class="cat-subtypes" v-if="getPoiSubItems(cat.id).length">
-                                        已选 {% raw %}{{ getPoiSubSelectedCount(cat.id) }}{% endraw %}/{% raw %}{{ getPoiSubItems(cat.id).length }}{% endraw %} 个小类
-                                    </div>
-                                    <div class="cat-subitem-list" v-show="expandedPoiCategoryId === cat.id"
-                                        v-if="getPoiSubItems(cat.id).length">
-                                        <label v-for="item in getPoiSubItems(cat.id)" :key="`step2-sub-${cat.id}-${item.id}`"
-                                            class="cat-subitem" @click.stop>
-                                            <input type="checkbox" :checked="isPoiSubItemChecked(item.id)"
-                                                @change="onPoiSubItemToggle(cat, item, $event.target.checked)">
-                                            <span>{% raw %}{{ item.label }}{% endraw %}</span>
-                                        </label>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <button class="btn-black" :disabled="isFetchingPois" @click="fetchPois">
-                            {% raw %}{{ isFetchingPois ? '数据抓取中 ' + fetchProgress + '%' : '下一步: 抓取数据' }}{% endraw %}
-                        </button>
-
-                        <div v-if="isFetchingPois"
-                            style="margin-top:10px; background:#f0f0f0; height:6px; border-radius:3px; overflow:hidden;">
-                            <div
-                                :style="{width: fetchProgress + '%', background:'#000', height:'100%', transition:'width 0.3s ease'}">
-                            </div>
-                        </div>
-                        <div v-if="isFetchingPois && fetchSubtypeProgress.categoryName" class="fetch-subtype-progress">
-                            <div class="line">
-                                <span class="label">当前大类：</span>
-                                <span>{% raw %}{{ fetchSubtypeProgress.categoryName }}{% endraw %}</span>
-                            </div>
-                            <div class="line">
-                                <span class="label">已命中小类：</span>
-                                <template v-if="fetchSubtypeProgress.typeNamesPreview.length">
-                                    <span>{% raw %}{{ fetchSubtypeProgress.typeNamesPreview.join('、') }}{% endraw %}</span>
-                                    <span v-if="fetchSubtypeProgress.hiddenTypeCount > 0">
-                                        {% raw %} 等{{ fetchSubtypeProgress.typeNamesFullCount }}个小类{% endraw %}
-                                    </span>
-                                </template>
-                                <template v-else>
-                                    <span>暂无</span>
-                                </template>
-                            </div>
-                        </div>
-
-                        <div v-if="poiStatus" class="status-text">{% raw %}{{ poiStatus }}{% endraw %}</div>
-                    </div>
-
-                    <!-- Step 3: Results & Filter -->
-                    <div v-show="step === 3" class="wizard-step wizard-step-step3">
-                        <div class="step-header-nav">
-                            <h3>3. 结果分析</h3>
-                        </div>
-
-                        <div class="step3-layout">
-                            <div class="nav-rail">
-                                <div v-for="(item, index) in step3NavItems" :key="item.id" class="nav-item" :class="{
-                                        active: activeStep3Panel === item.id,
-                                        dragging: dragIndex === index,
-                                        'insert-before': isDraggingNav && dragOverIndex === index && dragInsertPosition === 'before',
-                                        'insert-after': isDraggingNav && dragOverIndex === index && dragInsertPosition === 'after'
-                                    }" :title="item.title" draggable="true" @click="selectStep3Panel(item.id)"
-                                    @dragstart="onStep3DragStart(index, $event)"
-                                    @dragover="onStep3DragOver(index, $event)" @drop="onStep3Drop(index)"
-                                    @dragend="onStep3DragEnd">
-                                    {% raw %}{{ item.label }}{% endraw %}
-                                </div>
-                            </div>
-
-                            <div class="panel-area panel-area-fill">
-                                <div class="panel poi-panel" v-show="activeStep3Panel === 'poi'">
-                                    <div class="poi-panel-header">
-                                        <h4>POI 分类</h4>
-                                        <div class="poi-panel-actions">
-                                            <span id="poiTotalCount" class="count-badge">总数 0</span>
-                                            <button id="toggleAllPoi" type="button"
-                                                class="btn-outline btn-compact">全部隐藏</button>
-                                            <button id="toggleExpandAll" class="btn-outline btn-compact">全部展开</button>
-                                        </div>
-                                    </div>
-                                    <div id="filtersContainer" class="legacy-filters-wrapper"></div>
-                                    <div id="poiChart" class="poi-chart"></div>
-                                </div>
-
-                                <div class="panel" v-show="activeStep3Panel === 'h3'">
-                                    <div class="h3-subtabs h3-stage-tabs">
-                                        <button type="button" class="h3-subtab-pill h3-stage-pill"
-                                            :class="{ active: h3MainStage === 'params' }"
-                                            @click="onH3MainStageChange('params')">参数</button>
-                                        <button type="button" class="h3-subtab-pill h3-stage-pill"
-                                            :class="{ active: h3MainStage === 'analysis' }"
-                                            @click="onH3MainStageChange('analysis')">分析</button>
-                                        <button type="button" class="h3-subtab-pill h3-stage-pill"
-                                            :class="{ active: h3MainStage === 'diagnosis' }"
-                                            @click="onH3MainStageChange('diagnosis')">诊断</button>
-                                        <button type="button" class="h3-subtab-pill h3-stage-pill"
-                                            :class="{ active: h3MainStage === 'evaluate' }"
-                                            @click="onH3MainStageChange('evaluate')">评估</button>
-                                    </div>
-                                    <div v-if="h3MainStage === 'params'" class="h3-params-card">
-                                        <div class="h3-params-grid">
-                                            <label class="h3-params-field">
-                                                <span class="h3-params-label">网格级别</span>
-                                                <select v-model.number="h3GridResolution" @change="onH3ResolutionChange" class="h3-params-select">
-                                                    <option :value="8">8</option>
-                                                    <option :value="9">9</option>
-                                                    <option :value="10">10</option>
-                                                    <option :value="11">11</option>
-                                                </select>
-                                            </label>
-                                            <label class="h3-params-field">
-                                                <span class="h3-params-label">邻域圈层</span>
-                                                <select v-model.number="h3NeighborRing" class="h3-params-select">
-                                                    <option :value="1">ring=1</option>
-                                                    <option :value="2">ring=2</option>
-                                                    <option :value="3">ring=3</option>
-                                                </select>
-                                            </label>
-                                            <label class="h3-params-field h3-params-field-wide">
-                                                <span class="h3-params-label">包含模式</span>
-                                                <select v-model="h3GridIncludeMode" @change="onH3GridSettingsChange" class="h3-params-select">
-                                                    <option value="intersects">相交优先（边缘保留）</option>
-                                                    <option value="inside">完全包含（严格）</option>
-                                                </select>
-                                            </label>
-                                            <div class="h3-params-field h3-params-field-wide">
-                                                <span class="h3-params-label">最小重叠比例</span>
-                                                <div class="h3-params-range-row">
-                                                    <input type="range" min="0" max="0.9" step="0.05"
-                                                        v-model.number="h3GridMinOverlapRatio" @change="onH3GridSettingsChange"
-                                                        class="minimal-range h3-params-range">
-                                                    <span class="range-value">{% raw %}{{ h3GridMinOverlapRatio.toFixed(2) }}{% endraw %}</span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div class="h3-params-chips">
-                                            <span class="count-badge">网格数 {% raw %}{{ h3GridCount }}{% endraw %}</span>
-                                        </div>
-                                        <div class="h3-params-actions">
-                                            <button class="h3-btn h3-btn-ghost"
-                                                :disabled="h3GridCount === 0" @click="clearH3Grid">
-                                                清空网络
-                                            </button>
-                                            <button class="h3-btn h3-btn-primary h3-params-compute-btn"
-                                                :disabled="isComputingH3Analysis || isGeneratingH3ArcgisSnapshot || !lastIsochroneGeoJSON"
-                                                @click="computeH3Analysis">
-                                                {% raw %}{{ isComputingH3Analysis ? '分析中...' : '计算分析' }}{% endraw %}
-                                            </button>
-                                        </div>
-                                    </div>
-                                    <div class="h3-subtabs"
-                                        v-if="h3MainStage !== 'params' && h3AnalysisGridFeatures.length > 0 && getH3CurrentStageTabs().length > 1"
-                                        style="margin-top:6px; grid-template-columns: repeat(2, minmax(0, 1fr));">
-                                        <button type="button" class="h3-subtab-pill"
-                                            v-for="tab in getH3CurrentStageTabs()"
-                                            :key="`h3-subtab-${tab}`"
-                                            :class="{ active: h3SubTab === tab }"
-                                            @click="onH3SubTabChange(tab)">
-                                            {% raw %}{{ h3SubTabLabels[tab] || tab }}{% endraw %}
-                                        </button>
-                                    </div>
-                                    <div class="filter-section"
-                                        v-if="h3AnalysisGridFeatures.length > 0 && h3MainStage === 'analysis' && h3SubTab === 'metric_map'"
-                                        style="margin-top:8px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-                                        <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#666;">
-                                            地图指标
-                                            <select v-model="h3MetricView" @change="onH3MetricViewChange"
-                                                style="padding:4px 6px; border:1px solid #ddd; border-radius:6px; font-size:12px;">
-                                                <option value="density">密度</option>
-                                                <option value="entropy">局部熵</option>
-                                                <option value="neighbor_delta">邻域差值（本格-邻域）</option>
-                                            </select>
-                                        </label>
-                                    </div>
-                                    <div class="filter-section"
-                                        v-if="h3AnalysisGridFeatures.length > 0 && h3MainStage === 'analysis' && h3SubTab === 'structure_map'"
-                                        style="margin-top:8px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-                                        <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#666;">
-                                            结构图层
-                                            <select v-model="h3StructureFillMode" @change="onH3StructureFillModeChange"
-                                                style="padding:4px 6px; border:1px solid #ddd; border-radius:6px; font-size:12px;">
-                                                <option value="gi_z">Gi*（Z-score 连续）</option>
-                                                <option value="lisa_i">LISA（LMiIndex 连续）</option>
-                                            </select>
-                                        </label>
-                                    </div>
-                                    <div class="filter-section h3-control-row h3-control-row-tight"
-                                        v-if="h3AnalysisGridFeatures.length > 0 && (h3MainStage === 'diagnosis' || h3MainStage === 'evaluate')"
-                                        style="margin-top:8px;">
-                                        <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#666;">
-                                            TopN
-                                            <input type="number" min="3" max="30" step="1"
-                                                v-model.number="h3DecisionTopN" @change="onH3DecisionSettingsChange"
-                                                style="width:68px; padding:4px 6px; border:1px solid #ddd; border-radius:6px; font-size:12px;">
-                                        </label>
-                                        <label v-if="h3SubTab === 'lq' || h3SubTab === 'gap'"
-                                            style="display:flex; align-items:center; gap:6px; font-size:12px; color:#666;">
-                                            目标业态
-                                            <select v-model="h3TargetCategory" @change="onH3DecisionSettingsChange"
-                                                style="padding:4px 6px; border:1px solid #ddd; border-radius:6px; font-size:12px;">
-                                                <option v-for="item in h3CategoryMeta" :key="`target-${item.key}`" :value="item.key">
-                                                    {% raw %}{{ item.label }}{% endraw %}
-                                                </option>
-                                            </select>
-                                        </label>
-                                        <label class="h3-check-chip h3-check-chip-compact">
-                                            <input type="checkbox" v-model="h3OnlySignificant" @change="onH3DecisionSettingsChange">
-                                            仅结构网格
-                                        </label>
-                                    </div>
-                                    <div v-if="h3MainStage === 'analysis' && h3SubTab === 'metric_map' && h3AnalysisSummary"
-                                        style="margin-top:10px; display:grid; grid-template-columns:1fr 1fr; gap:8px;">
-                                        <div class="count-badge">POI总数 {% raw %}{{ h3AnalysisSummary.poi_count }}{% endraw %}</div>
-                                        <div class="count-badge">平均密度 {% raw %}{{ h3AnalysisSummary.avg_density_poi_per_km2.toFixed(2) }}{% endraw %}</div>
-                                        <div class="count-badge">平均熵 {% raw %}{{ h3AnalysisSummary.avg_local_entropy.toFixed(3) }}{% endraw %}</div>
-                                        <div class="count-badge">网格数 {% raw %}{{ h3AnalysisSummary.grid_count ?? h3GridCount }}{% endraw %}</div>
-                                        <div class="count-badge">Gi*有效格 {% raw %}{{ (h3AnalysisSummary.gi_z_stats && h3AnalysisSummary.gi_z_stats.count) ?? 0 }}{% endraw %}</div>
-                                        <div class="count-badge">LISA有效格 {% raw %}{{ (h3AnalysisSummary.lisa_i_stats && h3AnalysisSummary.lisa_i_stats.count) ?? 0 }}{% endraw %}</div>
-                                    </div>
-                                    <div v-if="h3MainStage === 'analysis' && h3SubTab === 'metric_map' && h3AnalysisSummary" class="h3-analysis-hint">
-                                        看密度、混合度和邻域差值，优先找“高密且邻域为正”的连续片区。
-                                    </div>
-                                    <div v-if="h3MainStage !== 'params' && h3Legend && h3Legend.items && h3Legend.items.length"
-                                        style="margin-top:10px; border:1px solid #eef1f4; border-radius:8px; padding:8px 10px; background:#fafbfc;">
-                                        <div style="font-size:12px; color:#374151; font-weight:600; margin-bottom:6px;">
-                                            {% raw %}{{ h3Legend.title }}{% endraw %}
-                                            <span style="color:#6b7280; font-weight:400;">
-                                                {% raw %}{{ h3Legend.unit ? `（${h3Legend.unit}）` : '' }}{% endraw %}
-                                            </span>
-                                        </div>
-                                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px 10px;">
-                                            <div v-for="(item, idx) in h3Legend.items" :key="`legend-${idx}`"
-                                                style="display:flex; align-items:center; gap:6px; font-size:11px; color:#4b5563;">
-                                                <span :style="{display:'inline-block', width:'12px', height:'12px', borderRadius:'2px', background:item.color, border:'1px solid #d1d5db'}"></span>
-                                                <span>{% raw %}{{ item.label }}{% endraw %}</span>
-                                            </div>
-                                        </div>
-                                        <div v-if="h3Legend.noDataLabel"
-                                            style="margin-top:6px; font-size:11px; color:#6b7280; display:flex; align-items:center; gap:6px;">
-                                            <span :style="{display:'inline-block', width:'12px', height:'12px', borderRadius:'2px', background:h3Legend.noDataColor || '#d1d5db', border:'1px solid #d1d5db'}"></span>
-                                            <span>{% raw %}{{ h3Legend.noDataLabel }}{% endraw %}</span>
-                                        </div>
-                                    </div>
-                                    <div v-if="h3MainStage === 'analysis' && h3SubTab === 'metric_map' && h3AnalysisSummary" style="margin-top:10px;">
-                                        <div id="h3CategoryChart" style="height:180px;"></div>
-                                        <div id="h3DensityChart" style="height:180px; margin-top:8px;"></div>
-                                    </div>
-                                    <div v-if="h3MainStage === 'analysis' && h3SubTab === 'structure_map' && h3DerivedStats.structureSummary" style="margin-top:10px;">
-                                        <div class="h3-analysis-hint">
-                                            结构图口径：仅使用 ArcGIS 连续字段。Gi* 使用 GiZScore；LISA 使用 LMiIndex；网格边框统一蓝色。
-                                        </div>
-                                        <div v-if="h3AnalysisSummary"
-                                            style="margin-top:10px; display:grid; grid-template-columns:1fr 1fr; gap:8px;">
-                                            <div class="count-badge">莫兰指数 {% raw %}{{ h3AnalysisSummary.global_moran_i_density ?? 'N/A' }}{% endraw %}</div>
-                                            <div class="count-badge">莫兰z值 {% raw %}{{ h3AnalysisSummary.global_moran_z_score ?? 'N/A' }}{% endraw %}</div>
-                                            <div v-if="h3StructureFillMode === 'gi_z'" class="count-badge">
-                                                Gi*有效格 {% raw %}{{ (h3AnalysisSummary.gi_z_stats && h3AnalysisSummary.gi_z_stats.count) ?? 0 }}{% endraw %}
-                                            </div>
-                                            <div v-else class="count-badge">
-                                                LISA有效格 {% raw %}{{ (h3AnalysisSummary.lisa_i_stats && h3AnalysisSummary.lisa_i_stats.count) ?? 0 }}{% endraw %}
-                                            </div>
-                                            <div class="count-badge">引擎 {% raw %}{{ (h3AnalysisSummary.analysis_engine || 'pysal').toUpperCase() }}{% endraw %}</div>
-                                        </div>
-                                        <div v-if="h3DerivedStats.structureSummary.lisaRenderMeta && h3DerivedStats.structureSummary.lisaRenderMeta.degraded"
-                                            class="h3-analysis-hint" style="margin-top:8px;">
-                                            {% raw %}{{ h3DerivedStats.structureSummary.lisaRenderMeta.message || 'LMiIndex方差不足' }}{% endraw %}
-                                        </div>
-                                        <div v-if="h3AnalysisSummary && h3AnalysisSummary.arcgis_status"
-                                            class="h3-analysis-hint" style="margin-top:8px;">
-                                            {% raw %}{{ h3AnalysisSummary.arcgis_status }}{% endraw %}
-                                        </div>
-                                        <div v-if="h3AnalysisSummary" style="margin-top:8px; display:flex; justify-content:flex-end;">
-                                            <button
-                                                type="button"
-                                                class="btn-outline btn-compact"
-                                                :disabled="isComputingH3Analysis || isGeneratingH3ArcgisSnapshot"
-                                                @click="generateH3ArcgisSnapshot">
-                                                {% raw %}{{ isGeneratingH3ArcgisSnapshot ? '生成快照中...' : '生成结构快照' }}{% endraw %}
-                                            </button>
-                                        </div>
-                                        <div v-if="h3AnalysisSummary && !getArcgisSnapshotUrl()"
-                                            class="h3-analysis-hint" style="margin-top:8px;">
-                                            当前未生成结构快照，可点击“生成结构快照”按需生成。
-                                        </div>
-                                        <div v-if="h3AnalysisSummary && getArcgisSnapshotUrl()"
-                                            style="margin-top:10px; border:1px solid #eef1f4; border-radius:10px; padding:8px; background:#fafbfc;">
-                                            <div style="font-size:12px; color:#374151; font-weight:600; margin-bottom:6px;">
-                                                {% raw %}{{ getArcgisSnapshotTitle() }}{% endraw %}
-                                            </div>
-                                            <img :src="getArcgisSnapshotSrc()"
-                                                @load="h3ArcgisSnapshotLoadError = false"
-                                                @error="h3ArcgisSnapshotLoadError = true"
-                                                alt="ArcGIS结构图"
-                                                style="width:100%; border-radius:8px; border:1px solid #dbe2ea;" />
-                                            <div v-if="h3ArcgisSnapshotLoadError" class="h3-analysis-hint" style="margin-top:8px;">
-                                                ArcGIS结构快照加载失败，请重算一次或切换结构图层后重试。
-                                            </div>
-                                        </div>
-                                        <div class="h3-decision-cards">
-                                            <div class="h3-decision-card">
-                                                <div class="label">Gi* 均值</div>
-                                                <div class="value">{% raw %}{{ h3DerivedStats.structureSummary.giZStats.mean === null ? '-' : h3DerivedStats.structureSummary.giZStats.mean.toFixed(2) }}{% endraw %}</div>
-                                            </div>
-                                            <div class="h3-decision-card">
-                                                <div class="label">Gi* 中位数</div>
-                                                <div class="value">{% raw %}{{ h3DerivedStats.structureSummary.giZStats.p50 === null ? '-' : h3DerivedStats.structureSummary.giZStats.p50.toFixed(2) }}{% endraw %}</div>
-                                            </div>
-                                            <div class="h3-decision-card">
-                                                <div class="label">LISA 正值占比</div>
-                                                <div class="value">{% raw %}{{ h3DerivedStats.structureSummary.lisaPositivePct === null ? '-' : `${(h3DerivedStats.structureSummary.lisaPositivePct * 100).toFixed(1)}%` }}{% endraw %}</div>
-                                            </div>
-                                            <div class="h3-decision-card">
-                                                <div class="label">LISA 负值占比</div>
-                                                <div class="value">{% raw %}{{ h3DerivedStats.structureSummary.lisaNegativePct === null ? '-' : `${(h3DerivedStats.structureSummary.lisaNegativePct * 100).toFixed(1)}%` }}{% endraw %}</div>
-                                            </div>
-                                        </div>
-                                        <div id="h3StructureChart" style="height:180px;"></div>
-                                        <table class="h3-mini-table" style="margin-top:8px;">
-                                            <thead>
-                                                <tr>
-                                                    <th>H3</th><th>Gi*z</th><th>LISA I</th><th>结构信号</th><th>密度</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                <tr v-for="row in h3DerivedStats.structureSummary.rows.slice(0, h3DecisionTopN)"
-                                                    :key="`structure-${row.h3_id}`"
-                                                    :class="{ 'h3-row-active': row.h3_id === selectedH3Id }">
-                                                    <td>
-                                                        <button type="button" class="h3-id-btn" :title="row.h3_id"
-                                                            @click="focusGridByH3Id(row.h3_id)">
-                                                            {% raw %}{{ shortH3Id(row.h3_id) }}{% endraw %}
-                                                        </button>
-                                                    </td>
-                                                    <td>{% raw %}{{ row.gi_star_z_score === null ? '-' : row.gi_star_z_score.toFixed(2) }}{% endraw %}</td>
-                                                    <td>{% raw %}{{ row.lisa_i === null ? '-' : row.lisa_i.toFixed(2) }}{% endraw %}</td>
-                                                    <td>{% raw %}{{ Number.isFinite(row.structure_signal) ? row.structure_signal.toFixed(2) : '-' }}{% endraw %}</td>
-                                                    <td>{% raw %}{{ row.density === null ? '-' : row.density.toFixed(2) }}{% endraw %}</td>
-                                                </tr>
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                    <div v-if="h3MainStage === 'diagnosis' && h3SubTab === 'typing' && h3DerivedStats.typingSummary" style="margin-top:10px;">
-                                        <div class="h3-analysis-hint">
-                                            看四象限结构：高密高混合偏成熟，高密低混合偏单核，低密高混合偏潜力，低密低混合偏薄弱；同时参考可信度。
-                                        </div>
-                                        <div class="h3-decision-cards">
-                                            <div class="h3-decision-card">
-                                                <div class="label">机会网格数</div>
-                                                <div class="value">{% raw %}{{ h3DerivedStats.typingSummary.opportunityCount }}{% endraw %}</div>
-                                            </div>
-                                            <div class="h3-decision-card">
-                                                <div class="label">最高密度</div>
-                                                <div class="value">{% raw %}{{ h3DerivedStats.typingSummary.maxDensity.toFixed(2) }}{% endraw %}</div>
-                                            </div>
-                                            <div class="h3-decision-card">
-                                                <div class="label">建议动作</div>
-                                                <div class="value small">{% raw %}{{ h3DerivedStats.typingSummary.recommendation }}{% endraw %}</div>
-                                            </div>
-                                        </div>
-                                        <table class="h3-mini-table">
-                                            <thead>
-                                                <tr>
-                                                    <th>H3</th><th>POI</th><th>密度</th><th>熵</th><th>可信度</th><th>分型</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                <tr v-for="row in h3DerivedStats.typingSummary.rows.slice(0, h3DecisionTopN)"
-                                                    :key="`typing-${row.h3_id}`"
-                                                    :class="{ 'h3-row-active': row.h3_id === selectedH3Id }">
-                                                    <td>
-                                                        <button type="button" class="h3-id-btn" :title="row.h3_id"
-                                                            @click="focusGridByH3Id(row.h3_id)">
-                                                            {% raw %}{{ shortH3Id(row.h3_id) }}{% endraw %}
-                                                        </button>
-                                                    </td>
-                                                    <td>{% raw %}{{ row.poi_count }}{% endraw %}</td>
-                                                    <td>{% raw %}{{ row.density.toFixed(2) }}{% endraw %}</td>
-                                                    <td>{% raw %}{{ row.entropy_norm === null ? '-' : row.entropy_norm.toFixed(2) }}{% endraw %}</td>
-                                                    <td>{% raw %}{{ (row.confidence && row.confidence.label) || '低' }}{% endraw %}</td>
-                                                    <td>{% raw %}{{ row.type_label }}{% endraw %}</td>
-                                                </tr>
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                    <div v-if="h3MainStage === 'diagnosis' && h3SubTab === 'lq' && h3DerivedStats.lqSummary" style="margin-top:10px;">
-                                        <div class="h3-analysis-hint">
-                                            看目标业态相对本分析区是否更强：大于1偏强，小于1偏弱；已做小样本平滑。
-                                        </div>
-                                        <div class="h3-decision-cards">
-                                            <div class="h3-decision-card">
-                                                <div class="label">优势网格数</div>
-                                                <div class="value">{% raw %}{{ h3DerivedStats.lqSummary.opportunityCount }}{% endraw %}</div>
-                                            </div>
-                                            <div class="h3-decision-card">
-                                                <div class="label">最高优势值</div>
-                                                <div class="value">{% raw %}{{ h3DerivedStats.lqSummary.maxLq.toFixed(2) }}{% endraw %}</div>
-                                            </div>
-                                            <div class="h3-decision-card">
-                                                <div class="label">建议业态</div>
-                                                <div class="value small">{% raw %}{{ h3DerivedStats.lqSummary.recommendation }}{% endraw %}</div>
-                                            </div>
-                                        </div>
-                                        <div id="h3LqChart" style="height:180px;"></div>
-                                        <table class="h3-mini-table" style="margin-top:8px;">
-                                            <thead>
-                                                <tr>
-                                                    <th>H3</th><th>POI</th><th>密度</th><th>熵</th><th>可信度</th><th>结构参考</th><th>优势值</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                <tr v-for="row in h3DerivedStats.lqSummary.rows.slice(0, h3DecisionTopN)"
-                                                    :key="`lq-${row.h3_id}`"
-                                                    :class="{ 'h3-row-active': row.h3_id === selectedH3Id }">
-                                                    <td>
-                                                        <button type="button" class="h3-id-btn" :title="row.h3_id"
-                                                            @click="focusGridByH3Id(row.h3_id)">
-                                                            {% raw %}{{ shortH3Id(row.h3_id) }}{% endraw %}
-                                                        </button>
-                                                    </td>
-                                                    <td>{% raw %}{{ row.poi_count }}{% endraw %}</td>
-                                                    <td>{% raw %}{{ row.density.toFixed(2) }}{% endraw %}</td>
-                                                    <td>{% raw %}{{ row.entropy_norm === null ? '-' : row.entropy_norm.toFixed(2) }}{% endraw %}</td>
-                                                    <td>{% raw %}{{ (row.confidence && row.confidence.label) || '低' }}{% endraw %}</td>
-                                                    <td>{% raw %}{{ Number.isFinite(row.structure_signal) ? row.structure_signal.toFixed(2) : '-' }}{% endraw %}</td>
-                                                    <td>{% raw %}{{ row.lq_target === null ? '-' : row.lq_target.toFixed(2) }}{% endraw %}</td>
-                                                </tr>
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                    <div v-if="h3MainStage === 'evaluate' && h3SubTab === 'gap' && h3DerivedStats.gapSummary" style="margin-top:10px;">
-                                        <div class="h3-analysis-hint">
-                                            先看“需求分位”和“供给分位”，再看两者差值；需求高且供给低的网格优先补位。
-                                        </div>
-                                        <div v-if="h3DerivedStats.gapSummary.mappingWarning" class="panel-placeholder"
-                                            style="margin-top:8px; border-color:#fde68a; background:#fffbeb; color:#92400e;">
-                                            {% raw %}{{ h3DerivedStats.gapSummary.mappingWarning }}{% endraw %}
-                                        </div>
-                                        <div class="h3-decision-cards">
-                                            <div class="h3-decision-card">
-                                                <div class="label">高缺口网格</div>
-                                                <div class="value">{% raw %}{{ h3DerivedStats.gapSummary.opportunityCount }}{% endraw %}</div>
-                                            </div>
-                                            <div class="h3-decision-card">
-                                                <div class="label">最高缺口分</div>
-                                                <div class="value">{% raw %}{{ h3DerivedStats.gapSummary.maxGap.toFixed(2) }}{% endraw %}</div>
-                                            </div>
-                                            <div class="h3-decision-card">
-                                                <div class="label">建议优先区</div>
-                                                <div class="value small">{% raw %}{{ h3DerivedStats.gapSummary.recommendation }}{% endraw %}</div>
-                                            </div>
-                                        </div>
-                                        <div class="panel-placeholder" style="margin-top:8px;">
-                                            {% raw %}{{ h3DerivedStats.gapSummary.insight || '缺口分 = 需求百分位 - 目标业态供给百分位（越高越可能供给偏弱）' }}{% endraw %}
-                                        </div>
-                                        <div id="h3GapChart" style="height:180px; margin-top:8px;"></div>
-                                        <table class="h3-mini-table" style="margin-top:8px;">
-                                            <thead>
-                                                <tr>
-                                                    <th>H3</th><th>需求分位</th><th>供给分位</th><th>缺口分</th><th>可信度</th><th>结论</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                <tr v-for="row in h3DerivedStats.gapSummary.rows.slice(0, h3DecisionTopN)"
-                                                    :key="`gap-${row.h3_id}`"
-                                                    :class="{ 'h3-row-active': row.h3_id === selectedH3Id }">
-                                                    <td>
-                                                        <button type="button" class="h3-id-btn" :title="row.h3_id"
-                                                            @click="focusGridByH3Id(row.h3_id)">
-                                                            {% raw %}{{ shortH3Id(row.h3_id) }}{% endraw %}
-                                                        </button>
-                                                    </td>
-                                                    <td>{% raw %}{{ Math.round((row.demand_pct || 0) * 100) }}{% endraw %}</td>
-                                                    <td>{% raw %}{{ Math.round((row.supply_pct || 0) * 100) }}{% endraw %}</td>
-                                                    <td>{% raw %}{{ row.gap_score === null ? '-' : row.gap_score.toFixed(2) }}{% endraw %}</td>
-                                                    <td>{% raw %}{{ (row.confidence && row.confidence.label) || '低' }}{% endraw %}</td>
-                                                    <td>{% raw %}{{ row.gap_zone_label || '-' }}{% endraw %}</td>
-                                                </tr>
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                    <div v-if="h3GridStatus" class="status-text"
-                                        style="margin-top:10px; display:flex; align-items:center; gap:8px; justify-content:flex-start;">
-                                        <span>{% raw %}{{ h3GridStatus }}{% endraw %}</span>
-                                        <button v-if="selectedH3Id" type="button"
-                                            style="border:1px solid #d9dee7; background:#fff; color:#4b5563; border-radius:999px; padding:2px 8px; font-size:11px; cursor:pointer;"
-                                            @click="clearGridLock">
-                                            取消锁定
-                                        </button>
-                                    </div>
-                                </div>
-
-                                <div class="panel" v-show="activeStep3Panel === 'syntax'">
-                                    <h4>空间句法路网分析</h4>
-                                    <div class="h3-subtabs" style="margin-top:8px;">
-                                        <button type="button"
-                                            class="h3-subtab-pill"
-                                            v-for="tab in roadSyntaxTabs"
-                                            :key="`road-syntax-tab-${tab.value}`"
-                                            :class="{ active: roadSyntaxMainTab === tab.value }"
-                                            :disabled="tab.value !== 'params' && !canActivateRoadSyntaxTab(tab.value)"
-                                            @click="setRoadSyntaxMainTab(tab.value)">
-                                            {% raw %}{{ tab.label }}{% endraw %}
-                                        </button>
-                                    </div>
-
-                                    <div v-if="roadSyntaxMainTab === 'params'" class="h3-params-card" style="margin-top:10px;">
-                                        <div class="h3-params-grid">
-                                            <label class="h3-params-field">
-                                                <span class="h3-params-label">交通方式</span>
-                                                <select v-model="roadSyntaxMode" class="h3-params-select">
-                                                    <option value="walking">步行</option>
-                                                    <option value="bicycling">骑行</option>
-                                                    <option value="driving">驾车</option>
-                                                </select>
-                                            </label>
-                                            <label class="h3-params-field">
-                                                <span class="h3-params-label">指标预设</span>
-                                                <select v-model="roadSyntaxLastMetricTab" class="h3-params-select">
-                                                    <option v-for="tab in roadSyntaxMetricTabs()" :key="`road-syntax-pref-${tab.value}`" :value="tab.value">
-                                                        {% raw %}{{ tab.label }}{% endraw %}
-                                                    </option>
-                                                </select>
-                                            </label>
-                                            <label class="h3-params-field">
-                                                <span class="h3-params-label">官方色带</span>
-                                                <select v-model="roadSyntaxDepthmapColorScale" class="h3-params-select">
-                                                    <option v-for="opt in roadSyntaxDepthmapColorScaleOptions()"
-                                                        :key="`road-syntax-color-scale-${opt.value}`"
-                                                        :value="opt.value">
-                                                        {% raw %}{{ opt.label }}{% endraw %}
-                                                    </option>
-                                                </select>
-                                            </label>
-                                            <label class="h3-params-field">
-                                                <span class="h3-params-label">Blue 阈值</span>
-                                                <input
-                                                    v-model.number="roadSyntaxDisplayBlue"
-                                                    type="number"
-                                                    min="0"
-                                                    max="1"
-                                                    step="0.01"
-                                                    class="h3-params-select"
-                                                    @change="onRoadSyntaxDisplayRangeChange">
-                                            </label>
-                                            <label class="h3-params-field">
-                                                <span class="h3-params-label">Red 阈值</span>
-                                                <input
-                                                    v-model.number="roadSyntaxDisplayRed"
-                                                    type="number"
-                                                    min="0"
-                                                    max="1"
-                                                    step="0.01"
-                                                    class="h3-params-select"
-                                                    @change="onRoadSyntaxDisplayRangeChange">
-                                            </label>
-                                        </div>
-                                        <div class="h3-params-chips">
-                                            <span class="count-badge">渲染档位 {% raw %}{{ roadSyntaxPerformanceProfile }}{% endraw %}</span>
-                                            <span class="count-badge">边段上限 {% raw %}{{ roadSyntaxActiveEdgeCap == null ? '无限制' : roadSyntaxActiveEdgeCap }}{% endraw %}</span>
-                                        </div>
-                                        <div class="h3-params-actions">
-                                            <button class="h3-btn h3-btn-primary h3-params-compute-btn"
-                                                :disabled="isComputingRoadSyntax || !lastIsochroneGeoJSON"
-                                                @click="computeRoadSyntax">
-                                                {% raw %}{{ isComputingRoadSyntax ? '计算中...' : '计算路网指标' }}{% endraw %}
-                                            </button>
-                                        </div>
-                                    </div>
-
-                                    <div v-else style="margin-top:10px;">
-                                        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                                            <label v-if="roadSyntaxMetric !== 'intelligibility'" style="display:flex; align-items:center; gap:6px; font-size:12px; color:#666;">
-                                                色带
-                                                <select v-model="roadSyntaxDepthmapColorScale" @change="refreshRoadSyntaxOverlay"
-                                                    style="padding:4px 6px; border:1px solid #ddd; border-radius:6px; font-size:12px;">
-                                                    <option v-for="opt in roadSyntaxDepthmapColorScaleOptions()"
-                                                        :key="`road-syntax-color-scale-inline-${opt.value}`"
-                                                        :value="opt.value">
-                                                        {% raw %}{{ opt.label }}{% endraw %}
-                                                    </option>
-                                                </select>
-                                            </label>
-                                            <label v-if="roadSyntaxMetric !== 'intelligibility'" style="display:flex; align-items:center; gap:6px; font-size:12px; color:#666;">
-                                                Blue
-                                                <input
-                                                    v-model.number="roadSyntaxDisplayBlue"
-                                                    type="number"
-                                                    min="0"
-                                                    max="1"
-                                                    step="0.01"
-                                                    @change="onRoadSyntaxDisplayRangeChange"
-                                                    style="width:64px; padding:4px 6px; border:1px solid #ddd; border-radius:6px; font-size:12px;">
-                                            </label>
-                                            <label v-if="roadSyntaxMetric !== 'intelligibility'" style="display:flex; align-items:center; gap:6px; font-size:12px; color:#666;">
-                                                Red
-                                                <input
-                                                    v-model.number="roadSyntaxDisplayRed"
-                                                    type="number"
-                                                    min="0"
-                                                    max="1"
-                                                    step="0.01"
-                                                    @change="onRoadSyntaxDisplayRangeChange"
-                                                    style="width:64px; padding:4px 6px; border:1px solid #ddd; border-radius:6px; font-size:12px;">
-                                            </label>
-                                            <label v-if="roadSyntaxMetricUsesRadius(roadSyntaxMetric)" style="display:flex; align-items:center; gap:6px; font-size:12px; color:#666;">
-                                                半径
-                                                <select v-model="roadSyntaxRadiusLabel" @change="refreshRoadSyntaxOverlay"
-                                                    style="padding:4px 6px; border:1px solid #ddd; border-radius:6px; font-size:12px;">
-                                                    <option v-for="opt in roadSyntaxRadiusOptions()" :key="`road-syntax-radius-${opt.value}`" :value="opt.value">
-                                                        {% raw %}{{ opt.label }}{% endraw %}
-                                                    </option>
-                                                </select>
-                                            </label>
-                                            <label v-if="roadSyntaxSupportsSkeleton(roadSyntaxMetric)" class="h3-check-chip h3-check-chip-compact">
-                                                <input type="checkbox"
-                                                    v-model="roadSyntaxSkeletonOnly"
-                                                    :disabled="!canToggleRoadSyntaxSkeleton()"
-                                                    @change="refreshRoadSyntaxOverlay">
-                                                骨架优先
-                                            </label>
-                                            <span class="count-badge">当前指标 {% raw %}{{ roadSyntaxLabelByMetric(roadSyntaxMetric) }}{% endraw %}</span>
-                                            <span class="count-badge">值 {% raw %}{{ formatRoadSyntaxMetricValue(roadSyntaxMetric) }}{% endraw %}</span>
-                                            <span v-if="roadSyntaxMetric === 'intelligibility'" class="count-badge">
-                                                R² {% raw %}{{ roadSyntaxRegressionView().r2 }}{% endraw %}
-                                            </span>
-                                        </div>
-
-                                        <div v-if="roadSyntaxLegendModel && roadSyntaxLegendModel.items && roadSyntaxLegendModel.items.length"
-                                            style="margin-top:10px; border:1px solid #eef1f4; border-radius:8px; padding:8px 10px; background:#fafbfc;">
-                                            <div style="font-size:12px; color:#374151; font-weight:600; margin-bottom:6px;">
-                                                {% raw %}{{ roadSyntaxLegendModel.title }}{% endraw %}
-                                            </div>
-                                            <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px 10px;">
-                                                <div v-for="(item, idx) in roadSyntaxLegendModel.items"
-                                                    :key="`road-syntax-legend-${idx}`"
-                                                    style="display:flex; align-items:center; gap:6px; font-size:11px; color:#4b5563;">
-                                                    <span :style="{display:'inline-block', width:'12px', height:'12px', borderRadius:'2px', background:item.color, border:'1px solid #d1d5db'}"></span>
-                                                    <span>{% raw %}{{ item.label }}{% endraw %}</span>
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        <div v-if="roadSyntaxMainTab === 'intelligibility'" id="roadSyntaxScatterChart"
-                                            style="height:220px; margin-top:10px;"></div>
-                                    </div>
-
-                                    <div v-if="roadSyntaxSwitchStatsText" class="status-text" style="margin-top:10px;">
-                                        {% raw %}{{ roadSyntaxSwitchStatsText }}{% endraw %}
-                                    </div>
-                                    <div v-if="roadSyntaxStatus"
-                                        class="status-text"
-                                        style="margin-top:10px; display:flex; align-items:center; gap:8px; justify-content:flex-start;">
-                                        <span>{% raw %}{{ roadSyntaxStatus }}{% endraw %}</span>
-                                        <button type="button"
-                                            style="border:1px solid #d9dee7; background:#fff; color:#4b5563; border-radius:999px; padding:2px 8px; font-size:11px; cursor:pointer;"
-                                            @click="copyRoadSyntaxStatus">
-                                            复制状态
-                                        </button>
-                                        <span style="font-size:11px; color:#6b7280;">{% raw %}{{ roadSyntaxStatusCopyHint }}{% endraw %}</span>
-                                    </div>
-                                </div>
-
-                                <div class="panel" v-show="activeStep3Panel === 'aoi'">
-                                    <h4>AOI 面数据分析</h4>
-                                    <div class="panel-placeholder" style="margin-top:10px;">AOI 面数据分析（待开发）</div>
-                                </div>
-
-                            </div>
-                        </div>
-                    </div>
-                </div> <!-- End Wizard View Wrapper -->
-
-            </div> <!-- End of sidebar-content -->
-
-            <!-- Fixed History Footer -->
-            <!-- Sidebar Footer (Only in Wizard Mode) -->
-            <div v-if="sidebarView === 'wizard'" class="sidebar-footer"
-                style="padding: 20px; border-top: 1px solid #f0f0f0; background: #fff; display: flex; flex-direction: column; gap: 10px;">
-                <button class="btn-outline"
-                    style="margin-top:0; border:1px solid #eee; display:flex; justify-content:center; align-items:center;"
-                    @click="openHistoryView()">
-                    <img src="/static/images/history.svg" class="icon-svg-small" style="margin-right:8px;"> 查看历史记录 ({%
-                    raw %}{{
-                    historyList.length }}{% endraw %})
-                </button>
-            </div>
-        </aside>
-
-        <!-- Middle: Map -->
-        <main class="main-content">
-            <div v-if="sidebarView === 'wizard' && step === 3" class="h3-map-toolbar">
-                <button type="button" class="h3-map-tool-btn h3-map-save-btn" @click="saveAndRestart" title="保存并开启新分析">
-                    <svg class="h3-map-tool-icon" viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h10.2l4.3 4.3V18.5A1.5 1.5 0 0 1 18.5 20h-13A1.5 1.5 0 0 1 4 18.5z"></path>
-                        <path d="M8 4.5v5h7v-5"></path>
-                        <path d="M8 20v-5h8v5"></path>
-                    </svg>
-                    <span class="h3-map-tool-text">保存并新建</span>
-                </button>
-
-                <button type="button" class="h3-map-tool-btn h3-map-simplify-btn"
-                    :class="{ active: h3BasemapMuted }"
-                    @click="toggleH3BasemapMuted"
-                    title="底图简化">
-                    <svg class="h3-map-tool-icon" viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="M4 7h16"></path>
-                        <path d="M4 12h16"></path>
-                        <path d="M4 17h16"></path>
-                    </svg>
-                    <span class="h3-map-tool-text">{% raw %}{{ h3BasemapMuted ? '简化：开' : '简化：关' }}{% endraw %}</span>
-                </button>
-
-                <div class="h3-export-wrap">
-                    <button type="button" class="h3-map-tool-btn h3-map-export-btn"
-                        :class="{ active: h3ExportMenuOpen }"
-                        :disabled="activeStep3Panel !== 'h3'"
-                        @click="toggleH3ExportMenu"
-                        title="导出">
-                        <svg class="h3-map-tool-icon" viewBox="0 0 24 24" aria-hidden="true">
-                            <path d="M12 4v10"></path>
-                            <path d="M8.5 10.5 12 14l3.5-3.5"></path>
-                            <path d="M5 18h14"></path>
-                        </svg>
-                        <span class="h3-map-tool-text">导出</span>
-                        <svg class="h3-map-tool-caret" viewBox="0 0 24 24" aria-hidden="true">
-                            <path d="m6 9 6 6 6-6"></path>
-                        </svg>
-                    </button>
-                    <div v-if="activeStep3Panel === 'h3' && h3ExportMenuOpen" class="h3-export-menu">
-                        <label class="h3-export-check">
-                            <input type="checkbox" v-model="h3ExportIncludePoi">
-                            包含POI点
-                        </label>
-                        <div class="h3-export-field">
-                            <span class="h3-export-field-label">导出范围</span>
-                            <select class="h3-export-select" v-model="h3ExportScope">
-                                <option value="grid_only">仅网格</option>
-                                <option value="analysis_result" :disabled="!hasH3AnalysisForExport()">分析结果</option>
-                            </select>
-                        </div>
-                        <div v-if="h3ExportScope === 'analysis_result' && !hasH3AnalysisForExport()" class="h3-export-tip">
-                            请先完成计算分析，再导出分析结果。
-                        </div>
-                        <button type="button" class="h3-export-item"
-                            :disabled="isExportingH3 || !hasH3GridForExport()"
-                            @click="exportH3Analysis('gpkg')">
-                            快速导出（.gpkg）
-                        </button>
-                        <button type="button" class="h3-export-item"
-                            :disabled="isExportingH3 || !hasH3GridForExport()"
-                            @click="exportH3Analysis('arcgis_package')">
-                            高级导出（LPK+MPK）
-                        </button>
-                    </div>
-                </div>
-
-                <div class="h3-task-wrap">
-                    <button type="button" class="h3-map-tool-btn h3-map-task-btn"
-                        :class="{ active: h3ExportTasksOpen }"
-                        :disabled="activeStep3Panel !== 'h3'"
-                        @click="toggleH3ExportTasks"
-                        title="任务">
-                        <svg class="h3-map-tool-icon" viewBox="0 0 24 24" aria-hidden="true">
-                            <rect x="4" y="5" width="16" height="14" rx="2"></rect>
-                            <path d="M8 10h8"></path>
-                            <path d="M8 14h6"></path>
-                        </svg>
-                        <span class="h3-map-tool-text">任务</span>
-                        <span v-if="getH3PendingTaskCount() > 0" class="h3-task-count">{% raw %}{{ getH3PendingTaskCount() }}{% endraw %}</span>
-                    </button>
-                </div>
-            </div>
-
-            <div v-if="sidebarView === 'wizard' && step === 3 && activeStep3Panel === 'h3' && h3ExportTasksOpen" class="h3-export-task-panel">
-                <div class="h3-export-task-panel-header">
-                    <span>导出任务</span>
-                    <button type="button" class="h3-export-task-close" @click="closeH3ExportTasks">关闭</button>
-                </div>
-                <div v-if="!h3ExportTasks.length" class="h3-export-task-empty">暂无任务</div>
-                <template v-else>
-                    <div v-for="task in h3ExportTasks" :key="task.id" class="h3-export-task-item">
-                        <div class="h3-export-task-row">
-                            <div class="h3-export-task-name">{% raw %}{{ task.title }}{% endraw %}</div>
-                            <span class="h3-export-task-state"
-                                :class="{
-                                    'is-running': task.status === 'running',
-                                    'is-success': task.status === 'success',
-                                    'is-failed': task.status === 'failed'
-                                }">
-                                {% raw %}{{ task.status_label }}{% endraw %}
-                            </span>
-                        </div>
-                        <div class="h3-export-task-meta">
-                            {% raw %}{{ task.scope_label }} · {{ task.created_at_text }}{% endraw %}
-                        </div>
-                        <div v-if="task.filename" class="h3-export-task-meta">
-                            文件：{% raw %}{{ task.filename }}{% endraw %}
-                        </div>
-                        <div v-if="task.error" class="h3-export-task-error">{% raw %}{{ task.error }}{% endraw %}</div>
-                    </div>
-                    <div class="h3-export-task-actions">
-                        <button type="button" class="h3-export-task-clear" @click="clearH3CompletedTasks">清理已完成</button>
-                    </div>
-                </template>
-            </div>
-
-            <div v-if="sidebarView === 'wizard' && step === 3 && h3Toast.message"
-                class="h3-export-toast"
-                :class="{
-                    'is-success': h3Toast.type === 'success',
-                    'is-error': h3Toast.type === 'error',
-                    'is-warning': h3Toast.type === 'warning'
-                }">
-                {% raw %}{{ h3Toast.message }}{% endraw %}
-            </div>
-
-            <button
-                v-if="sidebarView === 'wizard'"
-                type="button"
-                class="map-recenter-btn"
-                title="回到中心"
-                aria-label="回到中心"
-                :disabled="!mapCore || !mapCore.map"
-                @click="goMapBackToCenter">
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <circle cx="12" cy="12" r="3.2"></circle>
-                    <path d="M12 2.8v3.4"></path>
-                    <path d="M12 17.8v3.4"></path>
-                    <path d="M2.8 12h3.4"></path>
-                    <path d="M17.8 12h3.4"></path>
-                </svg>
-            </button>
-
-            <div id="tianditu-container" aria-hidden="true"></div>
-            <div id="container"></div>
-            <div v-if="basemapSource === 'osm'" style="position:absolute; right:8px; bottom:6px; z-index:2; background:rgba(255,255,255,0.9); border:1px solid #e5e7eb; border-radius:6px; padding:2px 6px; font-size:10px; color:#4b5563;">
-                © OpenStreetMap contributors
-            </div>
-            <div v-else-if="basemapSource === 'tianditu'" style="position:absolute; right:8px; bottom:6px; z-index:2; background:rgba(255,255,255,0.9); border:1px solid #e5e7eb; border-radius:6px; padding:2px 6px; font-size:10px; color:#4b5563;">
-                © 天地图
-            </div>
-        </main>
-    </div>
-
-    <!-- 依赖库 -->
-    <!-- 引入 Vue 3 (CDN) -->
-    <script src="https://cdn.staticfile.org/vue/3.3.4/vue.global.prod.min.js"></script>
-    <script src="https://cdn.bootcdn.net/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
-    <script src="/static/js/map-utils.js?v={{ static_version }}"></script>
-    <script src="/static/js/map-core.js?v={{ static_version }}"></script>
-    <script src="/static/js/map-markers.js?v={{ static_version }}"></script>
-    <script src="/static/js/map-filters.js?v={{ static_version }}"></script>
-    <script src="/static/js/analysis/map/map-write-queue.js?v={{ static_version }}"></script>
-    <script src="/static/js/analysis/map/overlay-committer.js?v={{ static_version }}"></script>
-    <script src="/static/js/analysis/features/workbench/navigation.js?v={{ static_version }}"></script>
-    <script src="/static/js/analysis/features/road-syntax/state.js?v={{ static_version }}"></script>
-    <script src="/static/js/analysis/features/road-syntax/controller-core.js?v={{ static_version }}"></script>
-    <script src="/static/js/analysis/features/road-syntax/webgl.js?v={{ static_version }}"></script>
-    <script src="/static/js/road_syntax_ui.js?v={{ static_version }}"></script>
-    <!-- 引入 analysis.js 也可以，但我们大部分逻辑移入 Vue methods 更好，这里依然引入以兼容 MapCore 依赖 -->
-
-    <script>
 
         const { createApp } = Vue;
         const INJECTED_TYPE_MAP_CONFIG = {{ map_type_config_json | safe }} || { groups: [] };
@@ -1138,39 +15,9 @@
                 node: 6.5,
             }),
         });
-        const analysisWorkbenchMethods = (window.createAnalysisWorkbenchMethods && typeof window.createAnalysisWorkbenchMethods === 'function')
-            ? window.createAnalysisWorkbenchMethods()
-            : {};
         const roadSyntaxUiMethods = (window.createRoadSyntaxUiMethods && typeof window.createRoadSyntaxUiMethods === 'function')
             ? window.createRoadSyntaxUiMethods(ROAD_SYNTAX_CONST)
             : {};
-        const roadSyntaxOverlayCommitMethods = (window.createRoadSyntaxOverlayCommitMethods && typeof window.createRoadSyntaxOverlayCommitMethods === 'function')
-            ? window.createRoadSyntaxOverlayCommitMethods(ROAD_SYNTAX_CONST)
-            : {};
-        const roadSyntaxControllerCoreMethods = (window.createRoadSyntaxControllerCoreMethods && typeof window.createRoadSyntaxControllerCoreMethods === 'function')
-            ? window.createRoadSyntaxControllerCoreMethods(ROAD_SYNTAX_CONST)
-            : {};
-        const roadSyntaxWebglMethods = (window.createRoadSyntaxWebGLMethods && typeof window.createRoadSyntaxWebGLMethods === 'function')
-            ? window.createRoadSyntaxWebGLMethods(ROAD_SYNTAX_CONST)
-            : {};
-        const buildRoadSyntaxInitialState = (window.createRoadSyntaxInitialState && typeof window.createRoadSyntaxInitialState === 'function')
-            ? () => window.createRoadSyntaxInitialState(ROAD_SYNTAX_CONST)
-            : () => ({});
-        const ROAD_SYNTAX_MODULE_REQUIREMENTS = Object.freeze({
-            queue: !!(window.createMapWriteQueue && typeof window.createMapWriteQueue === 'function'),
-            overlayCommit: !!(window.createRoadSyntaxOverlayCommitMethods && typeof window.createRoadSyntaxOverlayCommitMethods === 'function'),
-            state: !!(window.createRoadSyntaxInitialState && typeof window.createRoadSyntaxInitialState === 'function'),
-            controller: !!(window.createRoadSyntaxControllerCoreMethods && typeof window.createRoadSyntaxControllerCoreMethods === 'function'),
-            ui: !!(window.createRoadSyntaxUiMethods && typeof window.createRoadSyntaxUiMethods === 'function'),
-        });
-        const ROAD_SYNTAX_MODULE_MISSING = Object.keys(ROAD_SYNTAX_MODULE_REQUIREMENTS).filter((key) => !ROAD_SYNTAX_MODULE_REQUIREMENTS[key]);
-        const ROAD_SYNTAX_MODULES_READY = ROAD_SYNTAX_MODULE_MISSING.length === 0;
-        if (!ROAD_SYNTAX_MODULES_READY) {
-            console.error('[road-syntax] module wiring incomplete', {
-                missing: ROAD_SYNTAX_MODULE_MISSING.slice(),
-                static_version: "{{ static_version }}",
-            });
-        }
 
         createApp({
             data() {
@@ -1221,9 +68,23 @@
                     fetchProgress: 0,
                     poiStatus: '',
                     aoiStatus: '',
-                    roadSyntaxModulesReady: ROAD_SYNTAX_MODULES_READY,
-                    roadSyntaxModuleMissing: ROAD_SYNTAX_MODULE_MISSING.slice(),
-                    ...buildRoadSyntaxInitialState(),
+                    isComputingRoadSyntax: false,
+                    roadSyntaxStatus: '',
+                    roadSyntaxPerformanceProfile: 'fixed1200',
+                    roadSyntaxActiveEdgeCap: 1200,
+                    roadSyntaxSwitchSamples: [],
+                    roadSyntaxSwitchLastMs: 0,
+                    roadSyntaxSwitchP50Ms: 0,
+                    roadSyntaxSwitchP95Ms: 0,
+                    roadSyntaxSwitchTargetMs: ROAD_SYNTAX_CONST.SWITCH_TARGET_MS,
+                    roadSyntaxSwitchStatsText: '',
+                    roadSyntaxSwitchPath: '',
+                    roadSyntaxSwitchInProgress: false,
+                    roadSyntaxSwitchQueuedLayerKey: '',
+                    roadSyntaxSwitchLastAt: 0,
+                    roadSyntaxSwitchCooldownMs: 80,
+                    roadSyntaxSwitchThrottleTimer: null,
+                    roadSyntaxStyleApplyToken: 0,
                     fetchSubtypeHitMap: {},
                     fetchSubtypeProgress: {
                         categoryId: '',
@@ -1235,8 +96,81 @@
                     lastIsochroneGeoJSON: null,
                     poiMarkers: [],
                     aoiMarkers: [],
+                    roadSyntaxPolylines: [],
+                    roadSyntaxPolylineItems: [],
+                    roadSyntaxLayerPool: {},
+                    roadSyntaxLayerStyleCache: {},
+                    roadSyntaxActiveLayerKey: '',
+                    roadSyntaxPoolWarmToken: 0,
+                    roadSyntaxSourceFingerprint: '',
+                    roadSyntaxPoolRadiusLabel: '',
+                    roadSyntaxLayerBuildState: {},
+                    roadSyntaxLayerBuildQueue: [],
+                    roadSyntaxLayerBuildRunning: false,
+                    roadSyntaxLayerBuildToken: 0,
+                    roadSyntaxLayerSwitchToken: 0,
+                    roadSyntaxPendingLayerKey: '',
+                    roadSyntaxPoolInitRunning: false,
+                    roadSyntaxPoolReady: false,
+                    roadSyntaxPoolDegraded: false,
+                    roadSyntaxPoolInitTotal: 0,
+                    roadSyntaxPoolInitDone: 0,
+                    roadSyntaxPrebuildDeadlineMs: ROAD_SYNTAX_CONST.PREBUILD_DEADLINE_MS,
+                    roadSyntaxEnableHeavyPrewarm: false,
+                    roadSyntaxPrewarmToken: 0,
+                    roadSyntaxLayerReadyMap: {},
+                    roadSyntaxConnectivityReuseLayerKey: '',
+                    roadSyntaxNodeBuildToken: 0,
+                    roadSyntaxNodeBuildRunning: false,
+                    roadSyntaxNodeSourceFingerprint: '',
+                    roadSyntaxConnectivityNodeMinZoom: ROAD_SYNTAX_CONST.CONNECTIVITY_NODE_MIN_ZOOM,
+                    roadSyntaxZoomListener: null,
+                    roadSyntaxZoomStartListener: null,
+                    roadSyntaxMoveStartListener: null,
+                    roadSyntaxMoveEndListener: null,
+                    roadSyntaxMapInteracting: false,
+                    roadSyntaxNodeMarkers: [],
+                    roadSyntaxStyleUpdateToken: 0,
+                    roadSyntaxLastStyleKey: '',
+                    roadSyntaxRequestToken: 0,
+                    roadSyntaxRoadFeatures: [],
+                    roadSyntaxNodes: [],
+                    roadSyntaxDiagnostics: null,
+                    roadSyntaxSkeletonOnly: false,
+                    roadSyntaxLegendModel: null,
+                    roadSyntaxScatterChart: null,
                     allPoisDetails: [], // Store full fetched data for client-side filtering
                     allAoisDetails: [],
+                    roadSyntaxMainTab: 'params',
+                    roadSyntaxTabs: [
+                        { value: 'params', label: '参数' },
+                        { value: 'accessibility', label: '可达性' },
+                        { value: 'connectivity', label: '连接度' },
+                        { value: 'choice', label: '选择度' },
+                        { value: 'integration', label: '整合度' },
+                        { value: 'intelligibility', label: '可理解度' },
+                    ],
+                    roadSyntaxSummary: null,
+                    roadSyntaxMode: 'walking',
+                    roadSyntaxMetric: 'accessibility',
+                    roadSyntaxLastMetricTab: 'accessibility',
+                    roadSyntaxRadiusLabel: 'global',
+                    roadSyntaxStatusCopyHint: '',
+                    roadSyntaxDisplaySuspended: false,
+                    roadSyntaxVisibleLineSet: {},
+                    roadSyntaxViewportLazyEnabled: true,
+                    roadSyntaxVisibleIndexCacheKey: '',
+                    roadSyntaxVisibleIndexCacheList: [],
+                    roadSyntaxViewportRefreshRaf: null,
+                    roadSyntaxViewportRefreshTimer: null,
+                    roadSyntaxViewportRefreshToken: 0,
+                    roadSyntaxNodeRefreshTimer: null,
+                    roadSyntaxRefineDelayMs: 150,
+                    roadSyntaxInteractionLowFidelity: false,
+                    roadSyntaxLodScoreCacheKey: '',
+                    roadSyntaxLodScoreList: [],
+                    roadSyntaxInteractionStride: 3,
+                    roadSyntaxCurrentStride: 1,
                     aoiH3Resolution: 9,
                     aoiRegeoRadius: 1000,
                     aoiMaxPoints: 300,
@@ -1250,8 +184,6 @@
                     placeSearchErrorListener: null,
                     placeSearchLoadingPromise: null,
                     placeSearchBuildToken: 0,
-                    amapRuntimeErrorListener: null,
-                    amapRuntimeRejectionListener: null,
 
                     // History
                     historyListRaw: [],
@@ -1281,15 +213,8 @@
                     h3ArcgisPythonPath: 'C:\\Python27\\ArcGIS10.7\\python.exe',
                     h3ArcgisImageVersion: 0,
                     h3ArcgisSnapshotLoadError: false,
-                    isGeneratingH3ArcgisSnapshot: false,
                     pointSimplifyEnabled: false,
                     h3BasemapMuted: false,
-                    pointLayersSuspendedForSyntax: false,
-                    poiSystemSuspendedForSyntax: false,
-                    poiAutoFitViewEnabled: false,
-                    poiMapWriteGeneration: 0,
-                    poiManagerSerial: 0,
-                    poiActiveManagerId: 0,
                     h3GridFeatures: [],
                     selectedH3Id: null,
                     isComputingH3Analysis: false,
@@ -1385,10 +310,6 @@
                 } finally {
                     // Preload history in background so opening history panel reads from cache.
                     this.preloadHistoryListInBackground();
-                    if (!this.roadSyntaxModulesReady) {
-                        this.roadSyntaxSetStatus(`路网模块未完整加载：${(this.roadSyntaxModuleMissing || []).join(', ')}`);
-                    }
-                    this.attachAmapRuntimeErrorProbe();
                     document.addEventListener('click', this.handleGlobalClick, true);
                     this.loadingConfig = false;
                     const overlay = document.getElementById('loading-overlay');
@@ -1397,16 +318,7 @@
             },
             beforeUnmount() {
                 document.removeEventListener('click', this.handleGlobalClick, true);
-                this.detachAmapRuntimeErrorProbe();
                 this.destroyPlaceSearch();
-                this.clearPoiOverlayLayers({
-                    reason: 'before_unmount',
-                    clearManager: true,
-                    clearSimpleMarkers: true,
-                    clearCenterMarker: true,
-                    resetFilterPanel: true,
-                    immediate: true
-                });
                 this.roadSyntaxDetachMapListeners();
                 this.invalidateRoadSyntaxCache('unmount', { resetData: true });
                 if (this.h3ToastTimer) {
@@ -1426,20 +338,6 @@
                 sidebarView(newView, oldView) {
                     if (oldView === 'history' && newView !== 'history') {
                         this.cancelHistoryLoading();
-                    }
-                },
-                activeStep3Panel(newPanel, oldPanel) {
-                    if (newPanel === oldPanel) return;
-                    if (newPanel === 'syntax') {
-                        this.suspendPoiSystemForSyntax();
-                    } else if (oldPanel === 'syntax') {
-                        this.resumePoiSystemAfterSyntax();
-                    }
-                    if (oldPanel === 'h3' && newPanel !== 'h3') {
-                        this.clearH3GridDisplayOnLeave();
-                    }
-                    if (newPanel === 'h3') {
-                        this.restoreH3GridDisplayOnEnter();
                     }
                 },
                 transportMode(newMode, oldMode) {
@@ -1463,74 +361,7 @@
                 },
             },
             methods: {
-                ...analysisWorkbenchMethods,
-                ...roadSyntaxOverlayCommitMethods,
-                ...roadSyntaxControllerCoreMethods,
-                ...roadSyntaxWebglMethods,
                 ...roadSyntaxUiMethods,
-                attachAmapRuntimeErrorProbe() {
-                    if (this.amapRuntimeErrorListener || this.amapRuntimeRejectionListener) return;
-                    const buildPayload = (base = {}) => {
-                        const manager = this.markerManager;
-                        const clustererCount = manager && manager.typeClusterers && typeof manager.typeClusterers === 'object'
-                            ? Object.keys(manager.typeClusterers).length
-                            : 0;
-                        const markerCount = manager && Array.isArray(manager.markers) ? manager.markers.length : 0;
-                        return Object.assign({
-                            step: Number(this.step || 0),
-                            panel: String(this.activeStep3Panel || ''),
-                            poi_suspended_for_syntax: !!this.poiSystemSuspendedForSyntax,
-                            marker_manager_alive: !!manager,
-                            marker_count: markerCount,
-                            clusterer_count: clustererCount,
-                            road_active_layer: String(this.roadSyntaxActiveLayerKey || ''),
-                            road_switch_in_progress: !!this.roadSyntaxSwitchInProgress,
-                            road_pool_ready: !!this.roadSyntaxPoolReady,
-                            road_map_write_queue_pending: Number(this.roadSyntaxMapWriteQueuePending || 0),
-                        }, base || {});
-                    };
-                    const matchRuntimeMessage = (message = '', filename = '') => {
-                        const msg = String(message || '');
-                        const file = String(filename || '');
-                        return (
-                            file.indexOf('maps?v=') >= 0
-                            || msg.indexOf('split') >= 0
-                            || msg.indexOf('Ud') >= 0
-                            || msg.indexOf('Pixel(NaN') >= 0
-                        );
-                    };
-                    this.amapRuntimeErrorListener = (event) => {
-                        const message = event && event.message ? String(event.message) : '';
-                        const filename = event && event.filename ? String(event.filename) : '';
-                        if (!matchRuntimeMessage(message, filename)) return;
-                        console.error('[diag] amap runtime error', buildPayload({
-                            message,
-                            filename,
-                            lineno: Number((event && event.lineno) || 0),
-                            colno: Number((event && event.colno) || 0),
-                        }));
-                    };
-                    this.amapRuntimeRejectionListener = (event) => {
-                        const reason = event ? (event.reason || '') : '';
-                        const text = reason && reason.message ? String(reason.message) : String(reason || '');
-                        if (!matchRuntimeMessage(text, '')) return;
-                        console.error('[diag] amap runtime rejection', buildPayload({
-                            reason: text,
-                        }));
-                    };
-                    window.addEventListener('error', this.amapRuntimeErrorListener);
-                    window.addEventListener('unhandledrejection', this.amapRuntimeRejectionListener);
-                },
-                detachAmapRuntimeErrorProbe() {
-                    if (this.amapRuntimeErrorListener) {
-                        window.removeEventListener('error', this.amapRuntimeErrorListener);
-                    }
-                    if (this.amapRuntimeRejectionListener) {
-                        window.removeEventListener('unhandledrejection', this.amapRuntimeRejectionListener);
-                    }
-                    this.amapRuntimeErrorListener = null;
-                    this.amapRuntimeRejectionListener = null;
-                },
                 cancelHistoryLoading() {
                     if (this.historyFetchAbortController) {
                         try {
@@ -1984,213 +815,6 @@
                             });
                     }, 0);
                 },
-                bumpPoiMapWriteGeneration(_reason = '') {
-                    const next = Number(this.poiMapWriteGeneration || 0) + 1;
-                    this.poiMapWriteGeneration = next;
-                    return next;
-                },
-                enqueuePoiMapWrite(fn, options = {}) {
-                    if (typeof fn !== 'function') {
-                        return {
-                            accepted: false,
-                            queued: false,
-                            replaced: false,
-                            id: 0,
-                            size: 0,
-                            promise: Promise.resolve({ ok: false, skipped: true, reason: 'invalid_fn' })
-                        };
-                    }
-                    const opts = (options && typeof options === 'object') ? Object.assign({}, options) : {};
-                    const scopeRaw = (typeof opts.scope === 'string' && opts.scope.trim()) ? opts.scope.trim() : 'poi';
-                    const scope = /^[a-z0-9_-]+$/i.test(scopeRaw) ? scopeRaw : 'poi';
-                    const rawKey = (typeof opts.key === 'string' && opts.key) ? String(opts.key) : 'write';
-                    opts.key = rawKey.includes(':') ? rawKey : `${scope}:${rawKey}`;
-                    if (typeof opts.replaceExisting === 'undefined') {
-                        opts.replaceExisting = true;
-                    }
-                    const usePoiGenerationGuard = scope === 'poi';
-                    const writeGeneration = usePoiGenerationGuard
-                        ? Number(this.poiMapWriteGeneration || 0)
-                        : -1;
-                    const userGuard = typeof opts.guard === 'function' ? opts.guard : null;
-                    opts.guard = (meta = {}) => {
-                        if (usePoiGenerationGuard && Number(this.poiMapWriteGeneration || 0) !== writeGeneration) {
-                            return false;
-                        }
-                        if (!userGuard) return true;
-                        try {
-                            return !!userGuard(meta);
-                        } catch (_) {
-                            return false;
-                        }
-                    };
-                    opts.meta = Object.assign({}, (opts.meta && typeof opts.meta === 'object') ? opts.meta : {});
-                    if (usePoiGenerationGuard) {
-                        opts.meta.poi_generation = writeGeneration;
-                    }
-                    if (typeof this.roadSyntaxEnqueueMapWrite === 'function') {
-                        return this.roadSyntaxEnqueueMapWrite(fn, opts);
-                    }
-                    try {
-                        if (usePoiGenerationGuard && typeof opts.guard === 'function' && !opts.guard(opts.meta || {})) {
-                            return {
-                                accepted: true,
-                                queued: false,
-                                replaced: false,
-                                id: 0,
-                                size: 0,
-                                promise: Promise.resolve({
-                                    ok: false,
-                                    skipped: true,
-                                    reason: 'poi_generation_stale'
-                                })
-                            };
-                        }
-                        const value = fn((opts && opts.meta) || {});
-                        const payload = (value && typeof value === 'object' && Object.prototype.hasOwnProperty.call(value, 'ok'))
-                            ? Object.assign({}, value)
-                            : { ok: value !== false, value };
-                        return {
-                            accepted: true,
-                            queued: false,
-                            replaced: false,
-                            id: 0,
-                            size: 0,
-                            promise: Promise.resolve(payload)
-                        };
-                    } catch (err) {
-                        return {
-                            accepted: true,
-                            queued: false,
-                            replaced: false,
-                            id: 0,
-                            size: 0,
-                            promise: Promise.resolve({
-                                ok: false,
-                                reason: 'fallback_execute_error',
-                                error: err && err.message ? err.message : String(err)
-                            })
-                        };
-                    }
-                },
-                enqueueAoiMapWrite(fn, options = {}) {
-                    const opts = (options && typeof options === 'object') ? Object.assign({}, options) : {};
-                    opts.scope = 'aoi';
-                    return this.enqueuePoiMapWrite(fn, opts);
-                },
-                safeMapSet(overlay, targetMap = null) {
-                    if (!overlay || typeof overlay.setMap !== 'function') return false;
-                    try {
-                        overlay.setMap(targetMap || null);
-                        return true;
-                    } catch (_) {
-                        try { overlay.setMap(null); } catch (__){ }
-                        return false;
-                    }
-                },
-                clearPoiOverlayLayers(options = {}) {
-                    const opts = (options && typeof options === 'object') ? options : {};
-                    const reason = (typeof opts.reason === 'string' && opts.reason) ? opts.reason : 'clear';
-                    const generation = this.bumpPoiMapWriteGeneration(`clear:${reason}`);
-                    const clearManager = opts.clearManager !== false;
-                    const clearSimpleMarkers = opts.clearSimpleMarkers !== false;
-                    const clearCenterMarker = !!opts.clearCenterMarker;
-                    const resetFilterPanel = opts.resetFilterPanel !== false;
-                    const immediate = Object.prototype.hasOwnProperty.call(opts, 'immediate') ? !!opts.immediate : true;
-                    const manager = clearManager ? this.markerManager : null;
-                    const managerMarkers = (manager && Array.isArray(manager.markers)) ? manager.markers.slice() : [];
-                    const simpleMarkers = clearSimpleMarkers && Array.isArray(this.poiMarkers) ? this.poiMarkers.slice() : [];
-                    const centerMarker = clearCenterMarker ? this.marker : null;
-
-                    if (clearManager) {
-                        if (manager && typeof manager.dispose === 'function') {
-                            try { manager.dispose(); } catch (_) { }
-                        }
-                        this.markerManager = null;
-                        this.poiActiveManagerId = 0;
-                        this.filterPanel = null;
-                        if (resetFilterPanel) {
-                            const filtersContainer = document.getElementById('filtersContainer');
-                            if (filtersContainer) filtersContainer.innerHTML = '';
-                        }
-                    }
-                    if (clearSimpleMarkers) {
-                        this.poiMarkers = [];
-                    }
-                    if (clearCenterMarker) {
-                        this.marker = null;
-                    }
-
-                    const clearTask = () => {
-                        if (manager) {
-                            if (typeof manager._destroyClusterersNow === 'function') {
-                                manager._destroyClusterersNow();
-                            } else if (typeof manager.destroyClusterers === 'function') {
-                                manager.destroyClusterers({ immediate: true });
-                            }
-                        }
-                        managerMarkers.forEach((marker) => {
-                            if (!marker) return;
-                            this.safeMapSet(marker, null);
-                            if (typeof marker.setLabel === 'function') {
-                                try { marker.setLabel(null); } catch (_) { }
-                            }
-                        });
-                        simpleMarkers.forEach((marker) => {
-                            if (!marker) return;
-                            this.safeMapSet(marker, null);
-                            if (typeof marker.setLabel === 'function') {
-                                try { marker.setLabel(null); } catch (_) { }
-                            }
-                        });
-                        if (centerMarker) {
-                            this.safeMapSet(centerMarker, null);
-                        }
-                        if (manager) {
-                            manager.markers = [];
-                            manager.markersByType = {};
-                            manager.markersByPid = {};
-                            manager.typeClusterers = {};
-                            manager.lastFilteredPoints = [];
-                            manager.lastVisibleMarkerPids = new Set();
-                        }
-                        return {
-                            ok: true,
-                            poi_generation: generation,
-                            manager_cleared: !!manager,
-                            manager_markers_cleared: managerMarkers.length,
-                            simple_markers_cleared: simpleMarkers.length,
-                            center_marker_cleared: !!centerMarker
-                        };
-                    };
-
-                    if (immediate) {
-                        try {
-                            return Promise.resolve(clearTask());
-                        } catch (err) {
-                            return Promise.resolve({
-                                ok: false,
-                                reason: 'clear_layers_immediate_failed',
-                                error: err && err.message ? err.message : String(err)
-                            });
-                        }
-                    }
-
-                    const handle = this.enqueuePoiMapWrite(clearTask, {
-                        key: `clear_layers:${reason}`,
-                        replaceExisting: false,
-                        meta: {
-                            reason: `poi_clear_layers:${reason}`,
-                            manager_markers: managerMarkers.length,
-                            simple_markers: simpleMarkers.length,
-                            clear_center_marker: !!centerMarker
-                        }
-                    });
-                    return Promise.resolve(handle && handle.promise).catch(() => ({
-                        ok: false,
-                        reason: 'clear_layers_failed'
-                    }));
-                },
                 clearAnalysisLayers() {
                     if (this.abortController) {
                         this.abortController.abort();
@@ -2214,14 +838,24 @@
                     this.isGeneratingGrid = false;
                     this.resetH3AnalysisState();
 
-                    this.clearPoiOverlayLayers({
-                        reason: 'clear_analysis_layers',
-                        clearManager: true,
-                        clearSimpleMarkers: true,
-                        resetFilterPanel: true
-                    });
+                    if (this.markerManager) {
+                        if (this.markerManager.markers) {
+                            this.markerManager.markers.forEach(m => m.setMap(null));
+                        }
+                        if (this.markerManager.destroyClusterers) {
+                            this.markerManager.destroyClusterers();
+                        }
+                        this.markerManager = null;
+                    }
+                    if (this.poiMarkers) {
+                        this.poiMarkers.forEach(m => m.setMap(null));
+                        this.poiMarkers = [];
+                    }
                     this.clearAoiMarkers();
                     this.resetRoadSyntaxState();
+
+                    const filterContainer = document.getElementById('filtersContainer');
+                    if (filterContainer) filterContainer.innerHTML = '';
 
                     if (this.mapCore) {
                         if (this.mapCore.clearGridPolygons) {
@@ -2280,35 +914,6 @@
                         this.mapCore.clearGridPolygons();
                     }
                 },
-                isH3PanelActive() {
-                    return this.step === 3 && this.activeStep3Panel === 'h3';
-                },
-                clearH3GridDisplayOnLeave() {
-                    if (!this.mapCore || typeof this.mapCore.clearGridPolygons !== 'function') return;
-                    this.mapCore.clearGridPolygons();
-                },
-                restoreH3GridDisplayOnEnter() {
-                    if (!this.isH3PanelActive()) return;
-                    if (!this.mapCore) return;
-                    const shouldRenderAnalysis = this.h3MainStage !== 'params'
-                        && Array.isArray(this.h3AnalysisGridFeatures)
-                        && this.h3AnalysisGridFeatures.length > 0;
-                    if (shouldRenderAnalysis) {
-                        this.renderH3BySubTab();
-                        return;
-                    }
-                    const plainGridFeatures = Array.isArray(this.h3GridFeatures) && this.h3GridFeatures.length
-                        ? this.h3GridFeatures
-                        : (Array.isArray(this.h3AnalysisGridFeatures) ? this.h3AnalysisGridFeatures : []);
-                    if (plainGridFeatures.length && typeof this.mapCore.setGridFeatures === 'function') {
-                        this.mapCore.setGridFeatures(plainGridFeatures, {
-                            strokeColor: '#2c6ecb',
-                            strokeWeight: 1.1,
-                            fillOpacity: 0,
-                            webglBatch: true,
-                        });
-                    }
-                },
                 async onH3ResolutionChange() {
                     const rawRing = this.getIsochronePolygonRing();
                     if (!rawRing) {
@@ -2346,17 +951,36 @@
                         step: this.step,
                         panel: this.activeStep3Panel || ''
                     });
-                    this.applySimplifyBasemapStyle();
                     this.applySimplifyPointVisibility();
                 },
-                applySimplifyBasemapStyle() {
-                    if (!this.mapCore || typeof this.mapCore.setBasemapMuted !== 'function') return;
-                    const muted = !!this.h3BasemapMuted;
-                    this.mapCore.setBasemapMuted(muted);
-                    console.info('[basemap-simplify]', {
-                        basemap_muted: muted,
-                        source: this.basemapSource || ''
-                    });
+                applySimplifyPointVisibility() {
+                    const hide = !!this.pointSimplifyEnabled;
+                    const panel = this.activeStep3Panel || '';
+                    const showMarkers = panel !== 'syntax';
+
+                    if (this.markerManager && typeof this.markerManager.setHideAllPoints === 'function') {
+                        if (typeof this.markerManager.setShowMarkers === 'function') {
+                            this.markerManager.setShowMarkers(showMarkers);
+                        }
+                        this.markerManager.setHideAllPoints(hide);
+                        this.markerManager.applyFilters();
+                    }
+
+                    if (this.marker) {
+                        if (hide) {
+                            this.marker.setMap(null);
+                        } else if (this.selectedPoint && this.mapCore && this.mapCore.map) {
+                            this.marker.setMap(this.mapCore.map);
+                        }
+                    }
+
+                    if (!this.markerManager && Array.isArray(this.poiMarkers)) {
+                        if (hide) {
+                            this.poiMarkers.forEach(m => m && m.setMap && m.setMap(null));
+                        } else if (this.allPoisDetails && this.allPoisDetails.length > 0) {
+                            this.toggleCategory();
+                        }
+                    }
                 },
                 async onBasemapSourceChange() {
                     const allowedSources = ['amap', 'osm', 'tianditu'];
@@ -2392,7 +1016,6 @@
                             }
                         }
                     }
-                    this.applySimplifyBasemapStyle();
                     this.applySimplifyPointVisibility();
                 },
                 async generateH3Grid() {
@@ -2434,22 +1057,16 @@
                         this.h3GridFeatures = data.features || [];
                         this.h3GridCount = Number.isFinite(data.count) ? data.count : this.h3GridFeatures.length;
 
-                        if (this.isH3PanelActive() && this.mapCore && this.mapCore.setGridFeatures) {
+                        if (this.mapCore && this.mapCore.setGridFeatures) {
                             this.mapCore.setGridFeatures(this.h3GridFeatures, {
                                 strokeColor: '#2c6ecb',
                                 strokeWeight: 1.1,
                                 fillOpacity: 0,
-                                webglBatch: true,
                             });
-                        } else {
-                            this.clearH3GridDisplayOnLeave();
                         }
-                        const baseStatus = this.h3GridCount > 0
+                        this.h3GridStatus = this.h3GridCount > 0
                             ? `已生成 ${this.h3GridCount} 个 H3 网格`
                             : '已生成网络，但当前范围无可用网格';
-                        this.h3GridStatus = this.isH3PanelActive()
-                            ? baseStatus
-                            : `${baseStatus}（已就绪，切换到“网格”查看）`;
                     } catch (e) {
                         console.error(e);
                         this.h3GridStatus = '网络生成失败: ' + e.message;
@@ -2475,8 +1092,6 @@
                         fitView: true,
                         zoomMin: 16,
                         animate: true,
-                        preserveFill: true,
-                        animateFill: false,
                         strokeColor: '#22d3ee',
                         pulseColor: '#ecfeff'
                     });
@@ -2553,8 +1168,7 @@
                     const url = this.getArcgisSnapshotUrl();
                     if (!url) return '';
                     if (String(url).startsWith('data:')) return url;
-                    const joiner = String(url).includes('?') ? '&' : '?';
-                    return `${url}${joiner}v=${this.h3ArcgisImageVersion}`;
+                    return `${url}?v=${this.h3ArcgisImageVersion}`;
                 },
                 _normalizeArcgisSnapshotUrl(rawUrl) {
                     const raw = String(rawUrl || '').trim();
@@ -2593,12 +1207,7 @@
                 },
                 tryRefocusSelectedGrid() {
                     if (!this.selectedH3Id || !this.mapCore || !this.mapCore.focusGridCellById) return;
-                    this.mapCore.focusGridCellById(this.selectedH3Id, {
-                        panTo: false,
-                        animate: false,
-                        preserveFill: true,
-                        animateFill: false
-                    });
+                    this.mapCore.focusGridCellById(this.selectedH3Id, { panTo: false, animate: false });
                 },
                 _quantile(sortedValues, q) {
                     if (!Array.isArray(sortedValues) || sortedValues.length === 0) return 0;
@@ -3297,7 +1906,7 @@
                         noDataLabel: `无数据（样本<${this.h3EntropyMinPoi}）`,
                         noDataColor: '#d1d5db',
                     };
-                    this.mapCore.setGridFeatures(styled, { fillOpacity: 0.22, strokeWeight: 1.2, webglBatch: true });
+                    this.mapCore.setGridFeatures(styled, { fillOpacity: 0.22, strokeWeight: 1.2 });
                     this.tryRefocusSelectedGrid();
                 },
                 _interpolateHexColor(fromHex, toHex, t) {
@@ -3501,7 +2110,6 @@
                         fillOpacity: 0.22,
                         strokeWeight: 1.2,
                         structureBoundaryEdges: false,
-                        webglBatch: true,
                     });
                     this.h3StructureRenderStats = null;
                     this.tryRefocusSelectedGrid();
@@ -3540,7 +2148,7 @@
                         props.strokeWeight = 1;
                         return { type: feature.type, geometry: feature.geometry, properties: props };
                     });
-                    this.mapCore.setGridFeatures(styled, { fillOpacity: 0.22, strokeWeight: 1.2, webglBatch: true });
+                    this.mapCore.setGridFeatures(styled, { fillOpacity: 0.22, strokeWeight: 1.2 });
                     this.tryRefocusSelectedGrid();
                 },
                 _renderGapMap() {
@@ -3577,14 +2185,10 @@
                         props.strokeWeight = 1;
                         return { type: feature.type, geometry: feature.geometry, properties: props };
                     });
-                    this.mapCore.setGridFeatures(styled, { fillOpacity: 0.22, strokeWeight: 1.2, webglBatch: true });
+                    this.mapCore.setGridFeatures(styled, { fillOpacity: 0.22, strokeWeight: 1.2 });
                     this.tryRefocusSelectedGrid();
                 },
                 renderH3BySubTab() {
-                    if (!this.isH3PanelActive()) {
-                        this.clearH3GridDisplayOnLeave();
-                        return;
-                    }
                     if (!this.h3AnalysisGridFeatures || !this.h3AnalysisGridFeatures.length) {
                         this.h3Legend = null;
                         return;
@@ -3622,23 +2226,27 @@
                         if (!chart) chart = echarts.init(structureEl);
                         this.h3StructureChart = chart;
                         const summary = this.h3DerivedStats.structureSummary || {};
-                        const structureMode = this.h3StructureFillMode === 'lisa_i' ? 'lisa_i' : 'gi_z';
                         const giStats = summary.giZStats || {};
                         const lisaStats = summary.lisaIStats || {};
                         const labels = ['均值', '中位数', 'P90', 'P10', '最小', '最大'];
-                        const activeStats = structureMode === 'lisa_i' ? lisaStats : giStats;
-                        const activeSeriesName = structureMode === 'lisa_i' ? 'LISA I' : 'Gi* Z';
-                        const activeSeriesColor = structureMode === 'lisa_i' ? '#0f766e' : '#b91c1c';
-                        const activeValues = [
-                            this._toNumber(activeStats.mean, 0),
-                            this._toNumber(activeStats.p50, 0),
-                            this._toNumber(activeStats.p90, 0),
-                            this._toNumber(activeStats.p10, 0),
-                            this._toNumber(activeStats.min, 0),
-                            this._toNumber(activeStats.max, 0),
+                        const giValues = [
+                            this._toNumber(giStats.mean, 0),
+                            this._toNumber(giStats.p50, 0),
+                            this._toNumber(giStats.p90, 0),
+                            this._toNumber(giStats.p10, 0),
+                            this._toNumber(giStats.min, 0),
+                            this._toNumber(giStats.max, 0),
+                        ];
+                        const lisaValues = [
+                            this._toNumber(lisaStats.mean, 0),
+                            this._toNumber(lisaStats.p50, 0),
+                            this._toNumber(lisaStats.p90, 0),
+                            this._toNumber(lisaStats.p10, 0),
+                            this._toNumber(lisaStats.min, 0),
+                            this._toNumber(lisaStats.max, 0),
                         ];
                         chart.setOption({
-                            title: { text: `结构连续指标概览（${activeSeriesName}）`, left: 'center', top: 2, textStyle: { fontSize: 12 } },
+                            title: { text: '结构连续指标概览', left: 'center', top: 2, textStyle: { fontSize: 12 } },
                             grid: { left: 44, right: 14, top: 28, bottom: 24, containLabel: true },
                             legend: { top: 4, right: 8, itemWidth: 10, itemHeight: 8, textStyle: { fontSize: 11 } },
                             xAxis: { type: 'value', splitLine: { lineStyle: { color: '#eceff3' } } },
@@ -3650,11 +2258,18 @@
                             },
                             series: [
                                 {
-                                    name: activeSeriesName,
+                                    name: 'Gi* Z',
                                     type: 'bar',
-                                    data: activeValues,
+                                    data: giValues,
                                     barWidth: 10,
-                                    itemStyle: { color: activeSeriesColor },
+                                    itemStyle: { color: '#b91c1c' },
+                                },
+                                {
+                                    name: 'LISA I',
+                                    type: 'bar',
+                                    data: lisaValues,
+                                    barWidth: 10,
+                                    itemStyle: { color: '#0f766e' },
                                 }
                             ]
                         }, true);
@@ -3767,10 +2382,6 @@
                 },
                 renderH3AnalysisGrid(metricKey) {
                     const source = this.h3AnalysisGridFeatures;
-                    if (!this.isH3PanelActive()) {
-                        this.clearH3GridDisplayOnLeave();
-                        return;
-                    }
                     if (!Array.isArray(source) || source.length === 0 || !this.mapCore || !this.mapCore.setGridFeatures) {
                         this.h3Legend = null;
                         return;
@@ -3824,7 +2435,6 @@
                         structureBoundaryEdges: false,
                         structureBoundaryGi: false,
                         structureBoundaryLisa: false,
-                        webglBatch: true,
                     });
                     this.tryRefocusSelectedGrid();
                 },
@@ -3868,9 +2478,6 @@
                     if (!this.h3AnalysisGridFeatures.length) return;
                     if (this.h3SubTab !== 'structure_map') return;
                     this._renderStructureMapStandalone();
-                    this.$nextTick(() => {
-                        this.updateDecisionCards();
-                    });
                 },
                 async refreshMetricMapView() {
                     if (!this.h3AnalysisGridFeatures.length) return;
@@ -3988,33 +2595,10 @@
                 hasH3GridForExport() {
                     return Array.isArray(this.h3GridFeatures) && this.h3GridFeatures.length > 0;
                 },
-                hasH3AnalysisForDisplay() {
-                    return Array.isArray(this.h3AnalysisGridFeatures)
-                        && this.h3AnalysisGridFeatures.length > 0;
-                },
                 hasH3AnalysisForExport() {
                     return Array.isArray(this.h3AnalysisGridFeatures)
                         && this.h3AnalysisGridFeatures.length > 0
                         && !!this.h3AnalysisSummary;
-                },
-                ensureH3PanelEntryState() {
-                    const hasAnalysis = this.hasH3AnalysisForDisplay();
-                    if (!hasAnalysis) {
-                        this.h3MainStage = 'params';
-                        this.h3ParamsSubTab = 'grid';
-                        if (!this.h3GridFeatures.length && !this.isGeneratingGrid && !this.isComputingH3Analysis) {
-                            this.h3GridStatus = '已进入网格参数页，请点击“计算分析”';
-                        }
-                        return;
-                    }
-
-                    if (this.h3MainStage === 'params' || !['analysis', 'diagnosis', 'evaluate'].includes(this.h3MainStage)) {
-                        this.h3MainStage = 'analysis';
-                    }
-                    const currentTabs = this.getH3CurrentStageTabs();
-                    if (!currentTabs.includes(this.h3SubTab)) {
-                        this.h3SubTab = this.getH3DefaultSubTabByStage(this.h3MainStage);
-                    }
                 },
                 _resolveH3ExportSourceFeatures() {
                     if (this.h3ExportScope === 'analysis_result') {
@@ -4266,7 +2850,7 @@
                             use_arcgis: true,
                             arcgis_python_path: this.h3ArcgisPythonPath || null,
                             arcgis_neighbor_ring: neighborRing,
-                            arcgis_export_image: false,
+                            arcgis_export_image: true,
                             arcgis_timeout_sec: 240
                         };
 
@@ -4299,27 +2883,18 @@
                         this.h3GridCount = Number.isFinite(grid.count) ? grid.count : this.h3AnalysisGridFeatures.length;
                         this.h3AnalysisSummary = data.summary || null;
                         this.h3AnalysisCharts = data.charts || null;
-                        // 分析完成后默认进入“分析”主栏，避免停留在参数页。
-                        this.h3MainStage = 'analysis';
-                        this.h3SubTab = this.getH3DefaultSubTabByStage('analysis');
                         this.h3ArcgisSnapshotLoadError = false;
                         this.h3ArcgisImageVersion = Date.now();
                         setProgress(4, '正在计算衍生指标');
                         this.computeH3DerivedStats();
-                        const baseStatus = this.h3GridCount > 0
+                        setProgress(5, '正在渲染图层与图表');
+                        this.renderH3BySubTab();
+                        await this.$nextTick();
+                        this.updateH3Charts();
+                        this.updateDecisionCards();
+                        this.h3GridStatus = this.h3GridCount > 0
                             ? `分析完成：${this.h3GridCount} 个网格，${(this.h3AnalysisSummary && this.h3AnalysisSummary.poi_count) || 0} 个POI`
                             : '分析完成，但当前范围无可用网格';
-                        if (this.isH3PanelActive()) {
-                            setProgress(5, '正在渲染图层与图表');
-                            this.renderH3BySubTab();
-                            await this.$nextTick();
-                            this.updateH3Charts();
-                            this.updateDecisionCards();
-                            this.h3GridStatus = baseStatus;
-                        } else {
-                            this.clearH3GridDisplayOnLeave();
-                            this.h3GridStatus = `${baseStatus}（已就绪，切换到“网格”查看）`;
-                        }
                     } catch (e) {
                         console.error(e);
                         this.h3GridStatus = '网格分析失败: ' + e.message;
@@ -4331,95 +2906,170 @@
                         this.isComputingH3Analysis = false;
                     }
                 },
-                async generateH3ArcgisSnapshot() {
-                    if (this.isComputingH3Analysis || this.isGeneratingH3ArcgisSnapshot) return;
-                    if (!this.h3AnalysisGridFeatures || this.h3AnalysisGridFeatures.length === 0) {
-                        this.h3GridStatus = '请先完成网格分析，再生成结构快照';
+                selectStep3Panel(panelId) {
+                    if (this.isDraggingNav) return;
+                    if (panelId === 'h3_settings') {
+                        panelId = 'h3';
+                    }
+                    if (!this.isStep3PanelVisible(panelId)) return;
+                    const previousPanel = this.activeStep3Panel;
+                    this.activeStep3Panel = panelId;
+                    if (previousPanel === 'syntax' && panelId !== 'syntax') {
+                        this.suspendRoadSyntaxDisplay();
+                    }
+                    if (panelId !== 'h3') {
+                        this.h3ExportMenuOpen = false;
+                    }
+                    if (panelId === 'poi') {
+                        this.applySimplifyPointVisibility();
+                        setTimeout(() => this.resizePoiChart(), 0);
                         return;
                     }
-                    const rawRing = this.getIsochronePolygonRing();
-                    if (!rawRing) {
-                        this.h3GridStatus = '当前无有效范围，无法生成结构快照';
-                        return;
-                    }
-                    this.isGeneratingH3ArcgisSnapshot = true;
-                    this.h3ArcgisSnapshotLoadError = false;
-                    const startedAt = Date.now();
-                    this.h3GridStatus = '正在生成 ArcGIS 结构快照...';
-                    try {
-                        const polygon = rawRing.map(pt => {
-                            if (Array.isArray(pt)) return [pt[0], pt[1]];
-                            if (pt && typeof pt.lng === 'number') return [pt.lng, pt.lat];
-                            return pt;
-                        }).filter(pt => Array.isArray(pt) && pt.length >= 2);
-                        const neighborRing = Math.max(1, Math.min(3, Math.round(this._toNumber(this.h3NeighborRing, 1))));
-                        const analysisPois = this._buildH3AnalysisPois();
-                        if (!analysisPois.length) {
-                            throw new Error('当前“分析POI”配置下无可计算样本，请先勾选至少一个有数据的POI分类');
+                    if (panelId === 'h3') {
+                        this.h3MainStage = 'params';
+                        this.h3ParamsSubTab = 'grid';
+                        this.syncH3PoiFilterSelection(false);
+                        if (!this.h3GridFeatures.length && !this.isGeneratingGrid && !this.isComputingH3Analysis) {
+                            this.h3GridStatus = '已进入网格参数页，请点击“计算分析”';
                         }
-                        const payload = {
-                            polygon: polygon,
-                            resolution: this.h3GridResolution,
-                            coord_type: 'gcj02',
-                            include_mode: this.h3GridIncludeMode,
-                            min_overlap_ratio: this.h3GridIncludeMode === 'intersects' ? this.h3GridMinOverlapRatio : 0,
-                            pois: analysisPois,
-                            poi_coord_type: 'gcj02',
-                            neighbor_ring: neighborRing,
-                            use_arcgis: true,
-                            arcgis_python_path: this.h3ArcgisPythonPath || null,
-                            arcgis_neighbor_ring: neighborRing,
-                            arcgis_export_image: true,
-                            arcgis_timeout_sec: 240
-                        };
-                        const res = await fetch('/api/v1/analysis/h3-metrics', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(payload),
-                        });
-                        if (!res.ok) {
-                            let detail = '';
-                            try {
-                                const errJson = await res.json();
-                                if (errJson && typeof errJson === 'object') {
-                                    detail = errJson.detail || JSON.stringify(errJson);
-                                } else {
-                                    detail = String(errJson || '');
+                        this.applySimplifyPointVisibility();
+                        return;
+                    }
+                    if (panelId === 'syntax') {
+                        this.setRoadSyntaxMainTab('params', { refresh: false, syncMetric: false });
+                        this.resumeRoadSyntaxDisplay();
+                    }
+                    this.applySimplifyPointVisibility();
+                },
+                onStep3DragStart(index, event) {
+                    this.dragIndex = index;
+                    this.dragOverIndex = index;
+                    this.dragInsertPosition = 'before';
+                    this.isDraggingNav = true;
+                    if (event && event.dataTransfer) {
+                        event.dataTransfer.effectAllowed = 'move';
+                    }
+                },
+                onStep3DragOver(index, event) {
+                    if (event) event.preventDefault();
+                    this.dragOverIndex = index;
+                    const bounds = event.currentTarget.getBoundingClientRect();
+                    const midY = bounds.top + bounds.height / 2;
+                    this.dragInsertPosition = event.clientY < midY ? 'before' : 'after';
+                },
+                onStep3Drop(index) {
+                    if (this.dragIndex === null) {
+                        this.dragOverIndex = null;
+                        this.dragInsertPosition = null;
+                        return;
+                    }
+                    const items = this.step3NavItems.slice();
+                    const moved = items.splice(this.dragIndex, 1)[0];
+                    let insertIndex = index;
+                    if (this.dragInsertPosition === 'after') {
+                        insertIndex = index + 1;
+                    }
+                    if (this.dragIndex < insertIndex) {
+                        insertIndex -= 1;
+                    }
+                    items.splice(insertIndex, 0, moved);
+                    this.step3NavItems = items;
+                    this.dragIndex = null;
+                    this.dragOverIndex = null;
+                    this.dragInsertPosition = null;
+                    this.isDraggingNav = false;
+                },
+                onStep3DragEnd() {
+                    this.dragIndex = null;
+                    this.dragOverIndex = null;
+                    this.dragInsertPosition = null;
+                    this.isDraggingNav = false;
+                },
+                goToStep(targetStep) {
+                    this.confirmNavigation(() => {
+                        if (targetStep < this.step) {
+                            // Backwards navigation cleanup
+                            if (this.step === 3 && targetStep <= 2) {
+                                // Clear POI markers & data
+                                if (this.markerManager) {
+                                    if (this.markerManager.markers) {
+                                        this.markerManager.markers.forEach(m => m.setMap(null));
+                                    }
+                                    if (this.markerManager.destroyClusterers) {
+                                        this.markerManager.destroyClusterers();
+                                    }
+                                    this.markerManager = null;
                                 }
-                            } catch (_) {
-                                try { detail = await res.text(); } catch (_) { }
+                                if (this.poiMarkers) {
+                                    this.poiMarkers.forEach(m => m.setMap(null));
+                                    this.poiMarkers = [];
+                                }
+                                this.clearAoiMarkers();
+                                this.allAoisDetails = [];
+                                this.aoiSamplePoints = 0;
+                                this.aoiTotalCalls = 0;
+                                this.resetRoadSyntaxState();
+                                // Clear Legacy Filter Panel
+                                const filterContainer = document.getElementById('filtersContainer');
+                                if (filterContainer) filterContainer.innerHTML = '';
+
+                                this.poiStatus = '';
+                                this.aoiStatus = '';
+                                this.clearH3Grid();
                             }
-                            throw new Error(detail || '结构快照生成失败');
+
+                            if (this.step >= 2 && targetStep <= 1) {
+                                // Clear Isochrone Polygon
+                                if (this.mapCore && this.mapCore.clearCustomPolygons) {
+                                    this.mapCore.clearCustomPolygons();
+                                }
+                                this.clearAoiMarkers();
+                                this.allAoisDetails = [];
+                                this.aoiSamplePoints = 0;
+                                this.aoiTotalCalls = 0;
+                                this.aoiStatus = '';
+                                this.resetRoadSyntaxState();
+                                this.lastIsochroneGeoJSON = null;
+                                this.clearH3Grid();
+                            }
                         }
-                        const data = await res.json();
-                        const grid = data.grid || {};
-                        if (Array.isArray(grid.features) && grid.features.length) {
-                            this.h3AnalysisGridFeatures = grid.features;
-                            this.h3GridFeatures = this.h3AnalysisGridFeatures;
-                            this.h3GridCount = Number.isFinite(grid.count) ? grid.count : this.h3AnalysisGridFeatures.length;
+                        this.step = targetStep;
+                    });
+                },
+                confirmNavigation(callback) {
+                    if (this.isFetchingPois || this.isFetchingAois) {
+                        if (confirm('数据抓取正在进行中，离开将取消未完成的任务。确定要离开吗？')) {
+                            this.cancelFetch();
+                            callback();
                         }
-                        this.h3AnalysisSummary = data.summary || this.h3AnalysisSummary;
-                        this.h3AnalysisCharts = data.charts || this.h3AnalysisCharts;
-                        this.computeH3DerivedStats();
-                        this.h3ArcgisImageVersion = Date.now();
-                        this.h3ArcgisSnapshotLoadError = false;
-                        const sec = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
-                        if (this.isH3PanelActive()) {
-                            this.renderH3BySubTab();
-                            await this.$nextTick();
-                            this.updateH3Charts();
-                            this.updateDecisionCards();
-                            this.h3GridStatus = `ArcGIS 结构快照已生成（${sec}s）`;
-                        } else {
-                            this.clearH3GridDisplayOnLeave();
-                            this.h3GridStatus = `ArcGIS 结构快照已生成（${sec}s），切换到“网格”查看`;
-                        }
-                    } catch (e) {
-                        console.error(e);
-                        this.h3GridStatus = '结构快照生成失败: ' + ((e && e.message) ? e.message : String(e));
-                    } finally {
-                        this.isGeneratingH3ArcgisSnapshot = false;
+                    } else {
+                        callback();
                     }
+                },
+                cancelFetch() {
+                    if (this.abortController) {
+                        this.abortController.abort();
+                        this.abortController = null;
+                    }
+                    this.isFetchingPois = false;
+                    this.isFetchingAois = false;
+                    this.poiStatus = "任务已取消";
+                    this.aoiStatus = "任务已取消";
+                    this.resetFetchSubtypeProgress();
+                },
+                backToHome() {
+                    this.confirmNavigation(() => {
+                        this.destroyPlaceSearch();
+                        this.clearAnalysisLayers();
+                        this.sidebarView = 'start';
+                        this.step = 1;
+                        this.selectedPoint = null;
+                        if (this.marker) {
+                            this.marker.setMap(null);
+                            this.marker = null;
+                        }
+                        this.errorMessage = '';
+                    });
                 },
                 loadAMapScript(key, securityCode) {
                     return new Promise((resolve, reject) => {
@@ -4569,9 +3219,6 @@
                     }
                 },
                 initMap() {
-                    const markRaw = (window.Vue && typeof window.Vue.markRaw === 'function')
-                        ? window.Vue.markRaw
-                        : (value) => value;
                     const mapCore = new MapCore('container', {
                         center: { lng: 112.9388, lat: 28.2282 },
                         zoom: 13,
@@ -4584,10 +3231,9 @@
                         onGridFeatureClick: (payload) => this.onH3GridFeatureClick(payload)
                     });
                     mapCore.initMap();
-                    this.mapCore = markRaw(mapCore);
+                    this.mapCore = mapCore;
                     this.pointSimplifyEnabled = !!(this.pointSimplifyEnabled || this.h3BasemapMuted);
                     this.h3BasemapMuted = this.pointSimplifyEnabled;
-                    this.applySimplifyBasemapStyle();
                     this.applySimplifyPointVisibility();
                     if (this.basemapSource === 'tianditu' && mapCore.lastBasemapError) {
                         this.tdtDiag = {
@@ -4645,6 +3291,9 @@
                         if (this.isRoadSyntaxMetricViewActive()) {
                             this.scheduleRoadSyntaxViewportRefresh('zoomend');
                             this.roadSyntaxLogOverlayHealth('zoomend');
+                        }
+                        if (this.isRoadSyntaxPanelActive() && this.resolveRoadSyntaxActiveMetric() === 'connectivity') {
+                            this.scheduleRoadSyntaxNodeRefresh();
                         }
                         if (this.markerManager && typeof this.markerManager.logCoordinateHealth === 'function') {
                             this.markerManager.logCoordinateHealth('road-syntax:zoomend');
@@ -4844,54 +3493,8 @@
                         return;
                     }
                     if (!this.mapCore || !this.mapCore.map) return;
-                    const markRaw = (window.Vue && typeof window.Vue.markRaw === 'function')
-                        ? window.Vue.markRaw
-                        : (value) => value;
-                    this.marker = markRaw(new AMap.Marker({ position: markerPos }));
+                    this.marker = new AMap.Marker({ position: markerPos });
                     this.mapCore.map.add(this.marker);
-                },
-                resolveMapCenterTarget() {
-                    if (this.selectedPoint && Number.isFinite(Number(this.selectedPoint.lng)) && Number.isFinite(Number(this.selectedPoint.lat))) {
-                        return [Number(this.selectedPoint.lng), Number(this.selectedPoint.lat)];
-                    }
-                    const polygon = this.getIsochronePolygonPoints();
-                    if (Array.isArray(polygon) && polygon.length >= 3) {
-                        let minLng = Infinity;
-                        let minLat = Infinity;
-                        let maxLng = -Infinity;
-                        let maxLat = -Infinity;
-                        polygon.forEach((pt) => {
-                            if (!Array.isArray(pt) || pt.length < 2) return;
-                            const lng = Number(pt[0]);
-                            const lat = Number(pt[1]);
-                            if (!Number.isFinite(lng) || !Number.isFinite(lat)) return;
-                            if (lng < minLng) minLng = lng;
-                            if (lat < minLat) minLat = lat;
-                            if (lng > maxLng) maxLng = lng;
-                            if (lat > maxLat) maxLat = lat;
-                        });
-                        if (Number.isFinite(minLng) && Number.isFinite(minLat) && Number.isFinite(maxLng) && Number.isFinite(maxLat)) {
-                            return [(minLng + maxLng) / 2, (minLat + maxLat) / 2];
-                        }
-                    }
-                    const center = this.mapCore && this.mapCore.center ? this.mapCore.center : null;
-                    if (center && Number.isFinite(Number(center.lng)) && Number.isFinite(Number(center.lat))) {
-                        return [Number(center.lng), Number(center.lat)];
-                    }
-                    return [112.9388, 28.2282];
-                },
-                goMapBackToCenter() {
-                    const map = this.mapCore && this.mapCore.map ? this.mapCore.map : null;
-                    if (!map) return;
-                    const target = this.resolveMapCenterTarget();
-                    const currentZoom = Number(map.getZoom ? map.getZoom() : NaN);
-                    if (typeof map.setZoomAndCenter === 'function' && Number.isFinite(currentZoom)) {
-                        map.setZoomAndCenter(currentZoom, target);
-                        return;
-                    }
-                    if (typeof map.setCenter === 'function') {
-                        map.setCenter(target);
-                    }
                 },
                 onCaptureTargetChange(target) {
                     const next = target === 'aoi' ? 'aoi' : 'poi';
@@ -4904,9 +3507,6 @@
                     }
                 },
                 isStep3PanelVisible(panelId) {
-                    if (panelId === 'syntax' && !this.roadSyntaxModulesReady) {
-                        return false;
-                    }
                     if (this.captureTarget === 'aoi') {
                         return panelId === 'aoi' || panelId === 'syntax';
                     }
@@ -4992,12 +3592,8 @@
                     this.resetRoadSyntaxState();
                     this.resetFetchSubtypeProgress();
 
-                    this.clearPoiOverlayLayers({
-                        reason: 'fetch_pois_start',
-                        clearManager: true,
-                        clearSimpleMarkers: true,
-                        resetFilterPanel: true
-                    });
+                    if (this.poiMarkers) this.poiMarkers.forEach(m => m.setMap(null));
+                    this.poiMarkers = [];
                     this.allPoisDetails = [];
 
                     try {
@@ -5078,7 +3674,11 @@
                         this.poiStatus = `完成！共找到 ${totalFetched} 个结果`;
 
                         // Integration with Legacy Filter Panel (single render path).
-                        this.updateLegacySystem(this.allPoisDetails);
+                        if (this.updateLegacySystem) {
+                            this.updateLegacySystem(this.allPoisDetails);
+                        } else {
+                            this.renderPois(this.allPoisDetails);
+                        }
 
                         setTimeout(() => {
                             this.step = 3; // Advance to Step 3 after short delay to see 100%
@@ -5102,257 +3702,8 @@
                 roadSyntaxMap() {
                     return (this.mapCore && this.mapCore.map) ? this.mapCore.map : null;
                 },
-                roadSyntaxQuantizeChannel(value, step = 24) {
-                    const safe = Number.isFinite(Number(value)) ? Number(value) : 0;
-                    const safeStep = Math.max(1, Number(step) || 1);
-                    return Math.max(0, Math.min(255, Math.round(safe / safeStep) * safeStep));
-                },
-                roadSyntaxQuantizeHexColor(color = '', step = 24) {
-                    const raw = String(color || '').trim();
-                    const hex = raw.startsWith('#') ? raw.slice(1) : raw;
-                    if (!/^[0-9a-fA-F]{6}$/.test(hex)) return '#9ca3af';
-                    const r = this.roadSyntaxQuantizeChannel(parseInt(hex.slice(0, 2), 16), step);
-                    const g = this.roadSyntaxQuantizeChannel(parseInt(hex.slice(2, 4), 16), step);
-                    const b = this.roadSyntaxQuantizeChannel(parseInt(hex.slice(4, 6), 16), step);
-                    return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
-                },
-                roadSyntaxNormalizeLayerStyleForBucket(style = null) {
-                    const raw = style || {};
-                    const colorStep = Math.max(1, Number(this.roadSyntaxStyleBucketColorStep || 24));
-                    const weightStep = Math.max(0.1, Number(this.roadSyntaxStyleBucketWeightStep || 0.5));
-                    const opacityStep = Math.max(0.02, Number(this.roadSyntaxStyleBucketOpacityStep || 0.08));
-                    const strokeWeightRaw = Number(raw.strokeWeight);
-                    const strokeOpacityRaw = Number(raw.strokeOpacity);
-                    const zIndexRaw = Number(raw.zIndex);
-                    return {
-                        strokeColor: this.roadSyntaxQuantizeHexColor(raw.strokeColor || '#9ca3af', colorStep),
-                        strokeWeight: Math.max(1, Math.round((Number.isFinite(strokeWeightRaw) ? strokeWeightRaw : 1.8) / weightStep) * weightStep),
-                        strokeOpacity: Math.max(0.08, Math.min(1, Math.round((Number.isFinite(strokeOpacityRaw) ? strokeOpacityRaw : 0.32) / opacityStep) * opacityStep)),
-                        zIndex: Number.isFinite(zIndexRaw) ? Math.round(zIndexRaw) : 90,
-                    };
-                },
-                roadSyntaxBuildLayerStyleBucketKey(style = null) {
-                    const s = this.roadSyntaxNormalizeLayerStyleForBucket(style);
-                    return `${s.strokeColor}|${s.strokeWeight}|${s.strokeOpacity}|${s.zIndex}`;
-                },
-                roadSyntaxCloneIndexSet(setLike = null) {
-                    const out = {};
-                    const source = setLike && typeof setLike === 'object' ? setLike : {};
-                    Object.keys(source).forEach((key) => {
-                        const idx = Number(key);
-                        if (!Number.isFinite(idx) || idx < 0) return;
-                        out[idx] = true;
-                    });
-                    return out;
-                },
-                roadSyntaxBuildLayerLodIndexSet(layerKey = '') {
-                    const key = String(layerKey || '');
-                    const cache = Object.assign({}, this.roadSyntaxLayerLodIndexCache || {});
-                    if (cache[key]) {
-                        return this.roadSyntaxCloneIndexSet(cache[key]);
-                    }
-                    const items = Array.isArray(this.roadSyntaxPolylineItems) ? this.roadSyntaxPolylineItems : [];
-                    if (!items.length) return {};
-
-                    const parsed = this.parseRoadSyntaxLayerKey(key);
-                    const metric = parsed.metric || this.resolveRoadSyntaxActiveMetric();
-                    const radiusLabel = parsed.radiusLabel || 'global';
-                    const metricField = this.resolveRoadSyntaxMetricField(metric, radiusLabel);
-                    const fallbackField = this.resolveRoadSyntaxFallbackField(metric);
-                    const rankField = this.resolveRoadSyntaxRankField(metric);
-                    const scored = [];
-                    for (let idx = 0; idx < items.length; idx += 1) {
-                        const item = items[idx] || {};
-                        const coords = Array.isArray(item.coords) ? item.coords : [];
-                        if (coords.length < 2) continue;
-                        const props = item.props || {};
-                        const rank = Number(rankField ? props[rankField] : NaN);
-                        const mainScore = Number(props[metricField]);
-                        const fallbackScore = Number(props[fallbackField]);
-                        const score = Number.isFinite(rank)
-                            ? this.clamp01(rank)
-                            : (Number.isFinite(mainScore)
-                                ? this.clamp01(mainScore)
-                                : (Number.isFinite(fallbackScore) ? this.clamp01(fallbackScore) : 0));
-                        scored.push({ idx, score });
-                    }
-                    if (!scored.length) return {};
-                    scored.sort((a, b) => (b.score - a.score) || (a.idx - b.idx));
-
-                    const cap = Math.max(80, Math.floor(Number(this.roadSyntaxLayerLodCap || 180)));
-                    const selected = [];
-                    if (scored.length <= cap) {
-                        scored.forEach((it) => selected.push(it.idx));
-                    } else {
-                        const headCount = Math.max(1, Math.min(cap, Math.floor(cap * 0.75)));
-                        for (let i = 0; i < headCount; i += 1) {
-                            selected.push(scored[i].idx);
-                        }
-                        const remain = cap - selected.length;
-                        if (remain > 0) {
-                            const tail = scored.slice(headCount);
-                            const step = tail.length / remain;
-                            for (let i = 0; i < remain; i += 1) {
-                                const pickIdx = Math.min(tail.length - 1, Math.floor(i * step));
-                                selected.push(tail[pickIdx].idx);
-                            }
-                        }
-                    }
-                    const out = {};
-                    selected.forEach((idx) => {
-                        const n = Number(idx);
-                        if (!Number.isFinite(n) || n < 0) return;
-                        out[n] = true;
-                    });
-                    cache[key] = out;
-                    this.roadSyntaxLayerLodIndexCache = cache;
-                    return this.roadSyntaxCloneIndexSet(out);
-                },
-                roadSyntaxResolveDesiredLayerVariant() {
-                    const total = Array.isArray(this.roadSyntaxPolylineItems) ? this.roadSyntaxPolylineItems.length : 0;
-                    if (!total) return 'full';
-                    if (typeof this.roadSyntaxResolveLodPolicy !== 'function') return 'full';
-                    const policy = this.roadSyntaxResolveLodPolicy(total);
-                    return (policy && policy.backboneOnly) ? 'lod' : 'full';
-                },
-                roadSyntaxResolveLayerRuntimeEntry(layer = null, variant = 'full') {
-                    const requested = String(variant || 'full');
-                    const base = layer && typeof layer === 'object' ? layer : null;
-                    if (!base) return null;
-                    if (requested === 'lod' && base.lodLayer && Array.isArray(base.lodLayer.overlays) && base.lodLayer.overlays.length) {
-                        return base.lodLayer;
-                    }
-                    return base;
-                },
-                roadSyntaxApplyVisibleIndexSet(indexSet = {}, reason = '') {
-                    const normalized = this.roadSyntaxCloneIndexSet(indexSet);
-                    this.roadSyntaxTargetVisibleLineSet = Object.assign({}, normalized);
-                    this.roadSyntaxAppliedVisibleLineSet = Object.assign({}, normalized);
-                    this.roadSyntaxOverlayCommitToken = Number(this.roadSyntaxOverlayCommitToken || 0) + 1;
-                    this.roadSyntaxOverlayLastCommitPath = 'pool_state_apply';
-                    this.roadSyntaxOverlayLastCommitReason = String(reason || 'switch');
-                },
-                roadSyntaxDisposeLayerEntry(layer = null, mapRef = null) {
-                    if (!layer) return;
-                    const map = mapRef || this.roadSyntaxMap();
-                    if (layer.overlayGroup) {
-                        this.roadSyntaxSetOverlayGroupVisible(layer.overlayGroup, false, map);
-                    }
-                    const overlays = Array.isArray(layer.overlays) ? layer.overlays : [];
-                    if (overlays.length) {
-                        this.roadSyntaxSetLinesVisible(overlays, false, map, { preferBatch: true });
-                    }
-                    if (layer.lodLayer) {
-                        this.roadSyntaxDisposeLayerEntry(layer.lodLayer, map);
-                    }
-                },
-                roadSyntaxBuildLayerFromStyles(layerKey = '', styles = [], options = {}) {
-                    const markRaw = (window.Vue && typeof window.Vue.markRaw === 'function')
-                        ? window.Vue.markRaw
-                        : (value) => value;
-                    const items = Array.isArray(this.roadSyntaxPolylineItems) ? this.roadSyntaxPolylineItems : [];
-                    const includeIndexSet = (options && options.includeIndexSet && typeof options.includeIndexSet === 'object')
-                        ? options.includeIndexSet
-                        : null;
-                    const variant = String((options && options.variant) || 'full');
-                    const zIndexBoost = Number((options && options.zIndexBoost) || 0);
-                    const buckets = Object.create(null);
-                    let featureCount = 0;
-                    const indexSet = {};
-                    let invalidPathCount = 0;
-                    let polylineCreateErrorCount = 0;
-                    const invalidPathSamples = [];
-                    for (let idx = 0; idx < items.length; idx += 1) {
-                        if (includeIndexSet && !includeIndexSet[idx]) continue;
-                        const item = items[idx] || {};
-                        const coords = Array.isArray(item.coords) ? item.coords : [];
-                        if (coords.length < 2) continue;
-                        featureCount += 1;
-                        indexSet[idx] = true;
-                        const rawStyle = this.roadSyntaxNormalizeLayerStyleForBucket(styles[idx] || null);
-                        const style = zIndexBoost
-                            ? Object.assign({}, rawStyle, { zIndex: (Number(rawStyle.zIndex) || 90) + zIndexBoost })
-                            : rawStyle;
-                        const bucketKey = this.roadSyntaxBuildLayerStyleBucketKey(style);
-                        if (!buckets[bucketKey]) {
-                            buckets[bucketKey] = { style, paths: [] };
-                        }
-                        buckets[bucketKey].paths.push(coords);
-                    }
-                    const overlays = [];
-                    const bucketValues = Object.values(buckets);
-                    bucketValues.forEach((bucket) => {
-                        const style = bucket.style || {};
-                        const pathsRaw = Array.isArray(bucket.paths) ? bucket.paths : [];
-                        if (!pathsRaw.length || !window.AMap) return;
-                        const safePaths = [];
-                        pathsRaw.forEach((path, pIdx) => {
-                            const safePath = this.normalizePath(path, 2, 'road_syntax.layer_build.path');
-                            if (!safePath.length) {
-                                invalidPathCount += 1;
-                                if (invalidPathSamples.length < 5) {
-                                    invalidPathSamples.push({
-                                        layer_key: String(layerKey || ''),
-                                        variant: String(variant || ''),
-                                        path_index: pIdx,
-                                        sample: this.roadSyntaxSummarizeCoordInput(Array.isArray(path) ? path[0] : path)
-                                    });
-                                }
-                                return;
-                            }
-                            safePaths.push(safePath);
-                        });
-                        if (!safePaths.length) return;
-                        safePaths.forEach((safePath) => {
-                            try {
-                                const line = markRaw(new AMap.Polyline({
-                                    path: safePath,
-                                    strokeColor: style.strokeColor || '#9ca3af',
-                                    strokeWeight: Number(style.strokeWeight) || 1.8,
-                                    strokeOpacity: Number(style.strokeOpacity) || 0.32,
-                                    zIndex: Number(style.zIndex) || 90,
-                                    bubble: true,
-                                    clickable: false,
-                                    cursor: 'default',
-                                }));
-                                overlays.push(line);
-                            } catch (_) {
-                                polylineCreateErrorCount += 1;
-                            }
-                        });
-                    });
-                    if (invalidPathCount > 0 || polylineCreateErrorCount > 0) {
-                        console.warn('[road-syntax] layer build skipped invalid paths', {
-                            layer_key: String(layerKey || ''),
-                            variant: String(variant || ''),
-                            invalid_path_count: invalidPathCount,
-                            polyline_create_error_count: polylineCreateErrorCount,
-                            sample_paths: invalidPathSamples
-                        });
-                    }
-                    let overlayGroup = null;
-                    try {
-                        if (window.AMap && typeof AMap.OverlayGroup === 'function' && overlays.length) {
-                            overlayGroup = markRaw(new AMap.OverlayGroup(overlays));
-                        }
-                    } catch (_) {
-                        overlayGroup = null;
-                    }
-                    return {
-                        layerKey: String(layerKey || ''),
-                        mode: 'bucket_pool',
-                        variant: variant,
-                        overlays,
-                        overlayGroup,
-                        bucketCount: bucketValues.length,
-                        featureCount,
-                        indexSet,
-                    };
-                },
                 roadSyntaxHasCache() {
                     if (Array.isArray(this.roadSyntaxPolylines) && this.roadSyntaxPolylines.length) return true;
-                    const pool = this.roadSyntaxLayerPool || {};
-                    if (Object.keys(pool).length > 0) return true;
                     const styleCache = this.roadSyntaxLayerStyleCache || {};
                     return Object.keys(styleCache).length > 0;
                 },
@@ -5364,9 +3715,6 @@
                 roadSyntaxSetStatus(text = '') {
                     this.roadSyntaxStatus = String(text || '');
                 },
-                roadSyntaxUseLegacyPoolStatus() {
-                    return false;
-                },
                 roadSyntaxLogOverlayHealth(reason = '', options = {}) {
                     const force = !!(options && options.force);
                     const throttleMs = Math.max(0, Number((options && options.throttleMs) || 1200));
@@ -5376,66 +3724,323 @@
                         return null;
                     }
                     this._roadSyntaxOverlayHealthLastAt = now;
-                    if (
-                        this.roadSyntaxUseArcgisWebgl
-                        && this.roadSyntaxWebglActive
-                        && this.roadSyntaxWebglPayload
-                    ) {
-                        const webglCount = Number((((this.roadSyntaxWebglPayload || {}).roads || {}).count) || 0);
-                        if (force || webglCount <= 0) {
-                            console.info('[road-syntax] overlay pool health', {
-                                reason: String(reason || ''),
-                                active_layer: String(this.roadSyntaxActiveLayerKey || ''),
-                                visible_lines: webglCount,
-                                applied_visible_lines: webglCount,
-                                target_visible_lines: webglCount,
-                                total_lines: webglCount,
-                                mode: 'arcgis_webgl',
-                            });
+                    const lines = Array.isArray(this.roadSyntaxPolylines) ? this.roadSyntaxPolylines : [];
+                    const visibleSet = this.roadSyntaxVisibleLineSet || {};
+                    const visibleIndexes = Object.keys(visibleSet)
+                        .map((v) => Number(v))
+                        .filter((v) => Number.isFinite(v) && v >= 0 && v < lines.length);
+                    const inspectIndexes = visibleIndexes.length
+                        ? visibleIndexes
+                        : lines.map((_, idx) => idx);
+                    const sampleLimit = 5;
+                    const invalidCount = { path: 0, endpoint: 0, line: 0 };
+                    const samples = [];
+
+                    const resolvePathMeta = (pathValue) => {
+                        let count = 0;
+                        let first = null;
+                        let last = null;
+                        if (Array.isArray(pathValue)) {
+                            count = pathValue.length;
+                            first = count > 0 ? pathValue[0] : null;
+                            last = count > 0 ? pathValue[count - 1] : null;
+                            return { count, first, last };
                         }
-                        return {
-                            inspectedLines: webglCount,
-                            visibleLines: webglCount,
-                            invalid: { path: 0, endpoint: 0, line: 0 },
-                            totalLines: webglCount,
-                        };
-                    }
-                    const appliedSet = (this.roadSyntaxAppliedVisibleLineSet && typeof this.roadSyntaxAppliedVisibleLineSet === 'object')
-                        ? this.roadSyntaxAppliedVisibleLineSet
-                        : {};
-                    const targetSet = (this.roadSyntaxTargetVisibleLineSet && typeof this.roadSyntaxTargetVisibleLineSet === 'object')
-                        ? this.roadSyntaxTargetVisibleLineSet
-                        : {};
-                    const totalCount = Array.isArray(this.roadSyntaxPolylineItems) ? this.roadSyntaxPolylineItems.length : 0;
-                    const appliedCount = Object.keys(appliedSet).length;
-                    const targetCount = Object.keys(targetSet).length;
-                    const visibleCount = appliedCount > 0
-                        ? appliedCount
-                        : (this.roadSyntaxActiveLayerKey ? totalCount : 0);
-                    if (force || visibleCount <= 0) {
-                        console.info('[road-syntax] overlay pool health', {
+                        if (!pathValue || typeof pathValue !== 'object') {
+                            return { count, first, last };
+                        }
+                        if (typeof pathValue.getLength === 'function') {
+                            try { count = Number(pathValue.getLength()) || 0; } catch (_) { count = 0; }
+                        } else if (typeof pathValue.length === 'number') {
+                            count = Number(pathValue.length) || 0;
+                        }
+                        if (count > 0) {
+                            if (typeof pathValue.getAt === 'function') {
+                                try { first = pathValue.getAt(0); } catch (_) { first = null; }
+                                try { last = pathValue.getAt(count - 1); } catch (_) { last = null; }
+                            } else {
+                                first = pathValue[0] || null;
+                                last = pathValue[count - 1] || null;
+                            }
+                        }
+                        return { count, first, last };
+                    };
+
+                    inspectIndexes.forEach((lineIdx) => {
+                        const line = lines[lineIdx];
+                        if (!line) {
+                            invalidCount.line += 1;
+                            if (samples.length < sampleLimit) {
+                                samples.push({ issue: 'missing-line', line_idx: lineIdx });
+                            }
+                            return;
+                        }
+                        let path = null;
+                        try {
+                            path = (typeof line.getPath === 'function') ? line.getPath() : null;
+                        } catch (_) {
+                            path = null;
+                        }
+                        const meta = resolvePathMeta(path);
+                        if (meta.count < 2) {
+                            invalidCount.path += 1;
+                            if (samples.length < sampleLimit) {
+                                samples.push({
+                                    issue: 'invalid-path',
+                                    line_idx: lineIdx,
+                                    path_count: meta.count
+                                });
+                            }
+                            return;
+                        }
+                        const first = this.normalizeLngLat(meta.first, 'road_syntax.overlay.path_endpoint');
+                        const last = this.normalizeLngLat(meta.last, 'road_syntax.overlay.path_endpoint');
+                        if (!first || !last) {
+                            invalidCount.endpoint += 1;
+                            if (samples.length < sampleLimit) {
+                                samples.push({
+                                    issue: 'invalid-endpoint',
+                                    line_idx: lineIdx,
+                                    first_raw: this.roadSyntaxSummarizeCoordInput(meta.first),
+                                    last_raw: this.roadSyntaxSummarizeCoordInput(meta.last)
+                                });
+                            }
+                        }
+                    });
+
+                    const invalidTotal = invalidCount.path + invalidCount.endpoint + invalidCount.line;
+                    if (force || invalidTotal > 0) {
+                        const level = invalidTotal > 0 ? 'warn' : 'info';
+                        console[level]('[road-syntax] overlay coordinate health', {
                             reason: String(reason || ''),
                             active_layer: String(this.roadSyntaxActiveLayerKey || ''),
-                            visible_lines: visibleCount,
-                            applied_visible_lines: appliedCount,
-                            target_visible_lines: targetCount,
-                            total_lines: totalCount,
-                            mode: 'bucket_pool',
+                            visible_lines: visibleIndexes.length,
+                            inspected_lines: inspectIndexes.length,
+                            invalid: invalidCount,
+                            samples: samples
                         });
                     }
                     return {
-                        inspectedLines: visibleCount,
-                        visibleLines: visibleCount,
-                        invalid: { path: 0, endpoint: 0, line: 0 },
-                        totalLines: totalCount,
+                        inspectedLines: inspectIndexes.length,
+                        visibleLines: visibleIndexes.length,
+                        invalid: invalidCount
                     };
+                },
+                roadSyntaxFormatReadyStatus(prefix = '图层预加载中', done = 0, total = 0) {
+                    const safeDone = Number.isFinite(Number(done)) ? Number(done) : 0;
+                    const safeTotal = Number.isFinite(Number(total)) ? Number(total) : 0;
+                    return `${prefix}：${safeDone}/${safeTotal}`;
+                },
+                roadSyntaxSetOverlayGroupVisible(group, visible, mapRef = null) {
+                    if (!group) return false;
+                    const map = mapRef || this.roadSyntaxMap();
+                    try {
+                        if (typeof group.setMap === 'function') {
+                            group.setMap(visible ? map : null);
+                            return true;
+                        }
+                        if (visible && typeof group.show === 'function') {
+                            group.show();
+                            return true;
+                        }
+                        if (!visible && typeof group.hide === 'function') {
+                            group.hide();
+                            return true;
+                        }
+                    } catch (_) { }
+                    return false;
+                },
+                roadSyntaxSetLinesVisible(lines, visible, mapRef = null, options = {}) {
+                    const list = Array.isArray(lines) ? lines : [];
+                    if (!list.length) return true;
+                    const map = mapRef || this.roadSyntaxMap();
+                    const preferBatch = !(options && options.preferBatch === false);
+                    if (preferBatch && map) {
+                        try {
+                            if (visible) {
+                                if (typeof map.add !== 'function') throw new Error('map.add unavailable');
+                                map.add(list);
+                            } else {
+                                if (typeof map.remove !== 'function') throw new Error('map.remove unavailable');
+                                map.remove(list);
+                            }
+                            return true;
+                        } catch (_) { }
+                    }
+                    list.forEach((line) => {
+                        if (line && typeof line.setMap === 'function') {
+                            line.setMap(visible ? map : null);
+                        }
+                    });
+                    return false;
+                },
+                roadSyntaxTryGroupSwitch(currentGroup, targetGroup, mapRef = null) {
+                    const map = mapRef || this.roadSyntaxMap();
+                    if (!targetGroup) return false;
+                    if (currentGroup) {
+                        this.roadSyntaxSetOverlayGroupVisible(currentGroup, false, map);
+                    }
+                    return this.roadSyntaxSetOverlayGroupVisible(targetGroup, true, map);
+                },
+                roadSyntaxTryBatchLineSwitch(hideLines, showLines, mapRef = null) {
+                    const map = mapRef || this.roadSyntaxMap();
+                    if (!map) return false;
+                    const hideList = Array.isArray(hideLines) ? hideLines : [];
+                    const showList = Array.isArray(showLines) ? showLines : [];
+                    if (hideList.length && typeof map.remove !== 'function') return false;
+                    if (showList.length && typeof map.add !== 'function') return false;
+                    try {
+                        if (hideList.length) map.remove(hideList);
+                        if (showList.length) map.add(showList);
+                        return true;
+                    } catch (_) {
+                        return false;
+                    }
+                },
+                async prewarmRoadSyntaxFirstSwitch(requestToken, activeLayerKey = '') {
+                    if (requestToken !== this.roadSyntaxRequestToken) return false;
+                    if (!this.roadSyntaxViewportLazyEnabled) return true;
+                    const lines = Array.isArray(this.roadSyntaxPolylines) ? this.roadSyntaxPolylines : [];
+                    if (!lines.length) return false;
+                    const cache = this.roadSyntaxLayerStyleCache || {};
+                    const activeKey = String(activeLayerKey || this.roadSyntaxActiveLayerKey || '');
+                    if (!activeKey || !Array.isArray(cache[activeKey])) return false;
+                    const sampleIndexes = this.roadSyntaxCollectVisibleLineIndexes().slice(0, 120);
+                    if (!sampleIndexes.length) return false;
+                    const warmKeys = this.roadSyntaxLayerKeysForPrebuild().filter((key) => {
+                        if (key === activeKey) return false;
+                        return this.isRoadSyntaxLayerReady(key);
+                    });
+                    if (!warmKeys.length) return true;
+                    try {
+                        this.switchRoadSyntaxLayerByKey(warmKeys[0], { force: true, trackPerf: false });
+                        this.switchRoadSyntaxLayerByKey(activeKey, { force: true, trackPerf: false });
+                    } catch (_) { }
+                    const remainingWarmKeys = warmKeys.slice(1);
+                    if (!remainingWarmKeys.length) return true;
+                    const applyOneKey = (key) => new Promise((resolve) => {
+                        const styles = Array.isArray(cache[key]) ? cache[key] : [];
+                        if (styles.length !== lines.length) {
+                            resolve(true);
+                            return;
+                        }
+                        let idx = 0;
+                        const step = () => {
+                            if (requestToken !== this.roadSyntaxRequestToken) {
+                                resolve(false);
+                                return;
+                            }
+                            if (this.roadSyntaxIsInteractingInMetricView()) {
+                                window.requestAnimationFrame(step);
+                                return;
+                            }
+                            const nowFn = (window.performance && typeof window.performance.now === 'function')
+                                ? () => window.performance.now()
+                                : () => Date.now();
+                            const frameStart = nowFn();
+                            const budgetMs = 3.5;
+                            while (idx < sampleIndexes.length) {
+                                const lineIdx = sampleIndexes[idx];
+                                idx += 1;
+                                const line = lines[lineIdx];
+                                const style = styles[lineIdx] || null;
+                                if (line && style && typeof line.setOptions === 'function') {
+                                    try { line.setOptions(style); } catch (_) { }
+                                }
+                                if ((nowFn() - frameStart) >= budgetMs) break;
+                            }
+                            if (idx < sampleIndexes.length) {
+                                window.requestAnimationFrame(step);
+                                return;
+                            }
+                            resolve(true);
+                        };
+                        step();
+                    });
+                    for (let i = 0; i < remainingWarmKeys.length; i += 1) {
+                        const ok = await applyOneKey(remainingWarmKeys[i]);
+                        if (!ok) return false;
+                    }
+                    const revertStyles = cache[activeKey];
+                    sampleIndexes.forEach((lineIdx) => {
+                        const line = lines[lineIdx];
+                        const style = revertStyles[lineIdx] || null;
+                        if (line && style && typeof line.setOptions === 'function') {
+                            try { line.setOptions(style); } catch (_) { }
+                        }
+                    });
+                    return true;
+                },
+                roadSyntaxNow() {
+                    if (window.performance && typeof window.performance.now === 'function') {
+                        return window.performance.now();
+                    }
+                    return Date.now();
+                },
+                resolveRoadSyntaxPerformanceProfile() {
+                    const hc = Number((window.navigator && window.navigator.hardwareConcurrency) || 0);
+                    const dm = Number((window.navigator && window.navigator.deviceMemory) || 0);
+                    if ((hc > 0 && hc <= 4) || (dm > 0 && dm <= 4)) return 'low';
+                    if ((hc > 0 && hc <= 8) || (dm > 0 && dm <= 8)) return 'mid';
+                    return 'high';
+                },
+                resolveRoadSyntaxEdgeCap() {
+                    const profile = this.resolveRoadSyntaxPerformanceProfile();
+                    this.roadSyntaxPerformanceProfile = profile;
+                    const capByProfile = {
+                        high: 1000,
+                        mid: 800,
+                        low: 600,
+                    };
+                    this.roadSyntaxActiveEdgeCap = Number(capByProfile[profile] || 800);
+                    return this.roadSyntaxActiveEdgeCap;
+                },
+                roadSyntaxLayerReadyCounts() {
+                    const readyMap = this.roadSyntaxLayerReadyMap || {};
+                    const total = Object.keys(readyMap).length;
+                    const ready = Object.values(readyMap).filter((v) => !!v).length;
+                    return { ready, total };
+                },
+                recordRoadSyntaxSwitchDuration(startAt, layerKey, hideCount = 0, showCount = 0, path = '') {
+                    const ms = Math.max(0, this.roadSyntaxNow() - Number(startAt || 0));
+                    const samples = Array.isArray(this.roadSyntaxSwitchSamples) ? this.roadSyntaxSwitchSamples.slice() : [];
+                    samples.push(ms);
+                    if (samples.length > ROAD_SYNTAX_CONST.SWITCH_SAMPLE_LIMIT) {
+                        samples.splice(0, samples.length - ROAD_SYNTAX_CONST.SWITCH_SAMPLE_LIMIT);
+                    }
+                    const sorted = samples.slice().sort((a, b) => a - b);
+                    const p = (ratio) => {
+                        if (!sorted.length) return 0;
+                        const idx = Math.max(0, Math.min(sorted.length - 1, Math.ceil(sorted.length * ratio) - 1));
+                        return sorted[idx];
+                    };
+                    this.roadSyntaxSwitchSamples = samples;
+                    this.roadSyntaxSwitchLastMs = Number(ms.toFixed(2));
+                    this.roadSyntaxSwitchP50Ms = Number(p(0.5).toFixed(2));
+                    this.roadSyntaxSwitchP95Ms = Number(p(0.95).toFixed(2));
+                    this.roadSyntaxSwitchPath = String(path || '');
+                    const readyCounts = this.roadSyntaxLayerReadyCounts();
+                    this.roadSyntaxSwitchStatsText = `N=${samples.length}, P50=${this.roadSyntaxSwitchP50Ms}ms, P95=${this.roadSyntaxSwitchP95Ms}ms, path=${this.roadSyntaxSwitchPath || '-'}, ready=${readyCounts.ready}/${readyCounts.total}`;
+                    if (this.roadSyntaxSwitchP95Ms > Number(this.roadSyntaxSwitchTargetMs || 120)) {
+                        console.warn('[road-syntax] switch latency high', {
+                            p95_ms: this.roadSyntaxSwitchP95Ms,
+                            p50_ms: this.roadSyntaxSwitchP50Ms,
+                            last_ms: this.roadSyntaxSwitchLastMs,
+                            active_layer: layerKey,
+                            edge_count: Array.isArray(this.roadSyntaxPolylineItems) ? this.roadSyntaxPolylineItems.length : 0,
+                            hide_count: hideCount,
+                            show_count: showCount,
+                            profile: this.roadSyntaxPerformanceProfile,
+                            edge_cap: this.roadSyntaxActiveEdgeCap,
+                            path: this.roadSyntaxSwitchPath || '-',
+                            ready_layers: readyCounts.ready,
+                            total_layers: readyCounts.total,
+                        });
+                    }
                 },
                 invalidateRoadSyntaxCache(reason = 'manual', options = {}) {
                     const resetData = !!(options && options.resetData);
                     const resetPerf = !!(options && options.resetPerf);
-                    if (typeof this.roadSyntaxClearMapWriteQueue === 'function') {
-                        this.roadSyntaxClearMapWriteQueue({ dispose: reason === 'unmount' });
-                    }
                     this.roadSyntaxStyleUpdateToken += 1;
                     this.roadSyntaxPoolWarmToken += 1;
                     this.roadSyntaxLayerBuildToken += 1;
@@ -5449,11 +4054,6 @@
                     this.roadSyntaxClearViewportRefreshHandles();
                     this.roadSyntaxClearNodeRefreshTimer();
                     this.roadSyntaxBumpViewportRefreshToken();
-                    this._roadSyntaxPinnedAttachKey = '';
-                    this._roadSyntaxViewportToggleDisabledLogged = false;
-                    this.roadSyntaxOverlayCommitToken = 0;
-                    this.roadSyntaxOverlayLastCommitPath = '';
-                    this.roadSyntaxOverlayLastCommitReason = '';
                     this.roadSyntaxInteractionLowFidelity = false;
                     this.roadSyntaxDisplaySuspended = false;
                     this.clearRoadSyntaxLayerPool();
@@ -5469,13 +4069,8 @@
                     this.roadSyntaxNodeBuildToken += 1;
                     this.roadSyntaxNodeBuildRunning = false;
                     this.roadSyntaxNodeSourceFingerprint = '';
-                    this.clearRoadSyntaxNodeMarkers({ immediate: true });
+                    this.clearRoadSyntaxNodeMarkers();
                     this.disposeRoadSyntaxScatterChart();
-                    this.roadSyntaxWebglPayload = null;
-                    this.roadSyntaxWebglStatus = '';
-                    if (typeof this.clearRoadSyntaxArcgisWebgl === 'function') {
-                        this.clearRoadSyntaxArcgisWebgl({ dispose: reason === 'unmount' });
-                    }
                     if (resetData) {
                         this.roadSyntaxStatus = '';
                         this.roadSyntaxStatusCopyHint = '';
@@ -5483,13 +4078,11 @@
                         this.roadSyntaxRoadFeatures = [];
                         this.roadSyntaxNodes = [];
                         this.roadSyntaxDiagnostics = null;
-                        this.roadSyntaxScatterPointsCache = [];
                         this.roadSyntaxLegendModel = null;
                         this.roadSyntaxSkeletonOnly = false;
                         this.roadSyntaxMainTab = 'params';
-                        const defaultMetric = this.roadSyntaxDefaultMetric();
-                        this.roadSyntaxMetric = defaultMetric;
-                        this.roadSyntaxLastMetricTab = defaultMetric;
+                        this.roadSyntaxMetric = 'accessibility';
+                        this.roadSyntaxLastMetricTab = 'accessibility';
                         this.roadSyntaxRadiusLabel = 'global';
                     }
                     if (resetPerf) {
@@ -5520,22 +4113,12 @@
                     this.roadSyntaxClearViewportRefreshHandles();
                     this.roadSyntaxClearNodeRefreshTimer();
                     this.roadSyntaxBumpViewportRefreshToken();
-                    this._roadSyntaxPinnedAttachKey = '';
                     this.roadSyntaxInteractionLowFidelity = false;
-                    const activeLayer = this.roadSyntaxGetLayer(this.roadSyntaxActiveLayerKey || '');
-                    const activeRuntime = this.roadSyntaxResolveLayerRuntimeEntry(activeLayer, this.roadSyntaxActiveLayerVariant || 'full');
-                    if (activeRuntime) {
-                        if (activeRuntime.overlayGroup) {
-                            this.roadSyntaxSetOverlayGroupVisible(activeRuntime.overlayGroup, false, map);
-                        } else if (Array.isArray(activeRuntime.overlays) && activeRuntime.overlays.length) {
-                            this.roadSyntaxSetLinesVisible(activeRuntime.overlays, false, map, { preferBatch: true });
-                        }
-                    }
+                    const lines = Array.isArray(this.roadSyntaxPolylines) ? this.roadSyntaxPolylines : [];
+                    this.roadSyntaxSetLinesVisible(lines, false, map, { preferBatch: true });
+                    this.roadSyntaxVisibleLineSet = {};
                     this.roadSyntaxResetVisibleIndexCache();
                     this.roadSyntaxCurrentStride = 1;
-                    if (typeof this.setRoadSyntaxArcgisWebglVisible === 'function') {
-                        this.setRoadSyntaxArcgisWebglVisible(false);
-                    }
                     this.cancelRoadSyntaxNodeBuild();
                     this.setRoadSyntaxNodeMarkersVisible(false);
                     this.disposeRoadSyntaxScatterChart();
@@ -5549,21 +4132,6 @@
                         this.roadSyntaxDisplaySuspended = false;
                         return;
                     }
-                    if (
-                        this.roadSyntaxUseArcgisWebgl
-                        && typeof this.roadSyntaxCanUseArcgisWebglPayload === 'function'
-                        && this.roadSyntaxCanUseArcgisWebglPayload(this.roadSyntaxWebglPayload)
-                    ) {
-                        this.roadSyntaxDisplaySuspended = false;
-                        this.renderRoadSyntaxByMetric(this.resolveRoadSyntaxActiveMetric());
-                        return;
-                    }
-                    if (this.roadSyntaxStrictWebglOnly) {
-                        this.roadSyntaxDisplaySuspended = false;
-                        this.roadSyntaxSetStatus('ArcGIS-WebGL 数据未就绪（已禁用旧版回退）');
-                        return;
-                    }
-                    this._roadSyntaxPinnedAttachKey = '';
                     this.roadSyntaxDisplaySuspended = true;
                     this.renderRoadSyntaxOverlays({
                         type: 'FeatureCollection',
@@ -5576,16 +4144,10 @@
                     this.roadSyntaxSetLinesVisible(lines, false, map, { preferBatch: true });
                     this.roadSyntaxClearViewportRefreshHandles();
                     this.roadSyntaxClearNodeRefreshTimer();
-                    const pool = this.roadSyntaxLayerPool || {};
-                    Object.keys(pool).forEach((key) => {
-                        this.roadSyntaxDisposeLayerEntry(pool[key], map);
-                    });
                     this.roadSyntaxLayerPool = {};
                     this.roadSyntaxLayerStyleCache = {};
-                    this.roadSyntaxLayerLodIndexCache = {};
                     this.roadSyntaxPolylines = [];
-                    this.roadSyntaxTargetVisibleLineSet = {};
-                    this.roadSyntaxAppliedVisibleLineSet = {};
+                    this.roadSyntaxVisibleLineSet = {};
                     this.roadSyntaxResetVisibleIndexCache();
                     this.roadSyntaxResetLodScoreCache();
                     this.roadSyntaxResetSpatialIndex();
@@ -5593,7 +4155,6 @@
                     this.roadSyntaxInteractionLowFidelity = false;
                     this.roadSyntaxCurrentStride = 1;
                     this.roadSyntaxActiveLayerKey = '';
-                    this.roadSyntaxActiveLayerVariant = 'full';
                     this.roadSyntaxPendingLayerKey = '';
                     this.roadSyntaxLayerBuildState = {};
                     this.roadSyntaxLayerBuildQueue = [];
@@ -5621,21 +4182,7 @@
                 },
                 isRoadSyntaxMetricReady(metricValue = null, options = {}) {
                     if (!this.roadSyntaxSummary) return false;
-                    const metric = String(metricValue || this.resolveRoadSyntaxActiveMetric() || this.roadSyntaxDefaultMetric());
-                    if (this.roadSyntaxStrictWebglOnly) {
-                        return !!(
-                            this.roadSyntaxUseArcgisWebgl
-                            && typeof this.roadSyntaxCanUseArcgisWebglPayload === 'function'
-                            && this.roadSyntaxCanUseArcgisWebglPayload(this.roadSyntaxWebglPayload)
-                        );
-                    }
-                    if (
-                        this.roadSyntaxUseArcgisWebgl
-                        && typeof this.roadSyntaxCanUseArcgisWebglPayload === 'function'
-                        && this.roadSyntaxCanUseArcgisWebglPayload(this.roadSyntaxWebglPayload)
-                    ) {
-                        return true;
-                    }
+                    const metric = String(metricValue || this.resolveRoadSyntaxActiveMetric() || 'accessibility');
                     const radiusLabel = options && Object.prototype.hasOwnProperty.call(options, 'radiusLabel')
                         ? String(options.radiusLabel || 'global')
                         : (this.roadSyntaxMetricUsesRadius(metric) ? String(this.roadSyntaxRadiusLabel || 'global') : 'global');
@@ -5655,13 +4202,6 @@
                     const metric = this.resolveRoadSyntaxActiveMetric();
                     if (!this.roadSyntaxSupportsSkeleton(metric)) return false;
                     if (!this.roadSyntaxSummary) return false;
-                    if (
-                        this.roadSyntaxUseArcgisWebgl
-                        && typeof this.roadSyntaxCanUseArcgisWebglPayload === 'function'
-                        && this.roadSyntaxCanUseArcgisWebglPayload(this.roadSyntaxWebglPayload)
-                    ) {
-                        return false;
-                    }
                     if (!this.roadSyntaxSkeletonOnly) {
                         return this.isRoadSyntaxMetricReady(metric, { skeletonOnly: true });
                     }
@@ -5685,87 +4225,38 @@
                     if (visible && !this.shouldRenderRoadSyntaxConnectivityNodes()) {
                         visible = false;
                     }
-                    const markers = this.roadSyntaxNodeMarkers.slice();
                     const targetMap = (visible && this.mapCore && this.mapCore.map) ? this.mapCore.map : null;
-                    this.roadSyntaxEnqueueMapWrite(() => {
-                        markers.forEach((marker) => this.safeMapSet(marker, targetMap));
-                        return {
-                            ok: true,
-                                marker_count: markers.length,
-                                visible: !!targetMap
-                            };
-                    }, {
-                        key: 'road_syntax_node_visibility',
-                        replaceExisting: true,
-                        meta: {
-                            reason: 'road_syntax_node_visibility',
-                            marker_count: markers.length,
-                            visible: !!targetMap
+                    this.roadSyntaxNodeMarkers.forEach((marker) => {
+                        if (marker && typeof marker.setMap === 'function') {
+                            marker.setMap(targetMap);
                         }
                     });
                 },
-                clearRoadSyntaxNodeMarkers(options = {}) {
+                clearRoadSyntaxNodeMarkers() {
                     this.cancelRoadSyntaxNodeBuild();
                     if (!Array.isArray(this.roadSyntaxNodeMarkers)) {
                         this.roadSyntaxNodeMarkers = [];
                         return;
                     }
-                    const immediate = !!(options && options.immediate);
-                    const markers = this.roadSyntaxNodeMarkers.slice();
-                    this.roadSyntaxNodeMarkers = [];
-                    if (!markers.length) return;
-                    if (immediate) {
-                        markers.forEach((marker) => this.safeMapSet(marker, null));
-                        return;
-                    }
-                    this.roadSyntaxEnqueueMapWrite(() => {
-                        markers.forEach((marker) => this.safeMapSet(marker, null));
-                        return {
-                            ok: true,
-                            marker_count: markers.length
-                        };
-                    }, {
-                        key: 'road_syntax_node_clear',
-                        replaceExisting: false,
-                        meta: {
-                            reason: 'road_syntax_node_clear',
-                            marker_count: markers.length
+                    this.roadSyntaxNodeMarkers.forEach((marker) => {
+                        if (marker && typeof marker.setMap === 'function') {
+                            marker.setMap(null);
                         }
                     });
+                    this.roadSyntaxNodeMarkers = [];
                 },
                 disposeRoadSyntaxScatterChart() {
-                    this.clearRoadSyntaxScatterRenderTimer();
                     const chart = this.roadSyntaxScatterChart;
                     if (chart && typeof chart.dispose === 'function') {
                         chart.dispose();
                     }
                     this.roadSyntaxScatterChart = null;
                 },
-                clearRoadSyntaxScatterRenderTimer() {
-                    if (this.roadSyntaxScatterRenderTimer) {
-                        window.clearTimeout(this.roadSyntaxScatterRenderTimer);
-                        this.roadSyntaxScatterRenderTimer = null;
-                    }
-                },
-                scheduleRoadSyntaxScatterRender(attempt = 0) {
-                    if (this.roadSyntaxMainTab !== 'intelligibility') return;
-                    const retry = Math.max(0, Number(attempt) || 0);
-                    const maxRetry = 8;
-                    this.clearRoadSyntaxScatterRenderTimer();
-                    const delay = retry === 0 ? 0 : Math.min(180, 40 + retry * 20);
-                    this.roadSyntaxScatterRenderTimer = window.setTimeout(() => {
-                        this.roadSyntaxScatterRenderTimer = null;
-                        const rendered = this.renderRoadSyntaxScatterChart();
-                        if (!rendered && retry < maxRetry && this.roadSyntaxMainTab === 'intelligibility') {
-                            this.scheduleRoadSyntaxScatterRender(retry + 1);
-                        }
-                    }, delay);
-                },
                 setRoadSyntaxMainTab(tabValue, options = {}) {
                     const value = String(tabValue || '').trim();
                     const validTabs = (this.roadSyntaxTabs || []).map((tab) => tab.value);
                     if (!validTabs.includes(value)) return;
-                    if (value !== 'params' && this.roadSyntaxPoolInitRunning && this.roadSyntaxUseLegacyPoolStatus()) {
+                    if (value !== 'params' && this.roadSyntaxPoolInitRunning) {
                         this.roadSyntaxSetStatus(this.roadSyntaxFormatReadyStatus('图层预加载中', this.roadSyntaxPoolInitDone, this.roadSyntaxPoolInitTotal || 0));
                         return;
                     }
@@ -5781,15 +4272,11 @@
                         return;
                     }
                     if (!this.isRoadSyntaxMetricReady(value)) {
-                        if (this.roadSyntaxStrictWebglOnly) {
-                            this.roadSyntaxSetStatus(`指标“${this.roadSyntaxLabelByMetric(value)}”对应 ArcGIS-WebGL 数据未就绪`);
+                        const counts = this.roadSyntaxLayerReadyCounts();
+                        if (this.roadSyntaxPoolDegraded) {
+                            this.roadSyntaxSetStatus(`图层预处理已降级，指标“${this.roadSyntaxLabelByMetric(value)}”仍未就绪（${counts.ready}/${counts.total || 0}）`);
                         } else {
-                            const counts = this.roadSyntaxLayerReadyCounts();
-                            if (this.roadSyntaxPoolDegraded) {
-                                this.roadSyntaxSetStatus(`图层预处理已降级，指标“${this.roadSyntaxLabelByMetric(value)}”仍未就绪（${counts.ready}/${counts.total || 0}）`);
-                            } else {
-                                this.roadSyntaxSetStatus(`指标“${this.roadSyntaxLabelByMetric(value)}”仍在预处理（${counts.ready}/${counts.total || 0}）`);
-                            }
+                            this.roadSyntaxSetStatus(`指标“${this.roadSyntaxLabelByMetric(value)}”仍在预处理（${counts.ready}/${counts.total || 0}）`);
                         }
                         return;
                     }
@@ -5810,54 +4297,30 @@
                 roadSyntaxMetricTabs() {
                     return (this.roadSyntaxTabs || []).filter((item) => item.value !== 'params');
                 },
-                roadSyntaxDefaultMetric() {
-                    const tabs = this.roadSyntaxMetricTabs();
-                    if (tabs.length) {
-                        return String((tabs[0] && tabs[0].value) || 'connectivity');
-                    }
-                    return 'connectivity';
-                },
-                roadSyntaxMetricDataCount(metricValue = null) {
-                    const metric = String(metricValue || this.resolveRoadSyntaxActiveMetric() || this.roadSyntaxDefaultMetric());
-                    const summary = this.roadSyntaxSummary || {};
-                    if (metric === 'control') return Number(summary.control_valid_count || 0);
-                    if (metric === 'depth') return Number(summary.depth_valid_count || 0);
-                    return Number(summary.edge_count || 0);
-                },
-                isRoadSyntaxMetricAvailable(metricValue = null) {
-                    const metric = String(metricValue || this.resolveRoadSyntaxActiveMetric() || this.roadSyntaxDefaultMetric());
-                    if (metric !== 'control' && metric !== 'depth') return true;
-                    return this.roadSyntaxMetricDataCount(metric) > 0;
-                },
                 roadSyntaxLabelByMetric(metricValue) {
                     const metric = String(metricValue || '').trim();
                     const matched = this.roadSyntaxMetricTabs().find((item) => item.value === metric);
                     return matched ? matched.label : metric;
                 },
                 roadSyntaxMetricUsesRadius(metricValue = null) {
-                    const metric = metricValue || this.roadSyntaxMetric || this.roadSyntaxDefaultMetric();
-                    return metric === 'choice' || metric === 'integration';
+                    const metric = metricValue || this.roadSyntaxMetric || 'accessibility';
+                    return metric === 'accessibility' || metric === 'choice' || metric === 'integration';
                 },
                 roadSyntaxSupportsSkeleton(metricValue = null) {
-                    void metricValue;
-                    return false;
+                    const metric = metricValue || this.roadSyntaxMetric || 'accessibility';
+                    return metric === 'choice' || metric === 'integration';
                 },
                 onRoadSyntaxMetricChange(metricValue) {
                     this.setRoadSyntaxMainTab(metricValue);
                 },
                 formatRoadSyntaxMetricValue(metricValue) {
                     const summary = this.roadSyntaxSummary || {};
-                    const metric = metricValue || this.roadSyntaxDefaultMetric();
-                    if (!this.isRoadSyntaxMetricAvailable(metric)) return '--';
+                    const metric = metricValue || 'accessibility';
                     let value = NaN;
                     if (metric === 'accessibility') {
                         value = Number(summary.avg_accessibility_global ?? summary.avg_closeness);
                     } else if (metric === 'connectivity') {
                         value = Number(summary.avg_connectivity ?? summary.avg_degree);
-                    } else if (metric === 'control') {
-                        value = Number(summary.avg_control);
-                    } else if (metric === 'depth') {
-                        value = Number(summary.avg_depth);
                     } else if (metric === 'choice') {
                         value = Number(summary.avg_choice_global);
                     } else if (metric === 'integration') {
@@ -5934,214 +4397,6 @@
                     const local = (t - segStart) / Math.max(1e-9, segEnd - segStart);
                     return this.blendTwoColor(palette[seg], palette[seg + 1], local);
                 },
-                onRoadSyntaxDisplayRangeChange() {
-                    const blue = this.clamp01(Number(this.roadSyntaxDisplayBlue));
-                    const red = this.clamp01(Number(this.roadSyntaxDisplayRed));
-                    this.roadSyntaxDisplayBlue = Number.isFinite(blue) ? blue : 0;
-                    this.roadSyntaxDisplayRed = Number.isFinite(red) ? red : 1;
-                    if (this.roadSyntaxMainTab !== 'params') {
-                        this.refreshRoadSyntaxOverlay();
-                    }
-                },
-                roadSyntaxDepthmapColorSchemes() {
-                    return {
-                        axmanesque: [
-                            '#3333dd', '#3388dd', '#22ccdd', '#22ccbb', '#22dd88',
-                            '#88dd22', '#bbcc22', '#ddcc22', '#dd8833', '#dd3333',
-                        ],
-                        hueonlyaxmanesque: [
-                            '#3333dd', '#3377dd', '#33bbdd', '#33ddbb', '#33dd55',
-                            '#55dd33', '#bbdd33', '#ddbb33', '#dd7733', '#dd3333',
-                        ],
-                        bluered: [
-                            '#4575b4', '#91bfdb', '#e0f3f8', '#ffffbf', '#fee090', '#fc8d59', '#d73027',
-                        ],
-                        purpleorange: [
-                            '#542788', '#998ec3', '#d8daeb', '#f7f7f7', '#fee0b6', '#f1a340', '#b35806',
-                        ],
-                        greyscale: [
-                            '#000000', '#444444', '#777777', '#aaaaaa', '#cccccc', '#eeeeee', '#ffffff',
-                        ],
-                        monochrome: [
-                            '#000000', '#444444', '#777777', '#aaaaaa', '#cccccc', '#eeeeee', '#ffffff',
-                        ],
-                    };
-                },
-                roadSyntaxDepthmapColorScaleOptions() {
-                    return [
-                        { value: 'axmanesque', label: 'Equal Ranges (3-Colour)' },
-                        { value: 'bluered', label: 'Equal Ranges (Blue-Red)' },
-                        { value: 'purpleorange', label: 'Equal Ranges (Purple-Orange)' },
-                        { value: 'depthmapclassic', label: 'depthmapX Classic' },
-                        { value: 'greyscale', label: 'Equal Ranges (Greyscale)' },
-                        { value: 'monochrome', label: 'Equal Ranges (Monochrome)' },
-                        { value: 'hueonlyaxmanesque', label: 'Equal Ranges (3-Colour Hue Only)' },
-                    ];
-                },
-                roadSyntaxDepthmapColorScaleLabel() {
-                    const current = String(this.roadSyntaxDepthmapColorScale || 'axmanesque');
-                    const options = this.roadSyntaxDepthmapColorScaleOptions();
-                    const matched = options.find((opt) => String(opt.value) === current);
-                    return matched ? matched.label : 'Equal Ranges (3-Colour)';
-                },
-                roadSyntaxDepthmapDisplayParams() {
-                    const rawBlue = this.clamp01(Number(this.roadSyntaxDisplayBlue));
-                    const rawRed = this.clamp01(Number(this.roadSyntaxDisplayRed));
-                    let blue = rawBlue;
-                    let red = rawRed;
-                    let inverted = false;
-                    if (blue > red) {
-                        inverted = true;
-                        blue = 1.0 - rawBlue;
-                        red = 1.0 - rawRed;
-                    }
-                    return {
-                        rawBlue,
-                        rawRed,
-                        blue: this.clamp01(blue),
-                        red: this.clamp01(red),
-                        inverted,
-                    };
-                },
-                roadSyntaxDepthmapPalette() {
-                    const schemes = this.roadSyntaxDepthmapColorSchemes();
-                    const key = String(this.roadSyntaxDepthmapColorScale || 'axmanesque').toLowerCase();
-                    return Array.isArray(schemes[key]) && schemes[key].length
-                        ? schemes[key]
-                        : schemes.axmanesque;
-                },
-                roadSyntaxDepthmapClassIndex(field, classCount) {
-                    const count = Math.max(1, Number(classCount) || 1);
-                    const t = this.clamp01(field);
-                    const raw = Math.floor((t - 1e-9) * count);
-                    return Math.max(0, Math.min(count - 1, raw));
-                },
-                roadSyntaxDepthmapScaledField(field) {
-                    if (!Number.isFinite(Number(field))) return NaN;
-                    const scale = String(this.roadSyntaxDepthmapColorScale || 'axmanesque').toLowerCase();
-                    const params = this.roadSyntaxDepthmapDisplayParams();
-                    let value = this.clamp01(Number(field));
-                    if (params.inverted) {
-                        value = 1.0 - value;
-                    }
-                    if (scale === 'depthmapclassic') {
-                        return value;
-                    }
-                    const denom = params.red - params.blue;
-                    if (!(denom > 1e-9)) {
-                        return 0.5;
-                    }
-                    const scaled = (value - params.blue) / denom;
-                    if (!Number.isFinite(scaled)) return 0.5;
-                    return this.clamp01(scaled);
-                },
-                roadSyntaxNormalizeScoreByRange(value, minValue, maxValue) {
-                    const v = Number(value);
-                    const lo = Number(minValue);
-                    const hi = Number(maxValue);
-                    if (!Number.isFinite(v)) return 0;
-                    if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) return this.clamp01(v);
-                    return this.clamp01((v - lo) / Math.max(1e-9, hi - lo));
-                },
-                roadSyntaxDepthmapClassicByte(value) {
-                    const v = this.clamp01(value);
-                    const scaled = Math.floor((v + 0.0333) * 15.0);
-                    return Math.max(0, Math.min(255, scaled * 17));
-                },
-                roadSyntaxDepthmapClassicColor(score, blueValue = null, redValue = null) {
-                    const field = this.clamp01(score);
-                    const params = this.roadSyntaxDepthmapDisplayParams();
-                    const blue = Number.isFinite(Number(blueValue)) ? this.clamp01(Number(blueValue)) : params.blue;
-                    const red = Number.isFinite(Number(redValue)) ? this.clamp01(Number(redValue)) : params.red;
-                    const green = blue + (red - blue) / 10.0;
-                    let r = 0;
-                    let g = 0;
-                    let b = 0;
-                    if (field >= 0.0 && field < blue) {
-                        r = this.roadSyntaxDepthmapClassicByte(0.5 * (blue - field) / Math.max(1e-9, blue));
-                        b = 255;
-                    } else if (field >= blue && field < (green + blue) / 2.0) {
-                        b = 255;
-                        g = this.roadSyntaxDepthmapClassicByte(2.0 * (field - blue) / Math.max(1e-9, green - blue));
-                    } else if (field >= (green + blue) / 2.0 && field < green) {
-                        b = this.roadSyntaxDepthmapClassicByte(2.0 * (green - field) / Math.max(1e-9, green - blue));
-                        g = 255;
-                    } else if (field >= green && field < (green + red) / 2.0) {
-                        g = 255;
-                        r = this.roadSyntaxDepthmapClassicByte(2.0 * (field - green) / Math.max(1e-9, red - green));
-                    } else if (field >= (green + red) / 2.0 && field < red) {
-                        g = this.roadSyntaxDepthmapClassicByte(2.0 * (red - field) / Math.max(1e-9, red - green));
-                        r = 255;
-                    } else {
-                        r = 255;
-                        b = this.roadSyntaxDepthmapClassicByte(0.5 * (field - red) / Math.max(1e-9, 1.0 - red));
-                    }
-                    const toHex = (c) => {
-                        const hex = Math.max(0, Math.min(255, Number(c) || 0)).toString(16);
-                        return hex.length === 1 ? `0${hex}` : hex;
-                    };
-                    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
-                },
-                roadSyntaxDepthmapClassColor(score, paletteValue = null) {
-                    const palette = Array.isArray(paletteValue) && paletteValue.length
-                        ? paletteValue
-                        : this.roadSyntaxDepthmapPalette();
-                    const scale = String(this.roadSyntaxDepthmapColorScale || 'axmanesque').toLowerCase();
-                    if (!Number.isFinite(Number(score))) {
-                        if (scale === 'monochrome' || scale === 'greyscale') {
-                            return 'rgba(0,0,0,0)';
-                        }
-                        return '#7f7f7f';
-                    }
-                    const scaledField = this.roadSyntaxDepthmapScaledField(score);
-                    if (scale === 'depthmapclassic') {
-                        const params = this.roadSyntaxDepthmapDisplayParams();
-                        return this.roadSyntaxDepthmapClassicColor(scaledField, params.blue, params.red);
-                    }
-                    const idx = this.roadSyntaxDepthmapClassIndex(scaledField, palette.length);
-                    return String(palette[idx] || '#3333dd');
-                },
-                roadSyntaxEqualRangeLegendItems(scores, paletteValue = null) {
-                    const scale = String(this.roadSyntaxDepthmapColorScale || 'axmanesque').toLowerCase();
-                    const palette = Array.isArray(paletteValue) && paletteValue.length
-                        ? paletteValue
-                        : this.roadSyntaxDepthmapPalette();
-                    const legendColors = (scale === 'depthmapclassic')
-                        ? new Array(10).fill(0).map((_, idx) => this.roadSyntaxDepthmapClassColor((idx + 0.5) / 10, palette))
-                        : palette;
-                    const values = (Array.isArray(scores) ? scores : [])
-                        .map((v) => Number(v))
-                        .filter((v) => Number.isFinite(v))
-                        .sort((a, b) => a - b);
-                    if (!values.length) {
-                        return legendColors.map((color, idx) => ({ color, label: `等级 ${idx + 1}` }));
-                    }
-                    const min = values[0];
-                    const max = values[values.length - 1];
-                    if (!(max > min)) {
-                        return legendColors.map((color, idx) => ({
-                            color,
-                            label: idx === 0 ? `${min.toFixed(2)}` : '-',
-                        }));
-                    }
-                    const span = max - min;
-                    const colors = legendColors;
-                    const params = this.roadSyntaxDepthmapDisplayParams();
-                    return colors.map((color, idx) => {
-                        let loField = idx / colors.length;
-                        let hiField = (idx + 1) / colors.length;
-                        if (scale !== 'depthmapclassic') {
-                            loField = params.blue + (params.red - params.blue) * loField;
-                            hiField = params.blue + (params.red - params.blue) * hiField;
-                        }
-                        const lo = min + span * this.clamp01(loField);
-                        const hi = min + span * this.clamp01(hiField);
-                        return {
-                            color,
-                            label: `${lo.toFixed(2)} - ${hi.toFixed(2)}`,
-                        };
-                    });
-                },
                 roadSyntaxSummarizeCoordInput(input) {
                     if (input === null) return { type: 'null' };
                     if (typeof input === 'undefined') return { type: 'undefined' };
@@ -6216,14 +4471,6 @@
                         this.roadSyntaxLogInvalidCoordInput(source || 'normalize_lnglat', input);
                         return null;
                     }
-                    if (lng < -180 || lng > 180 || lat < -90 || lat > 90) {
-                        this.roadSyntaxLogInvalidCoordInput(source || 'normalize_lnglat_range', {
-                            input: this.roadSyntaxSummarizeCoordInput(input),
-                            lng,
-                            lat
-                        });
-                        return null;
-                    }
                     return [lng, lat];
                 },
                 normalizePath(path, minPoints = 2, source = '') {
@@ -6237,16 +4484,10 @@
                     return out.length >= minPoints ? out : [];
                 },
                 resolveRoadSyntaxActiveMetric() {
-                    const defaultMetric = this.roadSyntaxDefaultMetric();
-                    const validMetrics = this.roadSyntaxMetricTabs().map((item) => String(item.value || ''));
-                    const candidate = this.roadSyntaxMainTab === 'params'
-                        ? (this.roadSyntaxLastMetricTab || this.roadSyntaxMetric)
-                        : this.roadSyntaxMetric;
-                    const normalized = String(candidate || '').trim();
-                    if (validMetrics.includes(normalized)) return normalized;
-                    const backup = String(this.roadSyntaxMetric || '').trim();
-                    if (validMetrics.includes(backup)) return backup;
-                    return defaultMetric;
+                    if (this.roadSyntaxMainTab === 'params') {
+                        return this.roadSyntaxLastMetricTab || this.roadSyntaxMetric || 'accessibility';
+                    }
+                    return this.roadSyntaxMetric || 'accessibility';
                 },
                 resolveRoadSyntaxMetricField(metricValue = null, radiusLabelValue = null) {
                     const metric = metricValue || this.resolveRoadSyntaxActiveMetric();
@@ -6254,13 +4495,7 @@
                         ? (this.roadSyntaxRadiusLabel || 'global')
                         : 'global');
                     if (metric === 'connectivity') {
-                        return 'connectivity_score';
-                    }
-                    if (metric === 'control') {
-                        return 'control_score';
-                    }
-                    if (metric === 'depth') {
-                        return 'depth_score';
+                        return 'degree_score';
                     }
                     if (metric === 'intelligibility') {
                         return 'intelligibility_score';
@@ -6271,7 +4506,7 @@
                     if (metric === 'integration') {
                         return radiusLabel === 'global' ? 'integration_global' : `integration_${radiusLabel}`;
                     }
-                    return 'connectivity_score';
+                    return radiusLabel === 'global' ? 'accessibility_global' : `accessibility_${radiusLabel}`;
                 },
                 resolveRoadSyntaxLayerKey(metricValue = null, options = {}) {
                     const metric = metricValue || this.resolveRoadSyntaxActiveMetric();
@@ -6281,16 +4516,13 @@
                     const radiusLabel = options && Object.prototype.hasOwnProperty.call(options, 'radiusLabel')
                         ? String(options.radiusLabel || 'global')
                         : (this.roadSyntaxMetricUsesRadius(metric) ? String(this.roadSyntaxRadiusLabel || 'global') : 'global');
-                    const supportsSkeleton = typeof this.roadSyntaxSupportsSkeleton === 'function'
-                        ? !!this.roadSyntaxSupportsSkeleton(metric)
-                        : (metric === 'choice' || metric === 'integration');
-                    const useSkeleton = supportsSkeleton ? skeletonOnly : false;
+                    const useSkeleton = (metric === 'choice' || metric === 'integration') ? skeletonOnly : false;
                     const normalizedRadius = this.roadSyntaxMetricUsesRadius(metric) ? radiusLabel : 'global';
                     return `${metric}|${normalizedRadius}|${useSkeleton ? 1 : 0}`;
                 },
                 parseRoadSyntaxLayerKey(layerKey) {
                     const parts = String(layerKey || '').split('|');
-                    const metric = parts[0] || this.roadSyntaxDefaultMetric();
+                    const metric = parts[0] || 'accessibility';
                     const radiusLabel = parts[1] || 'global';
                     const skeletonOnly = parts[2] === '1';
                     return { metric, radiusLabel, skeletonOnly };
@@ -6298,11 +4530,12 @@
                 roadSyntaxLayerKeysForPrebuild() {
                     const radiusLabel = String(this.roadSyntaxRadiusLabel || 'global');
                     return [
+                        this.resolveRoadSyntaxLayerKey('accessibility', { radiusLabel, skeletonOnly: false }),
                         this.resolveRoadSyntaxLayerKey('connectivity', { radiusLabel: 'global', skeletonOnly: false }),
-                        this.resolveRoadSyntaxLayerKey('control', { radiusLabel: 'global', skeletonOnly: false }),
-                        this.resolveRoadSyntaxLayerKey('depth', { radiusLabel: 'global', skeletonOnly: false }),
                         this.resolveRoadSyntaxLayerKey('choice', { radiusLabel, skeletonOnly: false }),
+                        this.resolveRoadSyntaxLayerKey('choice', { radiusLabel, skeletonOnly: true }),
                         this.resolveRoadSyntaxLayerKey('integration', { radiusLabel, skeletonOnly: false }),
+                        this.resolveRoadSyntaxLayerKey('integration', { radiusLabel, skeletonOnly: true }),
                         this.resolveRoadSyntaxLayerKey('intelligibility', { radiusLabel: 'global', skeletonOnly: false }),
                     ];
                 },
@@ -6313,19 +4546,11 @@
                     return '';
                 },
                 roadSyntaxScoreFromProps(props, metricField, fallbackField) {
-                    const readField = (field) => {
-                        if (!props || typeof props !== 'object') return NaN;
-                        if (!Object.prototype.hasOwnProperty.call(props, field)) return NaN;
-                        const raw = props[field];
-                        if (raw === null || typeof raw === 'undefined' || raw === '') return NaN;
-                        const n = Number(raw);
-                        return Number.isFinite(n) ? n : NaN;
-                    };
-                    const main = readField(metricField);
-                    const fallback = readField(fallbackField);
+                    const main = Number(props && props[metricField]);
+                    const fallback = Number(props && props[fallbackField]);
                     if (Number.isFinite(main)) return this.clamp01(main);
                     if (Number.isFinite(fallback)) return this.clamp01(fallback);
-                    return NaN;
+                    return 0;
                 },
                 roadSyntaxQuantileBreakLabels(scores) {
                     const values = (Array.isArray(scores) ? scores : [])
@@ -6355,56 +4580,40 @@
                     const metric = activeMetric || this.resolveRoadSyntaxActiveMetric();
                     const metricField = this.resolveRoadSyntaxMetricField(metric);
                     const fallbackField = this.resolveRoadSyntaxFallbackField(metric);
-                    const palette = this.roadSyntaxDepthmapPalette();
-                    const scaleLabel = this.roadSyntaxDepthmapColorScaleLabel();
-                    const polylineItems = Array.isArray(this.roadSyntaxPolylineItems) ? this.roadSyntaxPolylineItems : [];
-                    let scores = polylineItems
+                    const scores = (Array.isArray(this.roadSyntaxPolylineItems) ? this.roadSyntaxPolylineItems : [])
                         .map((item) => this.roadSyntaxScoreFromProps((item && item.props) || {}, metricField, fallbackField));
-                    if (!scores.length) {
-                        const roadFeatures = Array.isArray(this.roadSyntaxRoadFeatures) ? this.roadSyntaxRoadFeatures : [];
-                        scores = roadFeatures
-                            .map((feature) => this.roadSyntaxScoreFromProps(((feature && feature.properties) || {}), metricField, fallbackField));
-                    }
                     if (metric === 'accessibility') {
                         return {
-                            type: 'discrete',
-                            title: `可达性（${scaleLabel}）`,
-                            items: this.roadSyntaxEqualRangeLegendItems(scores, palette),
+                            type: 'gradient',
+                            title: '可达性（Viridis）',
+                            gradient: 'linear-gradient(90deg, rgb(68,1,84) 0%, rgb(59,82,139) 25%, rgb(33,145,140) 50%, rgb(94,201,97) 75%, rgb(253,231,37) 100%)',
+                            labels: this.roadSyntaxQuantileBreakLabels(scores),
                         };
                     }
                     if (metric === 'integration') {
                         return {
-                            type: 'discrete',
-                            title: `整合度（${scaleLabel}）`,
-                            items: this.roadSyntaxEqualRangeLegendItems(scores, palette),
+                            type: 'gradient',
+                            title: this.roadSyntaxSkeletonOnly ? '整合度（Plasma，骨架Top20%）' : '整合度（Plasma）',
+                            gradient: 'linear-gradient(90deg, rgb(13,8,135) 0%, rgb(84,3,160) 25%, rgb(182,54,121) 50%, rgb(251,136,97) 75%, rgb(240,249,33) 100%)',
+                            labels: this.roadSyntaxQuantileBreakLabels(scores),
                         };
                     }
                     if (metric === 'choice') {
                         return {
-                            type: 'discrete',
-                            title: `选择度（${scaleLabel}）`,
-                            items: this.roadSyntaxEqualRangeLegendItems(scores, palette),
+                            type: 'gradient',
+                            title: this.roadSyntaxSkeletonOnly ? '选择度（线宽主导，骨架Top20%）' : '选择度（线宽主导）',
+                            gradient: 'linear-gradient(90deg, rgb(148,163,184) 0%, rgb(180,110,95) 55%, rgb(234,88,12) 100%)',
+                            labels: this.roadSyntaxQuantileBreakLabels(scores),
                         };
                     }
                     if (metric === 'connectivity') {
                         return {
                             type: 'discrete',
-                            title: `连接度（${scaleLabel}）`,
-                            items: this.roadSyntaxEqualRangeLegendItems(scores, palette),
-                        };
-                    }
-                    if (metric === 'control') {
-                        return {
-                            type: 'discrete',
-                            title: `控制值（${scaleLabel}）`,
-                            items: this.roadSyntaxEqualRangeLegendItems(scores, palette),
-                        };
-                    }
-                    if (metric === 'depth') {
-                        return {
-                            type: 'discrete',
-                            title: `深度值（${scaleLabel}）`,
-                            items: this.roadSyntaxEqualRangeLegendItems(scores, palette),
+                            title: '连接度（节点大小/深浅）',
+                            items: [
+                                { label: '低连接', color: '#cbd5e1' },
+                                { label: '高连接', color: '#991b1b' },
+                            ],
                         };
                     }
                     return {
@@ -6418,39 +4627,19 @@
                 },
                 roadSyntaxFootnoteByMetric() {
                     const metric = this.resolveRoadSyntaxActiveMetric();
-                    const scaleLabel = this.roadSyntaxDepthmapColorScaleLabel();
-                    const params = this.roadSyntaxDepthmapDisplayParams();
-                    const rangeHint = `(Blue=${params.rawBlue.toFixed(2)}, Red=${params.rawRed.toFixed(2)})`;
                     if (metric === 'connectivity') {
-                        return `连接度采用 depthmapX ${scaleLabel} ${rangeHint} 的线段着色图表达，不启用节点点层。`;
-                    }
-                    if (metric === 'control') {
-                        const col = String((this.roadSyntaxSummary && this.roadSyntaxSummary.control_source_column) || '');
-                        if (!this.isRoadSyntaxMetricAvailable('control')) {
-                            return `控制值当前无有效样本${col ? `（列：${col}）` : ''}，请检查 depthmap 输出列与分析参数。`;
-                        }
-                        if (col === 'topology_fallback') {
-                            return `控制值当前采用拓扑回退计算（depthmap 控制列不可用或近常量），用于保障稳定显示。`;
-                        }
-                        return `控制值采用 depthmapX ${scaleLabel} ${rangeHint} 的线段着色表达。`;
-                    }
-                    if (metric === 'depth') {
-                        if (!this.isRoadSyntaxMetricAvailable('depth')) {
-                            const col = String((this.roadSyntaxSummary && this.roadSyntaxSummary.depth_source_column) || '');
-                            return `深度值当前无有效样本${col ? `（列：${col}）` : ''}，请检查 depthmap 输出列与分析参数。`;
-                        }
-                        return `深度值采用 depthmapX ${scaleLabel} ${rangeHint} 的线段着色表达。`;
+                        return '连接度用节点符号表达（大小与颜色深浅代表连接强度），线段仅作为底图参照。';
                     }
                     if (metric === 'choice') {
-                        return `选择度采用 depthmapX ${scaleLabel} ${rangeHint} 的线段着色表达。`;
+                        return '选择度以线宽为主，颜色为辅；可开启骨架 Top20% 观察主通行走廊。';
                     }
                     if (metric === 'integration') {
-                        return `整合度采用 depthmapX ${scaleLabel} ${rangeHint} 的线段着色表达网络中心性。`;
+                        return '整合度采用连续热力表达网络中心性；骨架模式仅高亮前20%高值线段。';
                     }
                     if (metric === 'intelligibility') {
-                        return '可理解度主表达为散点回归图（x=连接度，y=整合度）；地图蓝线为网络参考层。';
+                        return '可理解度主表达为散点回归图：x=连接度，y=整合度，R²越高表示空间越容易被理解。';
                     }
-                    return `连接度采用 depthmapX ${scaleLabel} ${rangeHint} 的线段着色表达。`;
+                    return '可达性采用连续热力表达（冷色低、暖色高），用于观察整体可达效率。';
                 },
                 roadSyntaxRegressionView() {
                     const diagnostics = this.roadSyntaxDiagnostics || {};
@@ -6472,22 +4661,16 @@
                 buildRoadSyntaxStyleForMetric(props, metricField, fallbackField, activeMetric, skeletonOnlyOverride = null) {
                     const score = this.roadSyntaxScoreFromProps(props, metricField, fallbackField);
                     const metric = activeMetric || this.resolveRoadSyntaxActiveMetric();
-                    const supportsSkeleton = typeof this.roadSyntaxSupportsSkeleton === 'function'
-                        ? !!this.roadSyntaxSupportsSkeleton(metric)
-                        : (metric === 'choice' || metric === 'integration');
-                    const skeletonOnly = supportsSkeleton && (skeletonOnlyOverride === null ? !!this.roadSyntaxSkeletonOnly : !!skeletonOnlyOverride);
-                    const palette = this.roadSyntaxDepthmapPalette();
-                    const scale = String(this.roadSyntaxDepthmapColorScale || 'axmanesque').toLowerCase();
-                    const depthmapColor = this.roadSyntaxDepthmapClassColor(score, palette);
-                    const baseWeight = 2.1;
-                    const missingValue = !Number.isFinite(Number(score));
-                    const hideMissing = missingValue && (scale === 'monochrome' || scale === 'greyscale');
-                    const baseOpacity = hideMissing ? 0.0 : 0.88;
+                    const skeletonOnly = skeletonOnlyOverride === null ? !!this.roadSyntaxSkeletonOnly : !!skeletonOnlyOverride;
                     if (metric === 'accessibility') {
+                        const color = this.blendPaletteColor(
+                            [[68, 1, 84], [59, 82, 139], [33, 145, 140], [94, 201, 97], [253, 231, 37]],
+                            score
+                        );
                         return {
-                            strokeColor: depthmapColor,
-                            strokeWeight: baseWeight,
-                            strokeOpacity: baseOpacity,
+                            strokeColor: color,
+                            strokeWeight: 2.2 + score * 1.2,
+                            strokeOpacity: 0.55 + score * 0.35,
                             zIndex: 90,
                         };
                     }
@@ -6501,10 +4684,14 @@
                                 zIndex: 82,
                             };
                         }
+                        const color = this.blendPaletteColor(
+                            [[13, 8, 135], [84, 3, 160], [182, 54, 121], [251, 136, 97], [240, 249, 33]],
+                            score
+                        );
                         return {
-                            strokeColor: depthmapColor,
-                            strokeWeight: baseWeight,
-                            strokeOpacity: baseOpacity,
+                            strokeColor: color,
+                            strokeWeight: 2.1 + score * 1.4,
+                            strokeOpacity: 0.5 + score * 0.35,
                             zIndex: 91,
                         };
                     }
@@ -6518,43 +4705,20 @@
                                 zIndex: 82,
                             };
                         }
+                        const color = this.blendTwoColor([148, 163, 184], [234, 88, 12], score);
                         return {
-                            strokeColor: depthmapColor,
-                            strokeWeight: baseWeight,
-                            strokeOpacity: baseOpacity,
+                            strokeColor: color,
+                            strokeWeight: 2 + score * 6,
+                            strokeOpacity: 0.42 + score * 0.46,
                             zIndex: 92,
                         };
                     }
                     if (metric === 'connectivity') {
                         return {
-                            strokeColor: depthmapColor,
-                            strokeWeight: baseWeight,
-                            strokeOpacity: baseOpacity,
+                            strokeColor: '#94a3b8',
+                            strokeWeight: 1.5,
+                            strokeOpacity: 0.26,
                             zIndex: 80,
-                        };
-                    }
-                    if (metric === 'control') {
-                        return {
-                            strokeColor: depthmapColor,
-                            strokeWeight: baseWeight,
-                            strokeOpacity: baseOpacity,
-                            zIndex: 81,
-                        };
-                    }
-                    if (metric === 'depth') {
-                        return {
-                            strokeColor: depthmapColor,
-                            strokeWeight: baseWeight,
-                            strokeOpacity: baseOpacity,
-                            zIndex: 81,
-                        };
-                    }
-                    if (metric === 'intelligibility') {
-                        return {
-                            strokeColor: '#2563eb',
-                            strokeWeight: 2.2,
-                            strokeOpacity: 0.62,
-                            zIndex: 79,
                         };
                     }
                     return {
@@ -6569,95 +4733,54 @@
                         return;
                     }
                     const metric = this.resolveRoadSyntaxActiveMetric();
-                    if (metric === 'intelligibility') {
-                        const parsedActive = this.parseRoadSyntaxLayerKey(this.roadSyntaxActiveLayerKey || '');
-                        const activeMetric = String((parsedActive && parsedActive.metric) || '');
-                        const webglActive = (typeof this.roadSyntaxIsArcgisWebglActive === 'function')
-                            ? this.roadSyntaxIsArcgisWebglActive()
-                            : !!this.roadSyntaxWebglActive;
-                        if (webglActive && activeMetric === 'intelligibility') {
-                            this.roadSyntaxLegendModel = this.buildRoadSyntaxLegendModel(metric);
-                            this.$nextTick(() => this.scheduleRoadSyntaxScatterRender(0));
-                            return;
-                        }
-                    }
-                    const supportsSkeleton = this.roadSyntaxSupportsSkeleton(metric);
-                    const effectiveSkeletonOnly = supportsSkeleton ? !!this.roadSyntaxSkeletonOnly : false;
-                    if (!supportsSkeleton && this.roadSyntaxSkeletonOnly) {
-                        this.roadSyntaxSkeletonOnly = false;
-                    }
-                    const targetReady = this.isRoadSyntaxMetricReady(metric, { skeletonOnly: effectiveSkeletonOnly });
+                    const targetReady = this.isRoadSyntaxMetricReady(metric, { skeletonOnly: !!this.roadSyntaxSkeletonOnly });
                     if (!targetReady) {
-                        if (this.roadSyntaxStrictWebglOnly) {
-                            this.roadSyntaxSetStatus('ArcGIS-WebGL 数据未就绪（已禁用旧版回退）');
-                        } else {
-                            const counts = this.roadSyntaxLayerReadyCounts();
-                            this.roadSyntaxSetStatus(`目标图层仍在预处理（${counts.ready}/${counts.total || 0}）`);
-                        }
+                        const counts = this.roadSyntaxLayerReadyCounts();
+                        this.roadSyntaxSetStatus(`目标图层仍在预处理（${counts.ready}/${counts.total || 0}）`);
                         return;
                     }
                     this.renderRoadSyntaxByMetric(this.resolveRoadSyntaxActiveMetric());
                 },
-                async renderRoadSyntaxByMetric(metricValue = null) {
+                renderRoadSyntaxByMetric(metricValue = null) {
                     const activeMetric = metricValue || this.resolveRoadSyntaxActiveMetric();
-                    const webglPayloadReady = (
-                        this.roadSyntaxUseArcgisWebgl
-                        && typeof this.roadSyntaxCanUseArcgisWebglPayload === 'function'
-                        && this.roadSyntaxCanUseArcgisWebglPayload(this.roadSyntaxWebglPayload)
-                    );
-                    if (
-                        webglPayloadReady
-                        && typeof this.renderRoadSyntaxArcgisWebgl === 'function'
-                    ) {
-                        let webglRendered = false;
-                        try {
-                            webglRendered = await this.renderRoadSyntaxArcgisWebgl(this.roadSyntaxWebglPayload, {
-                                hideWhenSuspended: true,
-                            });
-                        } catch (err) {
-                            webglRendered = false;
-                            console.warn('[road-syntax] arcgis webgl render failed', err);
-                        }
-                        if (webglRendered) {
-                            this.cancelRoadSyntaxNodeBuild();
-                            this.setRoadSyntaxNodeMarkersVisible(false);
-                            if (activeMetric === 'intelligibility') {
-                                this.$nextTick(() => this.scheduleRoadSyntaxScatterRender(0));
-                            } else {
-                                this.disposeRoadSyntaxScatterChart();
-                            }
-                            this.roadSyntaxLegendModel = this.buildRoadSyntaxLegendModel(activeMetric);
-                            return;
-                        }
+                    if (!Array.isArray(this.roadSyntaxRoadFeatures) || this.roadSyntaxRoadFeatures.length === 0) {
+                        this.clearRoadSyntaxOverlays();
+                        this.roadSyntaxLegendModel = null;
+                        return;
                     }
-                    this.clearRoadSyntaxOverlays();
-                    this.roadSyntaxLegendModel = null;
-                    this.cancelRoadSyntaxNodeBuild();
-                    this.setRoadSyntaxNodeMarkersVisible(false);
-                    this.disposeRoadSyntaxScatterChart();
-                    if (webglPayloadReady) {
-                        const webglReason = String(this.roadSyntaxWebglStatus || '').trim();
-                        this.roadSyntaxSetStatus(
-                            webglReason
-                                ? `ArcGIS-WebGL 渲染失败（已禁用旧版回退）: ${webglReason}`
-                                : 'ArcGIS-WebGL 渲染失败（已禁用旧版回退）'
-                        );
+                    if (this.roadSyntaxPoolInitRunning && !this.roadSyntaxPoolReady) {
+                        this.roadSyntaxSetStatus(this.roadSyntaxFormatReadyStatus('图层预加载中', this.roadSyntaxPoolInitDone, this.roadSyntaxPoolInitTotal || 0));
+                    }
+                    if (!this.isRoadSyntaxMetricReady(activeMetric, { skeletonOnly: !!this.roadSyntaxSkeletonOnly })) {
+                        const counts = this.roadSyntaxLayerReadyCounts();
+                        this.roadSyntaxSetStatus(`指标“${this.roadSyntaxLabelByMetric(activeMetric)}”仍在预处理（${counts.ready}/${counts.total || 0}）`);
+                        return;
+                    }
+                    this.renderRoadSyntaxOverlays({
+                        type: 'FeatureCollection',
+                        features: this.roadSyntaxRoadFeatures,
+                    }, { forceRebuild: false });
+                    if (activeMetric === 'connectivity') {
+                        this.renderRoadSyntaxNodeMarkers();
                     } else {
-                        this.roadSyntaxSetStatus('ArcGIS-WebGL 数据未就绪（已禁用旧版回退）');
+                        this.cancelRoadSyntaxNodeBuild();
+                        this.setRoadSyntaxNodeMarkersVisible(false);
                     }
+                    if (activeMetric === 'intelligibility') {
+                        this.$nextTick(() => this.renderRoadSyntaxScatterChart());
+                    } else {
+                        this.disposeRoadSyntaxScatterChart();
+                    }
+                    this.roadSyntaxLegendModel = this.buildRoadSyntaxLegendModel(activeMetric);
                 },
                 resolveRoadSyntaxFallbackField(activeMetric) {
-                    let fallbackField = 'connectivity_score';
+                    let fallbackField = 'accessibility_score';
                     if (activeMetric === 'choice') {
                         fallbackField = 'choice_score';
                     } else if (activeMetric === 'integration') {
                         fallbackField = 'integration_score';
                     } else if (activeMetric === 'connectivity') {
                         fallbackField = 'degree_score';
-                    } else if (activeMetric === 'control') {
-                        fallbackField = 'control_score';
-                    } else if (activeMetric === 'depth') {
-                        fallbackField = 'depth_score';
                     } else if (activeMetric === 'intelligibility') {
                         fallbackField = 'intelligibility_score';
                     }
@@ -6699,7 +4822,7 @@
                         }));
                     }
                     if (!nodes.length) {
-                        this.clearRoadSyntaxNodeMarkers({ immediate: true });
+                        this.clearRoadSyntaxNodeMarkers();
                         return;
                     }
 
@@ -6723,7 +4846,7 @@
                         return;
                     }
 
-                    this.clearRoadSyntaxNodeMarkers({ immediate: true });
+                    this.clearRoadSyntaxNodeMarkers();
                     const buildToken = this.roadSyntaxNodeBuildToken + 1;
                     this.roadSyntaxNodeBuildToken = buildToken;
                     this.roadSyntaxNodeBuildRunning = true;
@@ -6732,30 +4855,14 @@
 
                     const step = () => {
                         if (buildToken !== this.roadSyntaxNodeBuildToken) {
-                            this.roadSyntaxEnqueueMapWrite(() => {
-                                markers.forEach((marker) => this.safeMapSet(marker, null));
-                                return { ok: true, marker_count: markers.length };
-                            }, {
-                                key: `road_syntax_node_build_abort:${buildToken}`,
-                                replaceExisting: false,
-                                meta: {
-                                    reason: 'road_syntax_node_build_abort',
-                                    marker_count: markers.length
-                                }
+                            markers.forEach((marker) => {
+                                if (marker && typeof marker.setMap === 'function') marker.setMap(null);
                             });
                             return;
                         }
                         if (!this.shouldRenderRoadSyntaxConnectivityNodes()) {
-                            this.roadSyntaxEnqueueMapWrite(() => {
-                                markers.forEach((marker) => this.safeMapSet(marker, null));
-                                return { ok: true, marker_count: markers.length };
-                            }, {
-                                key: `road_syntax_node_build_hidden:${buildToken}`,
-                                replaceExisting: false,
-                                meta: {
-                                    reason: 'road_syntax_node_build_hidden',
-                                    marker_count: markers.length
-                                }
+                            markers.forEach((marker) => {
+                                if (marker && typeof marker.setMap === 'function') marker.setMap(null);
                             });
                             this.roadSyntaxNodeBuildRunning = false;
                             return;
@@ -6765,7 +4872,6 @@
                             : () => Date.now();
                         const frameStart = nowFn();
                         const budgetMs = this.roadSyntaxResolveFrameBudget('node');
-                        const chunkMarkers = [];
                         while (index < sampledNodes.length) {
                             const feature = sampledNodes[index] || {};
                             index += 1;
@@ -6785,35 +4891,9 @@
                                 clickable: false,
                                 cursor: 'default',
                             });
+                            marker.setMap(this.mapCore.map);
                             markers.push(marker);
-                            chunkMarkers.push(marker);
                             if ((nowFn() - frameStart) >= budgetMs) break;
-                        }
-                        if (chunkMarkers.length) {
-                            const chunkMarkerCount = chunkMarkers.length;
-                            const chunkEndIndex = index;
-                            this.roadSyntaxEnqueueMapWrite(() => {
-                                if (buildToken !== this.roadSyntaxNodeBuildToken) {
-                                    chunkMarkers.forEach((marker) => this.safeMapSet(marker, null));
-                                    return { ok: false, skipped: true, reason: 'stale_node_build_chunk' };
-                                }
-                                const targetMap = (this.mapCore && this.mapCore.map && this.shouldRenderRoadSyntaxConnectivityNodes())
-                                    ? this.mapCore.map
-                                    : null;
-                                chunkMarkers.forEach((marker) => this.safeMapSet(marker, targetMap));
-                                return {
-                                    ok: true,
-                                    marker_count: chunkMarkerCount,
-                                    visible: !!targetMap
-                                };
-                            }, {
-                                key: `road_syntax_node_build_chunk:${buildToken}:${chunkEndIndex}`,
-                                replaceExisting: false,
-                                meta: {
-                                    reason: 'road_syntax_node_build_chunk',
-                                    marker_count: chunkMarkerCount
-                                }
-                            });
                         }
                         this.roadSyntaxNodeMarkers = markers;
                         if (index < sampledNodes.length) {
@@ -6829,51 +4909,26 @@
                 renderRoadSyntaxScatterChart() {
                     if (this.roadSyntaxMainTab !== 'intelligibility') {
                         this.disposeRoadSyntaxScatterChart();
-                        return false;
+                        return;
                     }
-                    if (!window.echarts) {
-                        this.roadSyntaxSetStatus('可理解度图表库未加载（echarts）');
-                        return false;
-                    }
+                    if (!window.echarts) return;
                     const el = document.getElementById('roadSyntaxScatterChart');
-                    if (!el) return false;
-                    if (el.clientWidth === 0 || el.clientHeight === 0) return false;
+                    if (!el || el.clientWidth === 0) return;
                     const diagnostics = this.roadSyntaxDiagnostics || {};
-                    let points = this.normalizeRoadSyntaxScatterPoints(diagnostics.intelligibility_scatter);
-                    if (!points.length && Array.isArray(this.roadSyntaxScatterPointsCache) && this.roadSyntaxScatterPointsCache.length) {
-                        points = this.normalizeRoadSyntaxScatterPoints(this.roadSyntaxScatterPointsCache);
+                    let points = Array.isArray(diagnostics.intelligibility_scatter)
+                        ? diagnostics.intelligibility_scatter.map((p) => [Number(p.x), Number(p.y)])
+                        : [];
+                    points = points.filter((p) => Number.isFinite(p[0]) && Number.isFinite(p[1]));
+                    if (!points.length) {
+                        const nodes = Array.isArray(this.roadSyntaxNodes) ? this.roadSyntaxNodes : [];
+                        points = nodes.map((f) => {
+                            const props = (f && f.properties) || {};
+                            return [Number(props.degree), Number(props.integration_global)];
+                        }).filter((p) => Number.isFinite(p[0]) && Number.isFinite(p[1]));
                     }
                     if (!points.length) {
-                        points = this.buildRoadSyntaxScatterFallbackPoints();
-                    }
-                    if (points.length) {
-                        this.roadSyntaxScatterPointsCache = points.slice();
-                    }
-                    if (!points.length) {
-                        this.roadSyntaxSetStatus('可理解度样本为空（暂无可回归数据）');
-                        let emptyChart = this.roadSyntaxScatterChart;
-                        if (!emptyChart || emptyChart.isDisposed()) {
-                            emptyChart = echarts.getInstanceByDom(el) || echarts.init(el);
-                            this.roadSyntaxScatterChart = emptyChart;
-                        }
-                        emptyChart.setOption({
-                            animation: false,
-                            xAxis: { show: false, min: 0, max: 1 },
-                            yAxis: { show: false, min: 0, max: 1 },
-                            series: [],
-                            graphic: [{
-                                type: 'text',
-                                left: 'center',
-                                top: 'middle',
-                                style: {
-                                    text: '暂无可理解度样本点',
-                                    fill: '#6b7280',
-                                    fontSize: 13
-                                }
-                            }]
-                        }, true);
-                        emptyChart.resize();
-                        return true;
+                        this.disposeRoadSyntaxScatterChart();
+                        return;
                     }
                     let chart = this.roadSyntaxScatterChart;
                     if (!chart || chart.isDisposed()) {
@@ -6889,109 +4944,28 @@
                             [xMax, rv.slope * xMax + rv.intercept],
                         ]
                         : [];
-                    try {
-                        chart.setOption({
-                            animation: false,
-                            grid: { left: 42, right: 16, top: 20, bottom: 34 },
-                            xAxis: { type: 'value', name: '连接度', nameLocation: 'middle', nameGap: 26, splitLine: { lineStyle: { color: '#eef2f7' } } },
-                            yAxis: { type: 'value', name: '整合度', nameGap: 14, splitLine: { lineStyle: { color: '#eef2f7' } } },
-                            series: [
-                                {
-                                    type: 'scatter',
-                                    data: points,
-                                    symbolSize: 6,
-                                    z: 3,
-                                    itemStyle: {
-                                        color: '#2563eb',
-                                        opacity: 0.82,
-                                        borderColor: '#ffffff',
-                                        borderWidth: 0.8,
-                                    },
-                                    emphasis: { scale: false },
-                                },
-                                {
-                                    type: 'line',
-                                    data: lineData,
-                                    showSymbol: false,
-                                    z: 2,
-                                    lineStyle: { width: 2, color: '#dc2626', opacity: lineData.length ? 0.9 : 0 },
-                                },
-                            ],
-                            graphic: [],
-                        }, true);
-                    } catch (err) {
-                        console.warn('[road-syntax] scatter setOption failed, retry with simplified series', err);
-                        chart.clear();
-                        chart.setOption({
-                            animation: false,
-                            grid: { left: 42, right: 16, top: 20, bottom: 34 },
-                            xAxis: { type: 'value', name: '连接度', nameLocation: 'middle', nameGap: 26 },
-                            yAxis: { type: 'value', name: '整合度', nameGap: 14 },
-                            series: [{
+                    chart.setOption({
+                        animation: false,
+                        grid: { left: 42, right: 16, top: 20, bottom: 34 },
+                        xAxis: { type: 'value', name: '连接度', nameLocation: 'middle', nameGap: 26, splitLine: { lineStyle: { color: '#eef2f7' } } },
+                        yAxis: { type: 'value', name: '整合度', nameGap: 14, splitLine: { lineStyle: { color: '#eef2f7' } } },
+                        series: [
+                            {
                                 type: 'scatter',
                                 data: points,
-                                symbolSize: 6,
-                                itemStyle: { color: '#2563eb', opacity: 0.85 },
+                                symbolSize: 5,
+                                itemStyle: { color: '#2563eb', opacity: 0.7 },
                                 emphasis: { scale: false },
-                            }],
-                            graphic: [],
-                        }, true);
-                    }
+                            },
+                            {
+                                type: 'line',
+                                data: lineData,
+                                showSymbol: false,
+                                lineStyle: { width: 2, color: '#dc2626', opacity: lineData.length ? 0.95 : 0 },
+                            },
+                        ],
+                    }, true);
                     chart.resize();
-                    if (String(this.roadSyntaxStatus || '').indexOf('可理解度样本为空') >= 0) {
-                        this.roadSyntaxSetStatus('');
-                    }
-                    return true;
-                },
-                normalizeRoadSyntaxScatterPoints(rawPoints) {
-                    const list = Array.isArray(rawPoints) ? rawPoints : [];
-                    const out = [];
-                    list.forEach((row) => {
-                        let x = NaN;
-                        let y = NaN;
-                        if (Array.isArray(row)) {
-                            x = Number(row[0]);
-                            y = Number(row[1]);
-                        } else if (row && typeof row === 'object') {
-                            x = Number(row.x);
-                            if (!Number.isFinite(x)) x = Number(row.connectivity_score ?? row.connectivity ?? row.degree_score ?? row.degree);
-                            y = Number(row.y);
-                            if (!Number.isFinite(y)) y = Number(row.integration_global ?? row.integration_score ?? row.integration);
-                        }
-                        if (Number.isFinite(x) && Number.isFinite(y)) {
-                            out.push([x, y]);
-                        }
-                    });
-                    if (out.length > 8000) {
-                        const stride = Math.max(1, Math.ceil(out.length / 8000));
-                        return out.filter((_, idx) => idx % stride === 0);
-                    }
-                    return out;
-                },
-                buildRoadSyntaxScatterFallbackPoints() {
-                    let points = [];
-                    const nodes = Array.isArray(this.roadSyntaxNodes) ? this.roadSyntaxNodes : [];
-                    if (nodes.length) {
-                        points = nodes.map((f) => {
-                            const props = (f && f.properties) || {};
-                            const x = Number.isFinite(Number(props.degree_score))
-                                ? Number(props.degree_score)
-                                : Number(props.degree);
-                            return [x, Number(props.integration_global)];
-                        }).filter((p) => Number.isFinite(p[0]) && Number.isFinite(p[1]));
-                    }
-                    if (!points.length) {
-                        const roads = Array.isArray(this.roadSyntaxRoadFeatures) ? this.roadSyntaxRoadFeatures : [];
-                        points = roads.map((f) => {
-                            const props = (f && f.properties) || {};
-                            return [Number(props.connectivity_score), Number(props.integration_global)];
-                        }).filter((p) => Number.isFinite(p[0]) && Number.isFinite(p[1]));
-                    }
-                    if (points.length > 8000) {
-                        const stride = Math.max(1, Math.ceil(points.length / 8000));
-                        points = points.filter((_, idx) => idx % stride === 0);
-                    }
-                    return points;
                 },
                 buildRoadSyntaxRenderItems(features) {
                     const out = [];
@@ -7037,36 +5011,33 @@
                     return `${list.length}|${firstPt[0].toFixed(6)},${firstPt[1].toFixed(6)}|${lastPt[0].toFixed(6)},${lastPt[1].toFixed(6)}`;
                 },
                 rebuildRoadSyntaxBasePolylines() {
-                    this.roadSyntaxPolylines = [];
-                    this.roadSyntaxLayerLodIndexCache = {};
-                    this.roadSyntaxTargetVisibleLineSet = {};
-                    this.roadSyntaxAppliedVisibleLineSet = {};
+                    const map = this.roadSyntaxMap();
+                    if (!map || !window.AMap) return [];
+                    const items = Array.isArray(this.roadSyntaxPolylineItems) ? this.roadSyntaxPolylineItems : [];
+                    const lines = [];
+                    items.forEach((item) => {
+                        const line = new AMap.Polyline({
+                            path: (item && item.coords) || [],
+                            bubble: true,
+                            clickable: false,
+                            cursor: 'default',
+                        });
+                        line.setMap(null);
+                        lines.push(line);
+                    });
+                    this.roadSyntaxPolylines = lines;
+                    this.roadSyntaxVisibleLineSet = {};
                     this.roadSyntaxResetVisibleIndexCache();
                     this.roadSyntaxResetLodScoreCache();
                     this.roadSyntaxResetSpatialIndex();
-                    return [];
+                    return lines;
                 },
                 isRoadSyntaxLayerReady(layerKey) {
-                    if (this.roadSyntaxStrictWebglOnly) {
-                        return !!(
-                            this.roadSyntaxUseArcgisWebgl
-                            && typeof this.roadSyntaxCanUseArcgisWebglPayload === 'function'
-                            && this.roadSyntaxCanUseArcgisWebglPayload(this.roadSyntaxWebglPayload)
-                        );
-                    }
-                    if (
-                        this.roadSyntaxUseArcgisWebgl
-                        && typeof this.roadSyntaxCanUseArcgisWebglPayload === 'function'
-                        && this.roadSyntaxCanUseArcgisWebglPayload(this.roadSyntaxWebglPayload)
-                    ) {
-                        return true;
-                    }
                     const state = this.roadSyntaxLayerBuildState || {};
                     const styleCache = this.roadSyntaxLayerStyleCache || {};
                     return !!styleCache[layerKey] && state[layerKey] === 'ready';
                 },
                 enqueueRoadSyntaxLayerBuild(layerKey, options = {}) {
-                    if (this.roadSyntaxStrictWebglOnly) return;
                     if (!this.roadSyntaxMap() || !window.AMap) return;
                     if (!Array.isArray(this.roadSyntaxPolylineItems) || !this.roadSyntaxPolylineItems.length) return;
                     const priority = !!(options && options.priority);
@@ -7159,24 +5130,6 @@
                         const styleCache = Object.assign({}, this.roadSyntaxLayerStyleCache || {});
                         styleCache[layerKey] = styles;
                         this.roadSyntaxLayerStyleCache = styleCache;
-                        const map = this.roadSyntaxMap();
-                        const pool = Object.assign({}, this.roadSyntaxLayerPool || {});
-                        if (pool[layerKey]) {
-                            this.roadSyntaxDisposeLayerEntry(pool[layerKey], map);
-                        }
-                        const fullLayer = this.roadSyntaxBuildLayerFromStyles(layerKey, styles, {
-                            variant: 'full',
-                        });
-                        const lodIndexSet = this.roadSyntaxBuildLayerLodIndexSet(layerKey);
-                        const lodLayer = this.roadSyntaxBuildLayerFromStyles(layerKey, styles, {
-                            variant: 'lod',
-                            includeIndexSet: lodIndexSet,
-                            zIndexBoost: 3,
-                        });
-                        fullLayer.lodLayer = lodLayer;
-                        fullLayer.lodIndexSet = this.roadSyntaxCloneIndexSet(lodLayer.indexSet || lodIndexSet);
-                        pool[layerKey] = fullLayer;
-                        this.roadSyntaxLayerPool = pool;
                         const doneState = Object.assign({}, this.roadSyntaxLayerBuildState || {});
                         doneState[layerKey] = 'ready';
                         this.roadSyntaxLayerBuildState = doneState;
@@ -7191,10 +5144,10 @@
                             if (this.roadSyntaxPoolInitRunning) {
                                 this.roadSyntaxPoolInitRunning = false;
                             }
-                            if (hadDegraded && this.roadSyntaxUseLegacyPoolStatus()) {
+                            if (hadDegraded) {
                                 this.roadSyntaxSetStatus(this.roadSyntaxFormatReadyStatus('图层补建完成', readyCount, totalCount));
                             }
-                        } else if (this.roadSyntaxPoolInitRunning && this.roadSyntaxUseLegacyPoolStatus()) {
+                        } else if (this.roadSyntaxPoolInitRunning) {
                             this.roadSyntaxSetStatus(this.roadSyntaxFormatReadyStatus('图层预加载中', readyCount, totalCount));
                         }
                         if (this.roadSyntaxPendingLayerKey === layerKey) {
@@ -7207,44 +5160,144 @@
                 switchRoadSyntaxLayerByKey(layerKey, options = {}) {
                     const map = this.roadSyntaxMap();
                     if (!map) return;
+                    const force = !!(options && options.force);
                     const trackPerf = !options || options.trackPerf !== false;
-                    const startAt = this.roadSyntaxNow();
-                    if (!this.roadSyntaxUseArcgisWebgl) {
-                        this.roadSyntaxSetStatus('ArcGIS-WebGL 未启用，旧版回退已禁用');
+                    if (!force) {
+                        this.roadSyntaxPrewarmToken += 1;
+                        if (this.roadSyntaxSwitchInProgress) {
+                            this.roadSyntaxSwitchQueuedLayerKey = layerKey;
+                            return;
+                        }
+                        const nowAt = this.roadSyntaxNow();
+                        const cooldownMs = Math.max(0, Number(this.roadSyntaxSwitchCooldownMs || 0));
+                        const elapsed = nowAt - Number(this.roadSyntaxSwitchLastAt || 0);
+                        if (elapsed < cooldownMs) {
+                            this.roadSyntaxSwitchQueuedLayerKey = layerKey;
+                            if (!this.roadSyntaxSwitchThrottleTimer) {
+                                const waitMs = Math.max(0, Math.ceil(cooldownMs - elapsed));
+                                this.roadSyntaxSwitchThrottleTimer = window.setTimeout(() => {
+                                    this.roadSyntaxSwitchThrottleTimer = null;
+                                    const queued = String(this.roadSyntaxSwitchQueuedLayerKey || '');
+                                    this.roadSyntaxSwitchQueuedLayerKey = '';
+                                    if (queued) this.switchRoadSyntaxLayerByKey(queued);
+                                }, waitMs);
+                            }
+                            return;
+                        }
+                    }
+                    if (!this.isRoadSyntaxLayerReady(layerKey)) {
+                        this.enqueueRoadSyntaxLayerBuild(layerKey, { priority: true, switchOnReady: false });
+                        const counts = this.roadSyntaxLayerReadyCounts();
+                        this.roadSyntaxSetStatus(`图层仍在预处理，暂不可切换（${counts.ready}/${counts.total || 0}）`);
                         return;
                     }
-                    if (
-                        this.roadSyntaxUseArcgisWebgl
-                        && typeof this.roadSyntaxCanUseArcgisWebglPayload === 'function'
-                        && this.roadSyntaxCanUseArcgisWebglPayload(this.roadSyntaxWebglPayload)
-                    ) {
-                        this.roadSyntaxActiveLayerKey = String(layerKey || this.resolveRoadSyntaxLayerKey(this.resolveRoadSyntaxActiveMetric()));
-                        this.roadSyntaxActiveLayerVariant = 'full';
-                        this.roadSyntaxPendingLayerKey = '';
-                        this.roadSyntaxDisplaySuspended = false;
-                        if (typeof this.renderRoadSyntaxArcgisWebgl === 'function') {
-                            this.renderRoadSyntaxArcgisWebgl(this.roadSyntaxWebglPayload, {
-                                hideWhenSuspended: true,
-                            }).then((ok) => {
-                                if (ok) {
-                                    if (trackPerf) {
-                                        this.recordRoadSyntaxSwitchDuration(startAt, layerKey, 0, 0, 'arcgis_webgl');
-                                    }
-                                } else if (this.roadSyntaxStrictWebglOnly) {
-                                    this.roadSyntaxSetStatus('ArcGIS-WebGL 切换失败（已禁用旧版回退）');
-                                }
-                            }).catch((err) => {
-                                console.warn('[road-syntax] arcgis webgl switch render failed', err);
-                                if (this.roadSyntaxStrictWebglOnly) {
-                                    this.roadSyntaxSetStatus('ArcGIS-WebGL 切换失败（已禁用旧版回退）');
-                                }
-                            });
-                        } else if (this.roadSyntaxStrictWebglOnly) {
-                            this.roadSyntaxSetStatus('ArcGIS-WebGL 渲染器不可用（已禁用旧版回退）');
+                    if (this.roadSyntaxActiveLayerKey === layerKey && !force && !this.roadSyntaxDisplaySuspended) {
+                        if (this.roadSyntaxPendingLayerKey === layerKey) {
+                            this.roadSyntaxPendingLayerKey = '';
                         }
                         return;
                     }
-                    this.roadSyntaxSetStatus('ArcGIS-WebGL 数据未就绪（已禁用旧版回退）');
+                    const lines = Array.isArray(this.roadSyntaxPolylines) ? this.roadSyntaxPolylines : [];
+                    if (!lines.length) {
+                        this.rebuildRoadSyntaxBasePolylines();
+                    }
+                    const showLines = Array.isArray(this.roadSyntaxPolylines) ? this.roadSyntaxPolylines : [];
+                    const styleCache = this.roadSyntaxLayerStyleCache || {};
+                    const styles = Array.isArray(styleCache[layerKey]) ? styleCache[layerKey] : [];
+                    if (!styles.length || styles.length !== showLines.length) {
+                        this.enqueueRoadSyntaxLayerBuild(layerKey, { priority: true, switchOnReady: true });
+                        const counts = this.roadSyntaxLayerReadyCounts();
+                        this.roadSyntaxSetStatus(`图层仍在预处理，暂不可切换（${counts.ready}/${counts.total || 0}）`);
+                        return;
+                    }
+                    const switchToken = this.roadSyntaxLayerSwitchToken + 1;
+                    this.roadSyntaxLayerSwitchToken = switchToken;
+                    this.roadSyntaxStyleApplyToken += 1;
+                    const styleApplyToken = this.roadSyntaxStyleApplyToken;
+                    this.roadSyntaxSwitchInProgress = true;
+                    const startAt = this.roadSyntaxNow();
+                    const finalize = (pathLabel = '') => {
+                        if (switchToken !== this.roadSyntaxLayerSwitchToken) {
+                            this.roadSyntaxSwitchInProgress = false;
+                            return;
+                        }
+                        this.roadSyntaxPolylines = showLines;
+                        this.roadSyntaxActiveLayerKey = layerKey;
+                        this.roadSyntaxLastStyleKey = layerKey;
+                        this.roadSyntaxDisplaySuspended = false;
+                        if (this.roadSyntaxPendingLayerKey === layerKey) {
+                            this.roadSyntaxPendingLayerKey = '';
+                        }
+                        if (trackPerf) {
+                            this.recordRoadSyntaxSwitchDuration(startAt, layerKey, 0, showLines.length, pathLabel);
+                        }
+                        if (
+                            this.roadSyntaxPoolReady
+                            && this.roadSyntaxSummary
+                            && String(this.roadSyntaxStatus || '').includes('预处理')
+                        ) {
+                            this.roadSyntaxSetStatus(this.buildRoadSyntaxCompletionStatus(true));
+                        }
+                        this.roadSyntaxSwitchInProgress = false;
+                        this.roadSyntaxSwitchLastAt = this.roadSyntaxNow();
+                        const queued = String(this.roadSyntaxSwitchQueuedLayerKey || '');
+                        if (queued && queued !== layerKey) {
+                            this.roadSyntaxSwitchQueuedLayerKey = '';
+                            window.requestAnimationFrame(() => this.switchRoadSyntaxLayerByKey(queued));
+                        }
+                    };
+                    const viewport = this.roadSyntaxApplyViewportFilter({
+                        layerKey: layerKey,
+                        applyStyle: false,
+                    });
+                    const visibleCount = Number(viewport && viewport.visible) || 0;
+                    const visibleIndexes = Object.keys(this.roadSyntaxVisibleLineSet || {})
+                        .map((v) => Number(v))
+                        .filter((v) => Number.isFinite(v));
+                    const totalVisible = visibleIndexes.length;
+                    const eagerCount = (this.roadSyntaxViewportLazyEnabled && totalVisible > 260)
+                        ? Math.min(180, totalVisible)
+                        : totalVisible;
+                    for (let i = 0; i < eagerCount; i += 1) {
+                        const lineIdx = visibleIndexes[i];
+                        const line = showLines[lineIdx];
+                        const style = styles[lineIdx] || null;
+                        if (line && style && typeof line.setOptions === 'function') {
+                            try { line.setOptions(style); } catch (_) { }
+                        }
+                    }
+                    finalize(this.roadSyntaxViewportLazyEnabled ? (eagerCount < totalVisible ? 'single_viewport_fast' : 'single_viewport') : 'single_sync');
+                    if (eagerCount < totalVisible) {
+                        let idx = eagerCount;
+                        const step = () => {
+                            if (styleApplyToken !== this.roadSyntaxStyleApplyToken) return;
+                            const nowFn = (window.performance && typeof window.performance.now === 'function')
+                                ? () => window.performance.now()
+                                : () => Date.now();
+                            const frameStart = nowFn();
+                            const budgetMs = this.roadSyntaxResolveFrameBudget('line_switch', totalVisible);
+                            while (idx < totalVisible) {
+                                const lineIdx = visibleIndexes[idx];
+                                idx += 1;
+                                const line = showLines[lineIdx];
+                                const style = styles[lineIdx] || null;
+                                if (line && style && typeof line.setOptions === 'function') {
+                                    try { line.setOptions(style); } catch (_) { }
+                                }
+                                if ((nowFn() - frameStart) >= budgetMs) break;
+                            }
+                            if (idx < totalVisible) {
+                                window.requestAnimationFrame(step);
+                            }
+                        };
+                        window.requestAnimationFrame(step);
+                    }
+                    if (visibleCount <= 0) {
+                        this.roadSyntaxSetLinesVisible(showLines, true, map, { preferBatch: true });
+                    }
+                    if (this.roadSyntaxMapInteracting && this.roadSyntaxCurrentStride > 1) {
+                        this.roadSyntaxApplyInteractionStride(this.roadSyntaxCurrentStride);
+                    }
                 },
                 warmRoadSyntaxLayerPool(activeLayerKey = '') {
                     const state = this.roadSyntaxLayerBuildState || {};
@@ -7277,17 +5330,13 @@
                     return Promise.resolve(true);
                 },
                 prewarmRoadSyntaxSwitchPath(requestToken, activeLayerKey = '') {
-                    return Promise.resolve(requestToken === this.roadSyntaxRequestToken);
+                    if (requestToken !== this.roadSyntaxRequestToken) return Promise.resolve(false);
+                    if (activeLayerKey) {
+                        this.switchRoadSyntaxLayerByKey(activeLayerKey, { force: true, trackPerf: false });
+                    }
+                    return Promise.resolve(true);
                 },
                 async initializeRoadSyntaxPoolFully(requestToken, activeLayerKey = '') {
-                    if (this.roadSyntaxStrictWebglOnly) {
-                        this.roadSyntaxPoolInitRunning = false;
-                        this.roadSyntaxPoolReady = true;
-                        this.roadSyntaxPoolDegraded = false;
-                        this.roadSyntaxPoolInitTotal = 1;
-                        this.roadSyntaxPoolInitDone = 1;
-                        return true;
-                    }
                     const keysRaw = this.roadSyntaxLayerKeysForPrebuild();
                     const keys = activeLayerKey
                         ? [activeLayerKey].concat(keysRaw.filter((key) => key !== activeLayerKey))
@@ -7304,9 +5353,7 @@
                     this.roadSyntaxPoolDegraded = false;
                     this.roadSyntaxPoolInitTotal = keys.length;
                     this.roadSyntaxPoolInitDone = 0;
-                    if (this.roadSyntaxUseLegacyPoolStatus()) {
-                        this.roadSyntaxSetStatus(this.roadSyntaxFormatReadyStatus('图层预加载中', 0, keys.length));
-                    }
+                    this.roadSyntaxSetStatus(this.roadSyntaxFormatReadyStatus('图层预加载中', 0, keys.length));
                     this.refreshRoadSyntaxLayerReadyMap();
                     keys.forEach((key, idx) => this.enqueueRoadSyntaxLayerBuild(key, {
                         priority: idx === 0,
@@ -7331,9 +5378,7 @@
                             break;
                         }
                         this.roadSyntaxPoolInitDone = i + 1;
-                        if (this.roadSyntaxUseLegacyPoolStatus()) {
-                            this.roadSyntaxSetStatus(this.roadSyntaxFormatReadyStatus('图层预加载中', this.roadSyntaxPoolInitDone, this.roadSyntaxPoolInitTotal));
-                        }
+                        this.roadSyntaxSetStatus(this.roadSyntaxFormatReadyStatus('图层预加载中', this.roadSyntaxPoolInitDone, this.roadSyntaxPoolInitTotal));
                     }
                     this.roadSyntaxPoolInitRunning = false;
                     const readyMap = this.refreshRoadSyntaxLayerReadyMap();
@@ -7342,9 +5387,15 @@
                     this.roadSyntaxPoolReady = allReady;
                     this.roadSyntaxPoolDegraded = !allReady;
                     if (allReady) {
-                        if (this.roadSyntaxUseLegacyPoolStatus()) {
-                            this.roadSyntaxSetStatus(this.roadSyntaxFormatReadyStatus('图层预加载完成', readyCount, keys.length));
-                        }
+                        this.roadSyntaxSetStatus(this.roadSyntaxFormatReadyStatus('图层预加载完成', readyCount, keys.length));
+                        const firstPrewarmToken = this.roadSyntaxPrewarmToken + 1;
+                        this.roadSyntaxPrewarmToken = firstPrewarmToken;
+                        window.setTimeout(() => {
+                            if (firstPrewarmToken !== this.roadSyntaxPrewarmToken) return;
+                            if (requestToken !== this.roadSyntaxRequestToken) return;
+                            if (this.roadSyntaxSwitchInProgress || this.roadSyntaxSwitchQueuedLayerKey) return;
+                            this.prewarmRoadSyntaxFirstSwitch(requestToken, activeLayerKey || keys[0] || '').catch(() => { });
+                        }, 1200);
                         if (this.roadSyntaxEnableHeavyPrewarm) {
                             const prewarmToken = this.roadSyntaxPrewarmToken + 1;
                             this.roadSyntaxPrewarmToken = prewarmToken;
@@ -7359,21 +5410,12 @@
                         }
                     }
                     if (!allReady && partial) {
-                        if (this.roadSyntaxUseLegacyPoolStatus()) {
-                            this.roadSyntaxSetStatus(`图层预加载超时，进入降级模式：${readyCount}/${keys.length}`);
-                        }
+                        this.roadSyntaxSetStatus(`图层预加载超时，进入降级模式：${readyCount}/${keys.length}`);
                     }
                     return allReady;
                 },
                 renderRoadSyntaxOverlays(roadsFeatureCollection, options = {}) {
-                    if (this.roadSyntaxStrictWebglOnly) {
-                        this.roadSyntaxSetStatus('ArcGIS-WebGL 模式已启用，旧版图层渲染已禁用');
-                        return;
-                    }
                     if (!this.roadSyntaxMap() || !window.AMap) return;
-                    if (typeof this.clearRoadSyntaxArcgisWebgl === 'function') {
-                        this.clearRoadSyntaxArcgisWebgl({ dispose: false });
-                    }
                     const forceRebuild = Boolean(options && options.forceRebuild);
                     const displayActive = !(options && options.displayActive === false);
                     const features = ((roadsFeatureCollection || {}).features || []);
@@ -7391,7 +5433,8 @@
                     const shouldRebuildPool = forceRebuild
                         || !this.roadSyntaxSourceFingerprint
                         || this.roadSyntaxSourceFingerprint !== fingerprint
-                        || !Object.keys(this.roadSyntaxLayerPool || {}).length;
+                        || !Array.isArray(this.roadSyntaxPolylines)
+                        || this.roadSyntaxPolylines.length !== renderItems.length;
                     if (shouldRebuildPool) {
                         this.roadSyntaxPoolWarmToken += 1;
                         this.roadSyntaxLayerBuildToken += 1;
@@ -7410,19 +5453,14 @@
                     const activeLayerKey = this.resolveRoadSyntaxLayerKey(activeMetric);
                     if (displayActive) {
                         if (this.isRoadSyntaxLayerReady(activeLayerKey)) {
-                            const desiredVariant = this.roadSyntaxResolveDesiredLayerVariant();
                             const forceSwitch = this.roadSyntaxDisplaySuspended
-                                || !this.roadSyntaxGetLayer(activeLayerKey);
-                            this.switchRoadSyntaxLayerByKey(activeLayerKey, {
-                                force: forceSwitch,
-                                preferVariant: desiredVariant,
-                            });
+                                || !Array.isArray(this.roadSyntaxPolylines)
+                                || this.roadSyntaxPolylines.length === 0;
+                            this.switchRoadSyntaxLayerByKey(activeLayerKey, { force: forceSwitch });
                         } else {
                             this.enqueueRoadSyntaxLayerBuild(activeLayerKey, { priority: true, switchOnReady: true });
                             const counts = this.roadSyntaxLayerReadyCounts();
-                            if (this.roadSyntaxUseLegacyPoolStatus()) {
-                                this.roadSyntaxSetStatus(`图层预处理中：${counts.ready}/${counts.total || 0}`);
-                            }
+                            this.roadSyntaxSetStatus(`图层预处理中：${counts.ready}/${counts.total || 0}`);
                         }
                         this.roadSyntaxLogOverlayHealth('render-road-syntax');
                     }
@@ -7431,26 +5469,19 @@
                     this.roadSyntaxPolylineItems = renderItems;
                 },
                 buildRoadSyntaxRequestPayload(polygon, edgeCap) {
-                    const activeMetric = this.resolveRoadSyntaxActiveMetric();
-                    const metricField = this.resolveRoadSyntaxMetricField(activeMetric);
-                    const useArcgisWebgl = this.roadSyntaxStrictWebglOnly ? true : !!this.roadSyntaxUseArcgisWebgl;
-                    const shouldBypassCap = activeMetric === 'control' || activeMetric === 'depth' || activeMetric === 'connectivity' || activeMetric === 'intelligibility';
                     return {
                         polygon: polygon,
                         coord_type: 'gcj02',
                         mode: this.roadSyntaxMode || this.transportMode || 'walking',
                         include_geojson: true,
-                        max_edge_features: shouldBypassCap ? null : edgeCap,
+                        max_edge_features: edgeCap,
                         merge_geojson_edges: true,
                         merge_bucket_step: 0.025,
                         radii_m: [800, 2000],
                         metric: this.resolveRoadSyntaxRequestMetric(),
-                        use_arcgis_webgl: useArcgisWebgl,
-                        arcgis_timeout_sec: 20,
-                        arcgis_metric_field: metricField,
                     };
                 },
-                applyRoadSyntaxResponseData(data, preferredMetricTab = 'connectivity') {
+                applyRoadSyntaxResponseData(data, preferredMetricTab = 'accessibility') {
                     this.roadSyntaxRoadFeatures = Array.isArray((data && data.roads && data.roads.features) || [])
                         ? data.roads.features
                         : [];
@@ -7458,21 +5489,13 @@
                         ? data.nodes.features
                         : [];
                     this.roadSyntaxDiagnostics = (data && data.diagnostics) ? data.diagnostics : null;
-                    this.roadSyntaxScatterPointsCache = this.normalizeRoadSyntaxScatterPoints(
-                        this.roadSyntaxDiagnostics && this.roadSyntaxDiagnostics.intelligibility_scatter
-                    );
                     this.roadSyntaxSummary = data && data.summary ? data.summary : null;
-                    this.roadSyntaxWebglPayload = (data && data.webgl && typeof data.webgl === 'object')
-                        ? data.webgl
-                        : null;
-                    this.roadSyntaxWebglStatus = String((this.roadSyntaxWebglPayload && this.roadSyntaxWebglPayload.status) || '');
                     this.roadSyntaxSkeletonOnly = false;
                     if (!this.roadSyntaxSummary) return;
                     const validMetrics = this.roadSyntaxMetricTabs().map((item) => item.value);
-                    const preferred = validMetrics.includes(preferredMetricTab)
+                    const targetMetric = validMetrics.includes(preferredMetricTab)
                         ? preferredMetricTab
-                        : this.roadSyntaxDefaultMetric();
-                    const targetMetric = preferred;
+                        : 'accessibility';
                     this.roadSyntaxMetric = targetMetric;
                     this.roadSyntaxLastMetricTab = targetMetric;
                     const radiusOptions = this.roadSyntaxRadiusOptions();
@@ -7488,46 +5511,23 @@
                     if (!this.roadSyntaxSummary) return '完成：未返回有效汇总数据';
                     const engine = this.roadSyntaxSummary.analysis_engine || 'depthmapxcli';
                     const base = `完成：${this.roadSyntaxSummary.node_count || 0} 节点，${this.roadSyntaxSummary.edge_count || 0} 边段（${engine}`;
-                    const controlValid = Number(this.roadSyntaxSummary.control_valid_count || 0);
-                    const depthValid = Number(this.roadSyntaxSummary.depth_valid_count || 0);
-                    const controlCol = String(this.roadSyntaxSummary.control_source_column || '');
-                    const depthCol = String(this.roadSyntaxSummary.depth_source_column || '');
-                    let metricHint = '';
-                    if (controlValid <= 0 || depthValid <= 0) {
-                        metricHint = `；control=${controlValid}${controlCol ? `(${controlCol})` : ''}, depth=${depthValid}${depthCol ? `(${depthCol})` : ''}`;
+                    if (poolReady) return `${base}，已预加载图层）`;
+                    if (this.roadSyntaxPoolDegraded) {
+                        return `${base}，预加载超时降级 ${this.roadSyntaxPoolInitDone}/${this.roadSyntaxPoolInitTotal}）`;
                     }
-                    const webglPayloadReady = (
-                        this.roadSyntaxUseArcgisWebgl
-                        && typeof this.roadSyntaxCanUseArcgisWebglPayload === 'function'
-                        && this.roadSyntaxCanUseArcgisWebglPayload(this.roadSyntaxWebglPayload)
-                    );
-                    const webglActive = (typeof this.roadSyntaxIsArcgisWebglActive === 'function')
-                        ? this.roadSyntaxIsArcgisWebglActive()
-                        : (webglPayloadReady && !!this.roadSyntaxWebglActive);
-                    if (
-                        webglActive
-                    ) {
-                        return `${base}，ArcGIS-WebGL 已就绪${metricHint}）`;
-                    }
-                    if (webglPayloadReady) {
-                        return `${base}，ArcGIS 数据已返回，但 WebGL 渲染未激活${metricHint}）`;
-                    }
-                    return `${base}，ArcGIS-WebGL 未就绪（已禁用旧版回退${metricHint}）`;
+                    return `${base}，图层预加载未完成）`;
                 },
                 async computeRoadSyntax() {
                     if (!this.lastIsochroneGeoJSON || this.isComputingRoadSyntax) return;
                     if (this.roadSyntaxMainTab !== 'params') {
                         this.setRoadSyntaxMainTab('params', { refresh: false, syncMetric: false });
                     }
-                    if (this.roadSyntaxStrictWebglOnly) {
-                        this.roadSyntaxUseArcgisWebgl = true;
-                    }
                     this.isComputingRoadSyntax = true;
                     this.roadSyntaxStatusCopyHint = '';
                     this.roadSyntaxSetStatus('正在请求路网并计算空间句法指标...');
                     const requestToken = this.roadSyntaxRequestToken + 1;
                     this.roadSyntaxRequestToken = requestToken;
-                    const preferredMetricTab = this.roadSyntaxLastMetricTab || this.roadSyntaxMetric || this.roadSyntaxDefaultMetric();
+                    const preferredMetricTab = this.roadSyntaxLastMetricTab || this.roadSyntaxMetric || 'accessibility';
 
                     try {
                         const polygon = this.getIsochronePolygonPoints();
@@ -7560,49 +5560,23 @@
                             return;
                         }
                         this.applyRoadSyntaxResponseData(data, preferredMetricTab);
-                        const webglPayloadReady = (
-                            this.roadSyntaxUseArcgisWebgl
-                            && typeof this.roadSyntaxCanUseArcgisWebglPayload === 'function'
-                            && this.roadSyntaxCanUseArcgisWebglPayload(this.roadSyntaxWebglPayload)
-                        );
-                        if (!webglPayloadReady) {
-                            throw new Error('ArcGIS-WebGL 数据未就绪（已禁用旧版回退）');
-                        }
+                        this.renderRoadSyntaxOverlays((data && data.roads) || null, {
+                            forceRebuild: true,
+                            displayActive: this.activeStep3Panel === 'syntax',
+                        });
 
-                        let webglRendered = false;
-                        try {
-                            if (typeof this.renderRoadSyntaxArcgisWebgl !== 'function') {
-                                throw new Error('ArcGIS-WebGL 渲染器不可用');
-                            }
-                            webglRendered = await this.renderRoadSyntaxArcgisWebgl(this.roadSyntaxWebglPayload, {
-                                hideWhenSuspended: true,
-                            });
-                        } catch (err) {
-                            console.warn('[road-syntax] arcgis webgl initial render failed', err);
-                            webglRendered = false;
+                        let poolReady = false;
+                        if (this.roadSyntaxSummary && Array.isArray(this.roadSyntaxRoadFeatures) && this.roadSyntaxRoadFeatures.length) {
+                            const activeLayerKey = this.resolveRoadSyntaxLayerKey(this.roadSyntaxLastMetricTab || this.roadSyntaxMetric || 'accessibility');
+                            poolReady = await this.initializeRoadSyntaxPoolFully(requestToken, activeLayerKey);
                         }
-                        if (!webglRendered) {
-                            const webglReason = String(this.roadSyntaxWebglStatus || '').trim();
-                            throw new Error(
-                                webglReason
-                                    ? `ArcGIS-WebGL 渲染失败（已禁用旧版回退）: ${webglReason}`
-                                    : 'ArcGIS-WebGL 渲染失败（已禁用旧版回退）'
-                            );
-                        }
-                        this.roadSyntaxPoolReady = true;
-                        this.roadSyntaxPoolDegraded = false;
-                        this.roadSyntaxPoolInitRunning = false;
-                        this.roadSyntaxPoolInitTotal = 1;
-                        this.roadSyntaxPoolInitDone = 1;
-
-                        const poolReady = true;
                         if (this.roadSyntaxSummary) {
-                            this.setRoadSyntaxMainTab(this.roadSyntaxLastMetricTab || this.roadSyntaxDefaultMetric(), {
+                            this.setRoadSyntaxMainTab(this.roadSyntaxLastMetricTab || 'accessibility', {
                                 refresh: false,
                                 syncMetric: true,
                             });
                             if (this.activeStep3Panel === 'syntax') {
-                                await this.renderRoadSyntaxByMetric(this.roadSyntaxLastMetricTab || this.roadSyntaxMetric || this.roadSyntaxDefaultMetric());
+                                this.renderRoadSyntaxByMetric(this.roadSyntaxLastMetricTab || this.roadSyntaxMetric || 'accessibility');
                             }
                         }
                         this.roadSyntaxSetStatus(this.buildRoadSyntaxCompletionStatus(poolReady));
@@ -7613,7 +5587,9 @@
                         console.error(e);
                         this.roadSyntaxSetStatus('失败: ' + (e && e.message ? e.message : String(e)));
                     } finally {
-                        this.isComputingRoadSyntax = false;
+                        if (requestToken === this.roadSyntaxRequestToken) {
+                            this.isComputingRoadSyntax = false;
+                        }
                     }
                 },
                 clearAoiMarkers() {
@@ -7621,10 +5597,12 @@
                         this.aoiMarkers = [];
                         return;
                     }
-                    const markers = this.aoiMarkers.slice();
+                    this.aoiMarkers.forEach((marker) => {
+                        if (marker && typeof marker.setMap === 'function') {
+                            marker.setMap(null);
+                        }
+                    });
                     this.aoiMarkers = [];
-                    if (!markers.length) return;
-                    markers.forEach((marker) => this.safeMapSet(marker, null));
                 },
                 renderAois(aois) {
                     this.clearAoiMarkers();
@@ -7676,6 +5654,7 @@
                                 offset: new AMap.Pixel(0, -6)
                             }).open(this.mapCore.map, loc);
                         });
+                        marker.setMap(this.mapCore.map);
                         markers.push(marker);
                     });
                     if (invalidCount > 0) {
@@ -7686,22 +5665,6 @@
                         });
                     }
                     this.aoiMarkers = markers;
-                    this.enqueueAoiMapWrite(() => {
-                        const targetMap = (this.mapCore && this.mapCore.map) ? this.mapCore.map : null;
-                        markers.forEach((marker) => this.safeMapSet(marker, targetMap));
-                        return {
-                            ok: true,
-                            marker_count: markers.length,
-                            visible: !!targetMap
-                        };
-                    }, {
-                        key: 'render_markers',
-                        replaceExisting: true,
-                        meta: {
-                            reason: 'aoi_render_markers',
-                            marker_count: markers.length
-                        }
-                    });
                 },
                 async fetchAois() {
                     if (!this.lastIsochroneGeoJSON) return;
@@ -7711,12 +5674,21 @@
                     this.poiStatus = '';
                     this.resetFetchSubtypeProgress();
 
-                    this.clearPoiOverlayLayers({
-                        reason: 'fetch_aois_start',
-                        clearManager: true,
-                        clearSimpleMarkers: true,
-                        resetFilterPanel: true
-                    });
+                    if (this.markerManager) {
+                        if (this.markerManager.markers) {
+                            this.markerManager.markers.forEach((m) => m.setMap(null));
+                        }
+                        if (this.markerManager.destroyClusterers) {
+                            this.markerManager.destroyClusterers();
+                        }
+                        this.markerManager = null;
+                    }
+                    if (this.poiMarkers) {
+                        this.poiMarkers.forEach((m) => m.setMap(null));
+                        this.poiMarkers = [];
+                    }
+                    const filterContainer = document.getElementById('filtersContainer');
+                    if (filterContainer) filterContainer.innerHTML = '';
 
                     this.clearAoiMarkers();
                     this.allPoisDetails = [];
@@ -7781,11 +5753,106 @@
                         this.abortController = null;
                     }
                 },
+                // Updated Render Logic
                 renderPois(pois) {
-                    this.updateLegacySystem(Array.isArray(pois) ? pois : []);
+                    if (this.poiMarkers) this.poiMarkers.forEach(m => m.setMap(null));
+                    this.poiMarkers = [];
+
+                    // Filter client-side based on current checkboxes (in case user toggles after fetch)
+                    // Note: For now, we render what we fetched.
+                    // Future enhancement: dynamic toggle without re-fetch.
+
+                    let invalidCount = 0;
+                    const invalidSamples = [];
+                    const markers = (Array.isArray(pois) ? pois : []).map((p, idx) => {
+                        const loc = this.normalizeLngLat(p && p.location, 'poi.render.location');
+                        if (!loc) {
+                            invalidCount += 1;
+                            if (invalidSamples.length < 5) {
+                                invalidSamples.push({
+                                    idx: idx,
+                                    id: (p && p.id) || '',
+                                    name: (p && p.name) || '',
+                                    location: this.roadSyntaxSummarizeCoordInput(p && p.location)
+                                });
+                            }
+                            return null;
+                        }
+                        // Find category color
+                        let color = '#999';
+                        const cat = this.resolvePoiCategory(p && p.type);
+                        if (cat) color = cat.color;
+
+                        // Create CircleMarker
+                        const marker = new AMap.CircleMarker({
+                            center: loc,
+                            radius: 4, // px
+                            strokeColor: 'white',
+                            strokeWeight: 1,
+                            fillColor: color,
+                            fillOpacity: 0.9,
+                            zIndex: 100,
+                            bubble: true,
+                            cursor: 'pointer',
+                        });
+
+                        // Info Window
+                        marker.on('click', () => {
+                            const typeText = (p.type || '').toString();
+                            const nameText = p.name || '';
+                            const isTraffic = typeText.startsWith('15') || typeText.startsWith('type-15');
+                            const isParking = typeText.includes('1509') || /停车/.test(nameText);
+                            const addressText = p.address || '';
+                            let lines = Array.isArray(p.lines) ? p.lines.slice() : [];
+                            if (isTraffic && !isParking && addressText) {
+                                if (lines.length === 0) {
+                                    lines = [addressText];
+                                } else if (!lines.includes(addressText)) {
+                                    lines.push(addressText);
+                                }
+                            }
+                            const showAddress = !isTraffic || isParking;
+                            const showLines = isTraffic && !isParking;
+                            const info = [];
+                            info.push(`<div style="padding:5px;"><b>${p.name}</b>`);
+                            info.push(`<div style="font-size:12px;color:#666;">${p.type || '未知类型'}</div>`);
+                            if (showAddress && addressText) {
+                                info.push(`<div style="font-size:12px;color:#666;"><span style="color:#666;">地址：</span>${addressText}</div>`);
+                            }
+                            if (showLines && lines.length) {
+                                info.push(`<div style="font-size:12px;color:#666;"><span style="color:#666;">途经线路：</span>${lines.join('，')}</div>`);
+                            }
+                            info.push(`</div>`);
+
+                            new AMap.InfoWindow({
+                                content: info.join(""),
+                                offset: new AMap.Pixel(0, -5)
+                            }).open(this.mapCore.map, loc);
+                        });
+
+                        marker.setMap(this.mapCore.map);
+                        return marker;
+                    }).filter((m) => !!m);
+                    if (invalidCount > 0) {
+                        console.warn('[poi-render] skipped invalid coordinates', {
+                            invalid_count: invalidCount,
+                            total_candidates: Array.isArray(pois) ? pois.length : 0,
+                            samples: invalidSamples
+                        });
+                    }
+                    this.poiMarkers = markers;
                 },
+                // Toggle visibility client-side
                 toggleCategory() {
-                    this.updateLegacySystem(Array.isArray(this.allPoisDetails) ? this.allPoisDetails : []);
+                    if (this.allPoisDetails.length > 0) {
+                        // Filter logic
+                        const activeIds = new Set(this.poiCategories.filter(c => c.checked).map(c => c.id));
+                        const filtered = this.allPoisDetails.filter(p => {
+                            const cid = this.resolvePoiCategoryId(p && p.type);
+                            return !!cid && activeIds.has(cid);
+                        });
+                        this.renderPois(filtered);
+                    }
                 },
                 renderResult(geojson) {
                     if (!geojson || !geojson.geometry) {
@@ -7926,20 +5993,38 @@
 
                         // Cleanup previous state
                         this.clearH3Grid();
-                        this.clearPoiOverlayLayers({
-                            reason: 'load_history_detail',
-                            clearManager: true,
-                            clearSimpleMarkers: true,
-                            clearCenterMarker: true,
-                            resetFilterPanel: true
-                        });
+                        if (this.marker) this.marker.setMap(null);
+                        this.marker = null;
                         this.mapCore.clearCustomPolygons();
+                        if (this.markerManager) {
+                            // Ensure old markers are removed from map
+                            if (this.markerManager.markers) {
+                                this.markerManager.markers.forEach(m => m.setMap(null));
+                            }
+                            // Destroy clusterers if method exists
+                            if (this.markerManager.destroyClusterers) {
+                                this.markerManager.destroyClusterers();
+                            }
+                            // Clear internal references
+                            this.markerManager.markers = [];
+                            this.markerManager.points = [];
+                            this.markerManager = null;
+                        }
+                        // Clear simplified poiMarkers array if used
+                        if (this.poiMarkers) {
+                            this.poiMarkers.forEach(m => m.setMap(null));
+                            this.poiMarkers = [];
+                        }
                         this.clearAoiMarkers();
                         this.allAoisDetails = [];
                         this.aoiSamplePoints = 0;
                         this.aoiTotalCalls = 0;
                         this.aoiStatus = '';
                         this.resetRoadSyntaxState();
+
+                        // Clear FilterPanel content to ensure clean rebuild
+                        const filterContainer = document.getElementById('filtersContainer');
+                        if (filterContainer) filterContainer.innerHTML = '';
 
                         if (data.params && data.params.center) {
                             this.selectedPoint = { lng: data.params.center[0], lat: data.params.center[1] };
@@ -7967,7 +6052,11 @@
                         if (data.pois) {
                             this.allPoisDetails = data.pois;
                             // Integration with Legacy Filter Panel
-                            this.updateLegacySystem(data.pois);
+                            if (this.updateLegacySystem) {
+                                this.updateLegacySystem(data.pois);
+                            } else {
+                                this.renderPois(data.pois);
+                            }
                             this.poiStatus = `已加载历史: ${data.pois.length} 条`;
                         }
                         setTimeout(() => this.resizePoiChart(), 0);
@@ -7989,7 +6078,7 @@
                     this.selectedPoint = null;
                     this.errorMessage = '';
                     if (this.marker) {
-                        this.safeMapSet(this.marker, null);
+                        this.marker.setMap(null);
                         this.marker = null;
                     }
                     this.clearAnalysisLayers();
@@ -8054,16 +6143,15 @@
                         this.h3ToastTimer = null;
                     }
                     this.h3Toast = { message: '', type: 'info' };
-                    this.clearPoiOverlayLayers({
-                        reason: 'save_and_restart',
-                        clearManager: true,
-                        clearSimpleMarkers: true,
-                        clearCenterMarker: true,
-                        resetFilterPanel: true
-                    });
+                    if (this.marker) this.marker.setMap(null);
+                    this.marker = null;
                     this.clearH3Grid();
                     if (this.mapCore && this.mapCore.clearCustomPolygons) {
                         this.mapCore.clearCustomPolygons();
+                    }
+                    if (this.markerManager) {
+                        this.markerManager.markers.forEach(m => m.setMap(null));
+                        this.markerManager.destroyClusterers();
                     }
                     this.disposePoiChart();
                 },
@@ -8419,12 +6507,23 @@
                     }, 100);
                 },
                 updateLegacySystem(pois) {
-                    this.clearPoiOverlayLayers({
-                        reason: 'update_legacy_system_rebuild',
-                        clearManager: true,
-                        clearSimpleMarkers: true,
-                        resetFilterPanel: true
-                    });
+                    if (this.markerManager) {
+                        if (this.markerManager.markers) {
+                            this.markerManager.markers.forEach(m => m.setMap(null));
+                        }
+                        if (this.markerManager.destroyClusterers) {
+                            this.markerManager.destroyClusterers();
+                        }
+                    }
+                    this.markerManager = null;
+                    this.filterPanel = null;
+                    const filtersContainer = document.getElementById('filtersContainer');
+                    if (filtersContainer) filtersContainer.innerHTML = '';
+
+                    if (this.poiMarkers) {
+                        this.poiMarkers.forEach(m => m.setMap(null));
+                        this.poiMarkers = [];
+                    }
 
                     const defaultTypeId = (() => {
                         for (const group of (this.typeMapGroups || [])) {
@@ -8506,45 +6605,25 @@
                         type: 'center'
                     } : null;
 
-                    const markRaw = (window.Vue && typeof window.Vue.markRaw === 'function')
-                        ? window.Vue.markRaw
-                        : (value) => value;
-                    const managerGeneration = Number(this.poiMapWriteGeneration || 0);
-                    const managerId = Number(this.poiManagerSerial || 0) + 1;
-                    this.poiManagerSerial = managerId;
-                    let managerRef = null;
-                    const isWriteAllowed = () => {
-                        return !!managerRef
-                            && this.markerManager === managerRef
-                            && Number(this.poiMapWriteGeneration || 0) === managerGeneration;
-                    };
-                    managerRef = markRaw(new MarkerManager(this.mapCore, {
+                    this.markerManager = new MarkerManager(this.mapCore, {
                         mapData: { points: points, center: centerObj },
-                        mapTypeConfig: mapTypeConfig,
-                        enqueueMapWrite: this.enqueuePoiMapWrite.bind(this),
-                        isWriteAllowed: isWriteAllowed
-                    }));
-                    this.markerManager = managerRef;
-                    this.poiActiveManagerId = managerId;
+                        mapTypeConfig: mapTypeConfig
+                    });
                     this.markerManager.init();
                     this.markerManager.renderMarkers();
 
                     // Filter Panel
-                    this.filterPanel = markRaw(new FilterPanel(this.markerManager, {
+                    this.filterPanel = new FilterPanel(this.markerManager, {
                         mapData: { points: points },
                         mapTypeConfig: mapTypeConfig,
-                        flatMode: false,
-                        autoFitView: !!this.poiAutoFitViewEnabled
-                    }));
-                    this.filterPanel.onFiltersChange = () => this.updatePoiCharts();
+                        flatMode: false
+                    });
                     this.filterPanel.init();
+                    this.markerManager.applyFilters();
                     this.applySimplifyPointVisibility();
+                    this.filterPanel.onFiltersChange = () => this.updatePoiCharts();
                     this.updatePoiCharts();
                 }
             }
         }).mount('#app');
     
-    </script>
-</body>
-
-</html>

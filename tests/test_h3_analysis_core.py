@@ -128,10 +128,87 @@ def test_moran_i_is_none_or_finite():
     assert moran is None or isinstance(moran, float)
 
 
+def test_spatial_structure_fields_exist():
+    result = analyze_h3_grid(
+        polygon=_sample_gcj02_polygon(),
+        resolution=10,
+        coord_type="gcj02",
+        include_mode="intersects",
+        min_overlap_ratio=0.0,
+        pois=_sample_pois_gcj02(),
+        poi_coord_type="gcj02",
+        neighbor_ring=1,
+    )
+    props_list = [f.get("properties", {}) for f in result["grid"]["features"]]
+    assert props_list
+    assert all("gi_star_z_score" in p for p in props_list)
+    assert all("lisa_i" in p for p in props_list)
+    assert all("gi_star_p_value" not in p for p in props_list)
+    assert all("lisa_p_value" not in p for p in props_list)
+    assert all("gi_star_bin" not in p for p in props_list)
+    assert all("lisa_cluster" not in p for p in props_list)
+    assert all("spatial_structure_type" not in p for p in props_list)
+    summary = result["summary"]
+    assert summary.get("gi_render_meta", {}).get("mode") == "fixed_z"
+    assert summary.get("lisa_render_meta", {}).get("mode") == "stddev"
+    assert "gi_z_stats" in summary
+    assert "lisa_i_stats" in summary
+    for key in ("count", "mean", "std", "min", "max", "p10", "p50", "p90"):
+        assert key in (summary.get("gi_z_stats") or {})
+        assert key in (summary.get("lisa_i_stats") or {})
+    assert "significant_cell_count" not in summary
+    assert "structure_core_hotspot_count" not in summary
+
+
+def test_summary_contains_descriptive_render_meta():
+    result = analyze_h3_grid(
+        polygon=_sample_gcj02_polygon(),
+        resolution=10,
+        coord_type="gcj02",
+        include_mode="intersects",
+        min_overlap_ratio=0.0,
+        pois=[],
+        poi_coord_type="gcj02",
+        neighbor_ring=1,
+    )
+    summary = result.get("summary", {})
+    gi_meta = summary.get("gi_render_meta") or {}
+    lisa_meta = summary.get("lisa_render_meta") or {}
+    assert gi_meta.get("mode") == "fixed_z"
+    assert gi_meta.get("min") == -3.0
+    assert gi_meta.get("max") == 3.0
+    assert lisa_meta.get("mode") == "stddev"
+    assert "degraded" in lisa_meta
+    assert "message" in lisa_meta
+
+
+def test_analyze_h3_grid_arcgis_failure_raises():
+    try:
+        analyze_h3_grid(
+            polygon=_sample_gcj02_polygon(),
+            resolution=10,
+            coord_type="gcj02",
+            include_mode="intersects",
+            min_overlap_ratio=0.0,
+            pois=_sample_pois_gcj02(),
+            poi_coord_type="gcj02",
+            neighbor_ring=1,
+            use_arcgis=True,
+            arcgis_python_path=r"C:\\not_exists\\ArcGIS\\python.exe",
+        )
+    except RuntimeError as exc:
+        assert "ArcGIS桥接失败" in str(exc)
+        return
+    raise AssertionError("Expected RuntimeError when ArcGIS bridge fails")
+
+
 if __name__ == "__main__":
     test_poi_count_consistency()
     test_single_category_entropy_zero()
     test_empty_poi_input()
     test_neighbor_metrics_fields_exist()
     test_moran_i_is_none_or_finite()
+    test_spatial_structure_fields_exist()
+    test_summary_contains_descriptive_render_meta()
+    test_analyze_h3_grid_arcgis_failure_raises()
     print("H3 analysis core tests passed.")

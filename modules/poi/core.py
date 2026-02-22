@@ -5,10 +5,16 @@ from typing import List, Dict, Optional
 from core.config import settings
 import time
 import random
+import math
+import h3
+
+from shapely.geometry import Point, Polygon, mapping
+from modules.gaode_service.utils.transform_posi import gcj02_to_wgs84, wgs84_to_gcj02
 
 logger = logging.getLogger(__name__)
 
 AMAP_POLYGON_URL = "https://restapi.amap.com/v3/place/polygon"
+AMAP_REGEO_URL = "https://restapi.amap.com/v3/geocode/regeo"
 
 class KeyManager:
     """Manages multiple API keys with rotation and exhaustion tracking"""
@@ -126,7 +132,15 @@ async def fetch_pois_by_polygon(
 
         # Fetch remaining pages if needed
         if count > len(all_pois):
-            remaining = await _fetch_remaining_pages(polygon, keywords, types, key_manager, count, global_limiter, session)
+            remaining = await _fetch_remaining_pages(
+                polygon,
+                keywords,
+                types,
+                key_manager,
+                count,
+                global_limiter,
+                session,
+            )
             all_pois.extend(remaining)
         
     logger.info(f"Fetch Complete. Total POIs: {len(all_pois)}")
@@ -134,6 +148,349 @@ async def fetch_pois_by_polygon(
     # 3. No Strict Filtering needed (API handles it mostly, and we trust it for simple use case)
     # Removing Shapely dependency for speed and simplicity in this mode
     return all_pois
+
+
+def _safe_float(value: Optional[str]) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_lnglat(location: str) -> Optional[List[float]]:
+    if not location:
+        return None
+    try:
+        lng_str, lat_str = (str(location).split(",") + ["", ""])[:2]
+        return [float(lng_str), float(lat_str)]
+    except (TypeError, ValueError):
+        return None
+
+
+def _build_sample_points(
+    polygon: List[List[float]],
+    spacing_m: int,
+    max_points: int,
+) -> List[List[float]]:
+    """
+    Build staggered sampling points inside polygon.
+    Uses an approximate hex-like lattice in GCJ02 lng/lat degrees.
+    """
+    poly = Polygon(polygon)
+    if not poly.is_valid:
+        poly = poly.buffer(0)
+    if poly.is_empty:
+        return []
+
+    # Tiny polygon fallback
+    if poly.area <= 1e-12:
+        rp = poly.representative_point()
+        return [[rp.x, rp.y]]
+
+    minx, miny, maxx, maxy = poly.bounds
+    mean_lat = (miny + maxy) / 2.0
+    cos_lat = max(0.2, abs(math.cos(math.radians(mean_lat))))
+
+    # Degree step approximation in GCJ02.
+    dlat = max(1e-6, spacing_m / 111_320.0)
+    dlng = max(1e-6, spacing_m / (111_320.0 * cos_lat))
+    y_step = dlat * 0.8660254037844386  # sqrt(3)/2
+
+    points: List[List[float]] = []
+    y = miny
+    row = 0
+
+    while y <= maxy and len(points) < max_points:
+        x = minx + (dlng * 0.5 if row % 2 else 0.0)
+        while x <= maxx and len(points) < max_points:
+            pt = Point(x, y)
+            if poly.contains(pt) or poly.touches(pt):
+                points.append([x, y])
+            x += dlng
+        y += y_step
+        row += 1
+
+    # Ensure at least one point exists.
+    if not points:
+        rp = poly.representative_point()
+        points.append([rp.x, rp.y])
+
+    # Ensure centroid-like point is included for stability.
+    rp = poly.representative_point()
+    rp_xy = [rp.x, rp.y]
+    if len(points) < max_points:
+        exists = any(abs(p[0] - rp_xy[0]) < 1e-9 and abs(p[1] - rp_xy[1]) < 1e-9 for p in points)
+        if not exists:
+            points.append(rp_xy)
+
+    return points[:max_points]
+
+
+def _spacing_to_h3_resolution(spacing_m: int) -> int:
+    """
+    Backward-compatible mapping:
+    old spacing controls approximate H3 density if caller does not pass h3_resolution.
+    """
+    s = max(30, int(spacing_m or 250))
+    if s <= 180:
+        return 10
+    if s <= 360:
+        return 9
+    if s <= 700:
+        return 8
+    return 7
+
+
+def _h3_cell_center_gcj02(h3_index: str) -> Optional[List[float]]:
+    """Convert one H3 cell center (WGS84) to GCJ02 [lng, lat]."""
+    try:
+        if hasattr(h3, "cell_to_latlng"):
+            lat, lng = h3.cell_to_latlng(h3_index)
+        elif hasattr(h3, "h3_to_geo"):
+            lat, lng = h3.h3_to_geo(h3_index)
+        else:
+            return None
+        gx, gy = wgs84_to_gcj02(float(lng), float(lat))
+        return [gx, gy]
+    except Exception:
+        return None
+
+
+def _pick_stable_subset(items: List[str], max_count: int) -> List[str]:
+    """Deterministic down-sampling to keep request count bounded."""
+    if max_count <= 0:
+        return []
+    if len(items) <= max_count:
+        return items
+    if max_count == 1:
+        return [items[0]]
+
+    last = len(items) - 1
+    indices = {
+        int(round((i * last) / (max_count - 1)))
+        for i in range(max_count)
+    }
+    return [items[i] for i in sorted(indices)]
+
+
+def _build_h3_sample_points(
+    polygon: List[List[float]],
+    h3_resolution: int,
+    max_points: int,
+) -> List[List[float]]:
+    """
+    Build sample points from H3 cells:
+    1) polyfill (intersects) over polygon
+    2) sample by each cell center in GCJ02
+    """
+    # Build a WGS84 polygon for H3 polyfill.
+    wgs_ring: List[List[float]] = []
+    for pt in polygon or []:
+        if not isinstance(pt, (list, tuple)) or len(pt) < 2:
+            continue
+        try:
+            lng = float(pt[0])
+            lat = float(pt[1])
+        except (TypeError, ValueError):
+            continue
+        wx, wy = gcj02_to_wgs84(lng, lat)
+        wgs_ring.append([wx, wy])
+
+    if len(wgs_ring) < 3:
+        return []
+    if wgs_ring[0] != wgs_ring[-1]:
+        wgs_ring.append(wgs_ring[0])
+
+    wgs_poly = Polygon(wgs_ring)
+    if not wgs_poly.is_valid:
+        wgs_poly = wgs_poly.buffer(0)
+    if wgs_poly.is_empty:
+        return []
+
+    geo_json = mapping(wgs_poly)
+    try:
+        if hasattr(h3, "geo_to_cells"):
+            cells = h3.geo_to_cells(geo_json, h3_resolution)
+        else:
+            cells = h3.polyfill(geo_json, h3_resolution, geo_json_conformant=True)
+    except Exception:
+        return []
+
+    cell_ids = sorted(str(cid) for cid in (cells or []) if cid)
+    if not cell_ids:
+        return []
+
+    selected = _pick_stable_subset(cell_ids, max_points)
+    points: List[List[float]] = []
+    for cid in selected:
+        pt = _h3_cell_center_gcj02(cid)
+        if pt:
+            points.append(pt)
+    return points
+
+
+async def _fetch_regeo_aois(
+    lng: float,
+    lat: float,
+    key_manager: KeyManager,
+    limiter: RateLimiter,
+    session: aiohttp.ClientSession,
+    radius: int,
+) -> List[Dict]:
+    """Fetch aois from regeo endpoint for one point."""
+    for _ in range(len(key_manager.keys) + 1):
+        current_key = key_manager.get_current_key()
+        if not current_key:
+            return []
+
+        params = {
+            "key": current_key,
+            "location": f"{lng:.6f},{lat:.6f}",
+            "extensions": "all",
+            "radius": int(radius),
+            "output": "json",
+        }
+
+        for _retry in range(3):
+            await limiter.acquire()
+            try:
+                async with session.get(AMAP_REGEO_URL, params=params, timeout=5) as resp:
+                    if resp.status != 200:
+                        await asyncio.sleep(0.15)
+                        continue
+
+                    data = await resp.json()
+                    status = str(data.get("status") or "")
+                    infocode = str(data.get("infocode") or "")
+
+                    if status == "1":
+                        key_manager.rotate()
+                        return ((data.get("regeocode") or {}).get("aois") or [])
+
+                    if infocode == "10003":
+                        await limiter.trigger_backoff(1.5 + random.random())
+                        continue
+
+                    if infocode == "10044":
+                        await key_manager.report_limit_reached()
+                        break
+
+                    return []
+            except Exception:
+                await asyncio.sleep(0.15)
+
+    return []
+
+
+async def fetch_aois_by_polygon_sampling(
+    polygon: List[List[float]],
+    spacing_m: int = 250,
+    max_points: int = 300,
+    regeo_radius: int = 1000,
+    h3_resolution: Optional[int] = None,
+) -> Dict:
+    """
+    Sample polygon area and aggregate AOIs by id.
+
+    Notes:
+    - This is a "best effort" coverage strategy, not mathematical full AOI enumeration.
+    - Calls regeo once per sample point.
+    """
+    raw_keys = settings.amap_web_service_key
+    if not raw_keys:
+        raise ValueError("AMap Web Service Key is missing in settings")
+
+    if not polygon or len(polygon) < 3:
+        raise ValueError("Invalid polygon input")
+
+    capped_points = max(1, int(max_points))
+    resolution = int(h3_resolution) if h3_resolution is not None else _spacing_to_h3_resolution(spacing_m)
+    resolution = max(7, min(11, resolution))
+
+    # H3-first sampling path.
+    sample_points = _build_h3_sample_points(
+        polygon=polygon,
+        h3_resolution=resolution,
+        max_points=capped_points,
+    )
+    # Safety fallback to legacy lattice if H3 path yields nothing.
+    if not sample_points:
+        sample_points = _build_sample_points(
+            polygon=polygon,
+            spacing_m=max(30, int(spacing_m)),
+            max_points=capped_points,
+        )
+    if not sample_points:
+        return {"aois": [], "sample_points": 0, "total_calls": 0}
+
+    key_manager = KeyManager(raw_keys)
+    limiter = RateLimiter(calls_per_second=8)
+
+    agg: Dict[str, Dict] = {}
+    total_calls = 0
+
+    async with aiohttp.ClientSession() as session:
+        for pt in sample_points:
+            lng, lat = pt
+            aois = await _fetch_regeo_aois(
+                lng=lng,
+                lat=lat,
+                key_manager=key_manager,
+                limiter=limiter,
+                session=session,
+                radius=max(0, min(3000, int(regeo_radius))),
+            )
+            total_calls += 1
+
+            for aoi in aois:
+                aoi_id = str(aoi.get("id") or "").strip()
+                if not aoi_id:
+                    continue
+
+                distance = _safe_float(aoi.get("distance"))
+                center = _parse_lnglat(str(aoi.get("location") or ""))
+
+                if aoi_id not in agg:
+                    agg[aoi_id] = {
+                        "id": aoi_id,
+                        "name": str(aoi.get("name") or ""),
+                        "adcode": str(aoi.get("adcode") or ""),
+                        "type": str(aoi.get("type") or ""),
+                        "location": center,
+                        "area": _safe_float(aoi.get("area")),
+                        "min_distance": distance,
+                        "hit_count": 0,
+                        "inside_hits": 0,
+                    }
+
+                item = agg[aoi_id]
+                item["hit_count"] += 1
+                if distance == 0:
+                    item["inside_hits"] += 1
+                if distance is not None and (
+                    item.get("min_distance") is None or distance < item["min_distance"]
+                ):
+                    item["min_distance"] = distance
+                if not item.get("location") and center:
+                    item["location"] = center
+
+    aois = sorted(
+        agg.values(),
+        key=lambda x: (
+            -int(x.get("inside_hits") or 0),
+            -int(x.get("hit_count") or 0),
+            float(x.get("min_distance") or 9e15),
+            str(x.get("id") or ""),
+        ),
+    )
+
+    return {
+        "aois": aois,
+        "sample_points": len(sample_points),
+        "total_calls": total_calls,
+    }
 
 
 async def _fetch_amap_page_one(polygon, keywords, types, key_manager, limiter, session):
@@ -149,7 +506,7 @@ async def _fetch_amap_page_one(polygon, keywords, types, key_manager, limiter, s
 
         params = {
             "key": current_key, "polygon": poly_str, "keywords": keywords, "types": types,
-            "offset": 25, "page": 1, "extensions": "all"
+            "offset": 25, "page": 1, "extensions": "base"
         }
 
         # Request loop (network retries)
@@ -192,16 +549,23 @@ async def _fetch_amap_page_one(polygon, keywords, types, key_manager, limiter, s
 
     return 0, []
 
-async def _fetch_remaining_pages(polygon, keywords, types, key_manager, total_count, limiter, session):
+async def _fetch_remaining_pages(
+    polygon,
+    keywords,
+    types,
+    key_manager,
+    total_count,
+    limiter,
+    session,
+):
     """Fetch pages 2..N"""
     poly_str = ";".join([f"{p[0]:.6f},{p[1]:.6f}" for p in polygon])
     all_pois = []
     page_size = 25
-    max_pages = (min(total_count, 900) // page_size) + 1 
+    max_pages = (min(total_count, 900) // page_size) + 1
     
     # Start from page 2
     for page in range(2, max_pages + 1):
-        
         # Key Rotation Loop for EACH page
         success = False
         for key_attempt in range(len(key_manager.keys) + 1):
@@ -210,7 +574,7 @@ async def _fetch_remaining_pages(polygon, keywords, types, key_manager, total_co
 
             params = {
                 "key": current_key, "polygon": poly_str, "keywords": keywords, "types": types,
-                "offset": page_size, "page": page, "extensions": "all"
+                "offset": page_size, "page": page, "extensions": "base"
             }
             
             # Network Attempt Loop

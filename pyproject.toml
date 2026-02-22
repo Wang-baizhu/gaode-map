@@ -42,6 +42,8 @@ dependencies = [
     "tzlocal==5.3.1",
     "urllib3==2.5.0",
     "uvicorn==0.27.0",
+    "numpy>=1.26.0",
+    "scipy>=1.11.0",
     "watchfiles==1.1.1",
     "websockets==15.0.1",
     "h3>=3.7.0",
