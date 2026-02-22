@@ -1940,6 +1940,28 @@
                     const id = this.resolvePoiCategoryId(typeText);
                     return id ? this.categoryById[id] : null;
                 },
+                deduplicateFetchedPois(pois) {
+                    const list = Array.isArray(pois) ? pois : [];
+                    if (!list.length) return [];
+                    const seen = new Set();
+                    const out = [];
+                    for (const poi of list) {
+                        if (!poi || typeof poi !== 'object') continue;
+                        const id = poi.id ? String(poi.id) : '';
+                        const name = poi.name ? String(poi.name).trim() : '';
+                        const loc = Array.isArray(poi.location) ? poi.location : null;
+                        const hasLoc = !!(loc && loc.length >= 2 && Number.isFinite(Number(loc[0])) && Number.isFinite(Number(loc[1])));
+                        const key = id
+                            ? `id:${id}`
+                            : (hasLoc
+                                ? `name_loc:${name}|${Number(loc[0]).toFixed(6)},${Number(loc[1]).toFixed(6)}`
+                                : `name:${name}`);
+                        if (seen.has(key)) continue;
+                        seen.add(key);
+                        out.push(poi);
+                    }
+                    return out;
+                },
                 saveAnalysisHistoryAsync(polygon, selectedCats, pois) {
                     if (!this.selectedPoint || !Array.isArray(pois) || pois.length === 0) return;
                     const typesLabel = (selectedCats || []).map(c => c.name).join(',');
@@ -5074,6 +5096,8 @@
 
                         if (this.abortController.signal.aborted) return;
 
+                        this.allPoisDetails = this.deduplicateFetchedPois(this.allPoisDetails);
+                        totalFetched = this.allPoisDetails.length;
                         this.fetchProgress = 100;
                         this.poiStatus = `完成！共找到 ${totalFetched} 个结果`;
 
