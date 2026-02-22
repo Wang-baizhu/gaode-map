@@ -309,7 +309,6 @@
                     <!-- Step 3: Results & Filter -->
                     <div v-show="step === 3" class="wizard-step wizard-step-step3">
                         <div class="step-header-nav">
-                            <button class="btn-text-back" @click="goToStep(2)">← 返回</button>
                             <h3>3. 结果分析</h3>
                         </div>
 
@@ -1114,6 +1113,7 @@
     <script src="/static/js/map-filters.js?v={{ static_version }}"></script>
     <script src="/static/js/analysis/map/map-write-queue.js?v={{ static_version }}"></script>
     <script src="/static/js/analysis/map/overlay-committer.js?v={{ static_version }}"></script>
+    <script src="/static/js/analysis/features/workbench/navigation.js?v={{ static_version }}"></script>
     <script src="/static/js/analysis/features/road-syntax/state.js?v={{ static_version }}"></script>
     <script src="/static/js/analysis/features/road-syntax/controller-core.js?v={{ static_version }}"></script>
     <script src="/static/js/analysis/features/road-syntax/webgl.js?v={{ static_version }}"></script>
@@ -1138,6 +1138,9 @@
                 node: 6.5,
             }),
         });
+        const analysisWorkbenchMethods = (window.createAnalysisWorkbenchMethods && typeof window.createAnalysisWorkbenchMethods === 'function')
+            ? window.createAnalysisWorkbenchMethods()
+            : {};
         const roadSyntaxUiMethods = (window.createRoadSyntaxUiMethods && typeof window.createRoadSyntaxUiMethods === 'function')
             ? window.createRoadSyntaxUiMethods(ROAD_SYNTAX_CONST)
             : {};
@@ -1460,6 +1463,7 @@
                 },
             },
             methods: {
+                ...analysisWorkbenchMethods,
                 ...roadSyntaxOverlayCommitMethods,
                 ...roadSyntaxControllerCoreMethods,
                 ...roadSyntaxWebglMethods,
@@ -2276,11 +2280,15 @@
                         this.mapCore.clearGridPolygons();
                     }
                 },
+                isH3PanelActive() {
+                    return this.step === 3 && this.activeStep3Panel === 'h3';
+                },
                 clearH3GridDisplayOnLeave() {
                     if (!this.mapCore || typeof this.mapCore.clearGridPolygons !== 'function') return;
                     this.mapCore.clearGridPolygons();
                 },
                 restoreH3GridDisplayOnEnter() {
+                    if (!this.isH3PanelActive()) return;
                     if (!this.mapCore) return;
                     const shouldRenderAnalysis = this.h3MainStage !== 'params'
                         && Array.isArray(this.h3AnalysisGridFeatures)
@@ -2349,73 +2357,6 @@
                         basemap_muted: muted,
                         source: this.basemapSource || ''
                     });
-                },
-                shouldShowPoiOnCurrentPanel() {
-                    const panel = String(this.activeStep3Panel || '');
-                    return panel === 'poi' && !this.poiSystemSuspendedForSyntax;
-                },
-                applyPoiFilterPanel(reason = '') {
-                    const panel = this.filterPanel;
-                    if (!panel || typeof panel.applyFilters !== 'function') {
-                        return Promise.resolve({ ok: false, skipped: true, reason: `filter_panel_unavailable:${String(reason || '')}` });
-                    }
-                    try {
-                        const maybePromise = panel.applyFilters();
-                        if (maybePromise && typeof maybePromise.then === 'function') {
-                            return maybePromise;
-                        }
-                        return Promise.resolve({ ok: true, reason: `filter_panel_sync:${String(reason || '')}` });
-                    } catch (err) {
-                        return Promise.resolve({
-                            ok: false,
-                            reason: `filter_panel_exception:${String(reason || '')}`,
-                            error: err && err.message ? err.message : String(err)
-                        });
-                    }
-                },
-                applySimplifyPointVisibility() {
-                    const shouldShowPoi = this.shouldShowPoiOnCurrentPanel();
-                    const hidePoi = !shouldShowPoi;
-
-                    if (this.markerManager && typeof this.markerManager.setHideAllPoints === 'function') {
-                        this.pointLayersSuspendedForSyntax = !shouldShowPoi;
-                        if (hidePoi && typeof this.markerManager.destroyClusterers === 'function') {
-                            this.markerManager.destroyClusterers({ immediate: true });
-                        }
-                        if (typeof this.markerManager.setShowMarkers === 'function') {
-                            this.markerManager.setShowMarkers(shouldShowPoi);
-                        }
-                        this.markerManager.setHideAllPoints(hidePoi);
-                        this.applyPoiFilterPanel('simplify_visibility');
-                    }
-
-                    if (this.marker) {
-                        if (hidePoi) {
-                            this.safeMapSet(this.marker, null);
-                        } else if (this.selectedPoint && this.mapCore && this.mapCore.map) {
-                            this.safeMapSet(this.marker, this.mapCore.map);
-                        }
-                    }
-
-                    if (Array.isArray(this.poiMarkers) && this.poiMarkers.length > 0) {
-                        const legacyMarkers = this.poiMarkers.slice();
-                        this.poiMarkers = [];
-                        this.enqueuePoiMapWrite(() => {
-                            legacyMarkers.forEach((m) => this.safeMapSet(m, null));
-                            return { ok: true, hidden: legacyMarkers.length };
-                        }, {
-                            key: 'clear_legacy_simple_markers',
-                            replaceExisting: true,
-                            meta: {
-                                reason: 'clear_legacy_simple_markers',
-                                marker_count: legacyMarkers.length
-                            }
-                        });
-                    }
-
-                    if (!this.markerManager && shouldShowPoi && Array.isArray(this.allPoisDetails) && this.allPoisDetails.length > 0) {
-                        this.updateLegacySystem(this.allPoisDetails);
-                    }
                 },
                 async onBasemapSourceChange() {
                     const allowedSources = ['amap', 'osm', 'tianditu'];
@@ -2493,17 +2434,22 @@
                         this.h3GridFeatures = data.features || [];
                         this.h3GridCount = Number.isFinite(data.count) ? data.count : this.h3GridFeatures.length;
 
-                        if (this.mapCore && this.mapCore.setGridFeatures) {
+                        if (this.isH3PanelActive() && this.mapCore && this.mapCore.setGridFeatures) {
                             this.mapCore.setGridFeatures(this.h3GridFeatures, {
                                 strokeColor: '#2c6ecb',
                                 strokeWeight: 1.1,
                                 fillOpacity: 0,
                                 webglBatch: true,
                             });
+                        } else {
+                            this.clearH3GridDisplayOnLeave();
                         }
-                        this.h3GridStatus = this.h3GridCount > 0
+                        const baseStatus = this.h3GridCount > 0
                             ? `已生成 ${this.h3GridCount} 个 H3 网格`
                             : '已生成网络，但当前范围无可用网格';
+                        this.h3GridStatus = this.isH3PanelActive()
+                            ? baseStatus
+                            : `${baseStatus}（已就绪，切换到“网格”查看）`;
                     } catch (e) {
                         console.error(e);
                         this.h3GridStatus = '网络生成失败: ' + e.message;
@@ -3635,6 +3581,10 @@
                     this.tryRefocusSelectedGrid();
                 },
                 renderH3BySubTab() {
+                    if (!this.isH3PanelActive()) {
+                        this.clearH3GridDisplayOnLeave();
+                        return;
+                    }
                     if (!this.h3AnalysisGridFeatures || !this.h3AnalysisGridFeatures.length) {
                         this.h3Legend = null;
                         return;
@@ -3817,6 +3767,10 @@
                 },
                 renderH3AnalysisGrid(metricKey) {
                     const source = this.h3AnalysisGridFeatures;
+                    if (!this.isH3PanelActive()) {
+                        this.clearH3GridDisplayOnLeave();
+                        return;
+                    }
                     if (!Array.isArray(source) || source.length === 0 || !this.mapCore || !this.mapCore.setGridFeatures) {
                         this.h3Legend = null;
                         return;
@@ -4352,14 +4306,20 @@
                         this.h3ArcgisImageVersion = Date.now();
                         setProgress(4, '正在计算衍生指标');
                         this.computeH3DerivedStats();
-                        setProgress(5, '正在渲染图层与图表');
-                        this.renderH3BySubTab();
-                        await this.$nextTick();
-                        this.updateH3Charts();
-                        this.updateDecisionCards();
-                        this.h3GridStatus = this.h3GridCount > 0
+                        const baseStatus = this.h3GridCount > 0
                             ? `分析完成：${this.h3GridCount} 个网格，${(this.h3AnalysisSummary && this.h3AnalysisSummary.poi_count) || 0} 个POI`
                             : '分析完成，但当前范围无可用网格';
+                        if (this.isH3PanelActive()) {
+                            setProgress(5, '正在渲染图层与图表');
+                            this.renderH3BySubTab();
+                            await this.$nextTick();
+                            this.updateH3Charts();
+                            this.updateDecisionCards();
+                            this.h3GridStatus = baseStatus;
+                        } else {
+                            this.clearH3GridDisplayOnLeave();
+                            this.h3GridStatus = `${baseStatus}（已就绪，切换到“网格”查看）`;
+                        }
                     } catch (e) {
                         console.error(e);
                         this.h3GridStatus = '网格分析失败: ' + e.message;
@@ -4441,198 +4401,25 @@
                         this.h3AnalysisSummary = data.summary || this.h3AnalysisSummary;
                         this.h3AnalysisCharts = data.charts || this.h3AnalysisCharts;
                         this.computeH3DerivedStats();
-                        this.renderH3BySubTab();
-                        await this.$nextTick();
-                        this.updateH3Charts();
-                        this.updateDecisionCards();
                         this.h3ArcgisImageVersion = Date.now();
                         this.h3ArcgisSnapshotLoadError = false;
                         const sec = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
-                        this.h3GridStatus = `ArcGIS 结构快照已生成（${sec}s）`;
+                        if (this.isH3PanelActive()) {
+                            this.renderH3BySubTab();
+                            await this.$nextTick();
+                            this.updateH3Charts();
+                            this.updateDecisionCards();
+                            this.h3GridStatus = `ArcGIS 结构快照已生成（${sec}s）`;
+                        } else {
+                            this.clearH3GridDisplayOnLeave();
+                            this.h3GridStatus = `ArcGIS 结构快照已生成（${sec}s），切换到“网格”查看`;
+                        }
                     } catch (e) {
                         console.error(e);
                         this.h3GridStatus = '结构快照生成失败: ' + ((e && e.message) ? e.message : String(e));
                     } finally {
                         this.isGeneratingH3ArcgisSnapshot = false;
                     }
-                },
-                selectStep3Panel(panelId) {
-                    if (this.isDraggingNav) return;
-                    if (panelId === 'h3_settings') {
-                        panelId = 'h3';
-                    }
-                    if (panelId === 'syntax' && !this.roadSyntaxModulesReady) {
-                        this.roadSyntaxSetStatus(`路网模块未完整加载：${(this.roadSyntaxModuleMissing || []).join(', ')}`);
-                        return;
-                    }
-                    if (!this.isStep3PanelVisible(panelId)) return;
-                    const previousPanel = this.activeStep3Panel;
-                    this.activeStep3Panel = panelId;
-                    if (previousPanel === 'syntax' && panelId !== 'syntax') {
-                        this.suspendRoadSyntaxDisplay();
-                    }
-                    if (panelId !== 'h3') {
-                        this.h3ExportMenuOpen = false;
-                        this.h3ExportTasksOpen = false;
-                    }
-                    if (panelId === 'poi') {
-                        this.applySimplifyPointVisibility();
-                        this.$nextTick(() => {
-                            this.updatePoiCharts();
-                            setTimeout(() => this.resizePoiChart(), 0);
-                        });
-                        return;
-                    }
-                    if (panelId === 'h3') {
-                        this.syncH3PoiFilterSelection(false);
-                        this.ensureH3PanelEntryState();
-                        this.restoreH3GridDisplayOnEnter();
-                        this.applySimplifyPointVisibility();
-                        return;
-                    }
-                    if (panelId === 'syntax') {
-                        this.setRoadSyntaxMainTab('params', { refresh: false, syncMetric: false });
-                        this.resumeRoadSyntaxDisplay();
-                    }
-                    this.applySimplifyPointVisibility();
-                },
-                suspendPoiSystemForSyntax() {
-                    if (this.poiSystemSuspendedForSyntax) return;
-                    this.clearPoiOverlayLayers({
-                        reason: 'suspend_for_syntax',
-                        clearManager: true,
-                        clearSimpleMarkers: true,
-                        resetFilterPanel: true,
-                        immediate: true
-                    });
-                    this.poiSystemSuspendedForSyntax = true;
-                },
-                resumePoiSystemAfterSyntax() {
-                    if (!this.poiSystemSuspendedForSyntax) return;
-                    this.poiSystemSuspendedForSyntax = false;
-                    if (!this.markerManager && Array.isArray(this.allPoisDetails) && this.allPoisDetails.length) {
-                        this.updateLegacySystem(this.allPoisDetails);
-                    }
-                },
-                onStep3DragStart(index, event) {
-                    this.dragIndex = index;
-                    this.dragOverIndex = index;
-                    this.dragInsertPosition = 'before';
-                    this.isDraggingNav = true;
-                    if (event && event.dataTransfer) {
-                        event.dataTransfer.effectAllowed = 'move';
-                    }
-                },
-                onStep3DragOver(index, event) {
-                    if (event) event.preventDefault();
-                    this.dragOverIndex = index;
-                    const bounds = event.currentTarget.getBoundingClientRect();
-                    const midY = bounds.top + bounds.height / 2;
-                    this.dragInsertPosition = event.clientY < midY ? 'before' : 'after';
-                },
-                onStep3Drop(index) {
-                    if (this.dragIndex === null) {
-                        this.dragOverIndex = null;
-                        this.dragInsertPosition = null;
-                        return;
-                    }
-                    const items = this.step3NavItems.slice();
-                    const moved = items.splice(this.dragIndex, 1)[0];
-                    let insertIndex = index;
-                    if (this.dragInsertPosition === 'after') {
-                        insertIndex = index + 1;
-                    }
-                    if (this.dragIndex < insertIndex) {
-                        insertIndex -= 1;
-                    }
-                    items.splice(insertIndex, 0, moved);
-                    this.step3NavItems = items;
-                    this.dragIndex = null;
-                    this.dragOverIndex = null;
-                    this.dragInsertPosition = null;
-                    this.isDraggingNav = false;
-                },
-                onStep3DragEnd() {
-                    this.dragIndex = null;
-                    this.dragOverIndex = null;
-                    this.dragInsertPosition = null;
-                    this.isDraggingNav = false;
-                },
-                goToStep(targetStep) {
-                    this.confirmNavigation(() => {
-                        if (targetStep < this.step) {
-                            // Backwards navigation cleanup
-                            if (this.step === 3 && targetStep <= 2) {
-                                // Clear POI markers & data
-                                this.clearPoiOverlayLayers({
-                                    reason: 'go_to_step_back_to_step2',
-                                    clearManager: true,
-                                    clearSimpleMarkers: true,
-                                    resetFilterPanel: true
-                                });
-                                this.clearAoiMarkers();
-                                this.allAoisDetails = [];
-                                this.aoiSamplePoints = 0;
-                                this.aoiTotalCalls = 0;
-                                this.resetRoadSyntaxState();
-
-                                this.poiStatus = '';
-                                this.aoiStatus = '';
-                                this.clearH3Grid();
-                            }
-
-                            if (this.step >= 2 && targetStep <= 1) {
-                                // Clear Isochrone Polygon
-                                if (this.mapCore && this.mapCore.clearCustomPolygons) {
-                                    this.mapCore.clearCustomPolygons();
-                                }
-                                this.clearAoiMarkers();
-                                this.allAoisDetails = [];
-                                this.aoiSamplePoints = 0;
-                                this.aoiTotalCalls = 0;
-                                this.aoiStatus = '';
-                                this.resetRoadSyntaxState();
-                                this.lastIsochroneGeoJSON = null;
-                                this.clearH3Grid();
-                            }
-                        }
-                        this.step = targetStep;
-                    });
-                },
-                confirmNavigation(callback) {
-                    if (this.isFetchingPois || this.isFetchingAois) {
-                        if (confirm('数据抓取正在进行中，离开将取消未完成的任务。确定要离开吗？')) {
-                            this.cancelFetch();
-                            callback();
-                        }
-                    } else {
-                        callback();
-                    }
-                },
-                cancelFetch() {
-                    if (this.abortController) {
-                        this.abortController.abort();
-                        this.abortController = null;
-                    }
-                    this.isFetchingPois = false;
-                    this.isFetchingAois = false;
-                    this.poiStatus = "任务已取消";
-                    this.aoiStatus = "任务已取消";
-                    this.resetFetchSubtypeProgress();
-                },
-                backToHome() {
-                    this.confirmNavigation(() => {
-                        this.destroyPlaceSearch();
-                        this.clearAnalysisLayers();
-                        this.sidebarView = 'start';
-                        this.step = 1;
-                        this.selectedPoint = null;
-                        if (this.marker) {
-                            this.safeMapSet(this.marker, null);
-                            this.marker = null;
-                        }
-                        this.errorMessage = '';
-                    });
                 },
                 loadAMapScript(key, securityCode) {
                     return new Promise((resolve, reject) => {
