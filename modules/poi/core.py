@@ -1,11 +1,13 @@
 import logging
 import asyncio
 import aiohttp
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from core.config import settings
 import time
 import random
 import math
+import re
+import unicodedata
 import h3
 
 from shapely.geometry import Point, Polygon, mapping
@@ -15,6 +17,13 @@ logger = logging.getLogger(__name__)
 
 AMAP_POLYGON_URL = "https://restapi.amap.com/v3/place/polygon"
 AMAP_REGEO_URL = "https://restapi.amap.com/v3/geocode/regeo"
+PARKING_TYPE_PREFIX = "1509"
+POI_DEDUP_GRID_SIZE_M = 120.0
+POI_DEDUP_DISTANCE_M = 90.0
+POI_DEDUP_LOC_PRECISION = 6
+POI_ENTRY_EXIT_SUFFIX_RE = re.compile(
+    r"(停车场)?(出入口|入口|出口|东门|西门|南门|北门|[A-Za-z]口|[0-9]+号口)$"
+)
 
 class KeyManager:
     """Manages multiple API keys with rotation and exhaustion tracking"""
@@ -143,10 +152,14 @@ async def fetch_pois_by_polygon(
             )
             all_pois.extend(remaining)
         
-    logger.info(f"Fetch Complete. Total POIs: {len(all_pois)}")
-    
-    # 3. No Strict Filtering needed (API handles it mostly, and we trust it for simple use case)
-    # Removing Shapely dependency for speed and simplicity in this mode
+    before_dedup = len(all_pois)
+    all_pois = _dedupe_polygon_pois(all_pois)
+    after_dedup = len(all_pois)
+    logger.info(
+        "Fetch Complete. Total POIs: %s (dedup removed=%s)",
+        after_dedup,
+        max(0, before_dedup - after_dedup),
+    )
     return all_pois
 
 
@@ -641,3 +654,149 @@ def _normalize_pois(raw_list: List[Dict]) -> List[Dict]:
         except:
             continue
     return results
+
+
+def _dedupe_polygon_pois(pois: List[Dict]) -> List[Dict]:
+    """
+    Two-stage dedupe for polygon POI results:
+    1) exact dedupe: id or (normalized name + rounded location)
+    2) semantic-spatial dedupe for parking entry/exit variants
+    """
+    if not pois:
+        return []
+
+    exact_seen = set()
+    exact_deduped: List[Dict] = []
+    for poi in pois:
+        key = _build_poi_exact_key(poi)
+        if key in exact_seen:
+            continue
+        exact_seen.add(key)
+        exact_deduped.append(poi)
+
+    cell_size_deg = POI_DEDUP_GRID_SIZE_M / 111_000.0
+    parking_bucket: Dict[Tuple[int, int], List[Dict]] = {}
+    kept: List[Dict] = []
+
+    for poi in exact_deduped:
+        if not _is_parking_like_poi(poi):
+            kept.append(poi)
+            continue
+
+        coords = _extract_poi_location(poi)
+        if not coords:
+            kept.append(poi)
+            continue
+
+        canonical_name = _canonical_parking_name(str(poi.get("name") or ""))
+        if not canonical_name:
+            kept.append(poi)
+            continue
+
+        cell_x = int(math.floor(coords[0] / cell_size_deg))
+        cell_y = int(math.floor(coords[1] / cell_size_deg))
+        is_duplicate = False
+
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                neighbors = parking_bucket.get((cell_x + dx, cell_y + dy), [])
+                for other in neighbors:
+                    if other.get("canonical_name") != canonical_name:
+                        continue
+                    other_coords = other.get("coords")
+                    if not other_coords:
+                        continue
+                    if _haversine_m(coords, other_coords) <= POI_DEDUP_DISTANCE_M:
+                        is_duplicate = True
+                        break
+                if is_duplicate:
+                    break
+            if is_duplicate:
+                break
+
+        if is_duplicate:
+            continue
+
+        kept.append(poi)
+        parking_bucket.setdefault((cell_x, cell_y), []).append(
+            {"canonical_name": canonical_name, "coords": coords}
+        )
+
+    return kept
+
+
+def _build_poi_exact_key(poi: Dict) -> str:
+    poi_id = str(poi.get("id") or "").strip()
+    if poi_id:
+        return f"id:{poi_id}"
+
+    name = _normalize_text(str(poi.get("name") or ""))
+    coords = _extract_poi_location(poi)
+    if coords:
+        return "name_loc:{name}|{lng:.{p}f},{lat:.{p}f}".format(
+            name=name,
+            lng=coords[0],
+            lat=coords[1],
+            p=POI_DEDUP_LOC_PRECISION,
+        )
+    return f"name_only:{name}"
+
+
+def _normalize_text(text: str) -> str:
+    value = unicodedata.normalize("NFKC", str(text or ""))
+    value = re.sub(r"\s+", "", value)
+    return value.strip()
+
+
+def _extract_poi_location(poi: Dict) -> Optional[Tuple[float, float]]:
+    raw = poi.get("location")
+    if isinstance(raw, (list, tuple)) and len(raw) >= 2:
+        try:
+            return float(raw[0]), float(raw[1])
+        except (TypeError, ValueError):
+            return None
+    if isinstance(raw, str):
+        parts = raw.split(",")
+        if len(parts) < 2:
+            return None
+        try:
+            return float(parts[0]), float(parts[1])
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _is_parking_like_poi(poi: Dict) -> bool:
+    raw_type = str(poi.get("type") or poi.get("typecode") or "").strip()
+    type_digits = re.sub(r"\D", "", raw_type)
+    if type_digits.startswith(PARKING_TYPE_PREFIX):
+        return True
+    name = str(poi.get("name") or "")
+    return "停车" in name
+
+
+def _canonical_parking_name(name: str) -> str:
+    if not name:
+        return ""
+    value = _normalize_text(name)
+    value = POI_ENTRY_EXIT_SUFFIX_RE.sub("", value)
+    value = value.replace("停车场出入口", "停车场")
+    value = value.replace("停车场入口", "停车场")
+    value = value.replace("停车场出口", "停车场")
+    return value.strip("-_")
+
+
+def _haversine_m(
+    a: Tuple[float, float],
+    b: Tuple[float, float],
+) -> float:
+    lng1, lat1 = a
+    lng2, lat2 = b
+    lng1, lat1, lng2, lat2 = map(math.radians, (lng1, lat1, lng2, lat2))
+    dlng = lng2 - lng1
+    dlat = lat2 - lat1
+    x = (
+        math.sin(dlat / 2) ** 2
+        + math.cos(lat1) * math.cos(lat2) * math.sin(dlng / 2) ** 2
+    )
+    return 2 * 6_371_000.0 * math.asin(math.sqrt(x))
