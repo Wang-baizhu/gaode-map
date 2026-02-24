@@ -1341,6 +1341,8 @@
                     h3GapChart: null,
                     h3StructureChart: null,
                     h3ChartsResizeHandler: null,
+                    h3ChartsRetryTimer: null,
+                    h3ChartsRetryCount: 0,
                     h3ExportMenuOpen: false,
                     h3ExportTasksOpen: false,
                     h3ExportIncludePoi: true,
@@ -2317,6 +2319,10 @@
                         && this.h3AnalysisGridFeatures.length > 0;
                     if (shouldRenderAnalysis) {
                         this.renderH3BySubTab();
+                        this.$nextTick(() => {
+                            this.updateH3Charts();
+                            this.updateDecisionCards();
+                        });
                         return;
                     }
                     const plainGridFeatures = Array.isArray(this.h3GridFeatures) && this.h3GridFeatures.length
@@ -8144,6 +8150,30 @@
                         window.removeEventListener('resize', this.h3ChartsResizeHandler);
                         this.h3ChartsResizeHandler = null;
                     }
+                    if (this.h3ChartsRetryTimer) {
+                        window.clearTimeout(this.h3ChartsRetryTimer);
+                        this.h3ChartsRetryTimer = null;
+                    }
+                    this.h3ChartsRetryCount = 0;
+                },
+                _clearH3ChartRetryTimer() {
+                    if (this.h3ChartsRetryTimer) {
+                        window.clearTimeout(this.h3ChartsRetryTimer);
+                        this.h3ChartsRetryTimer = null;
+                    }
+                    this.h3ChartsRetryCount = 0;
+                },
+                _scheduleH3ChartRetry() {
+                    if (!this.isH3PanelActive()) return;
+                    if (this.h3ChartsRetryTimer) return;
+                    if (this.h3ChartsRetryCount >= 8) return;
+                    this.h3ChartsRetryCount += 1;
+                    this.h3ChartsRetryTimer = window.setTimeout(() => {
+                        this.h3ChartsRetryTimer = null;
+                        if (!this.isH3PanelActive()) return;
+                        this.updateH3Charts();
+                        this.updateDecisionCards();
+                    }, 90);
                 },
                 _resolveCategoryColors(labels) {
                     const colorByName = {};
@@ -8240,11 +8270,21 @@
                     };
                 },
                 updateH3Charts() {
-                    if (!window.echarts || !this.h3AnalysisCharts) return;
+                    if (!window.echarts || !this.h3AnalysisCharts) {
+                        this._clearH3ChartRetryTimer();
+                        return;
+                    }
                     const categoryEl = document.getElementById('h3CategoryChart');
                     const densityEl = document.getElementById('h3DensityChart');
-                    if (!categoryEl || !densityEl) return;
-                    if (categoryEl.clientWidth === 0 || densityEl.clientWidth === 0) return;
+                    if (!categoryEl || !densityEl) {
+                        this._clearH3ChartRetryTimer();
+                        return;
+                    }
+                    if (categoryEl.clientWidth === 0 || densityEl.clientWidth === 0) {
+                        this._scheduleH3ChartRetry();
+                        return;
+                    }
+                    this._clearH3ChartRetryTimer();
 
                     if (!this.h3ChartsResizeHandler) {
                         this.h3ChartsResizeHandler = () => {
