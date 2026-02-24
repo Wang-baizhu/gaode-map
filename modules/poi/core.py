@@ -1,6 +1,7 @@
 import logging
 import asyncio
 import aiohttp
+import json
 from typing import List, Dict, Optional, Tuple
 from core.config import settings
 import time
@@ -8,15 +9,13 @@ import random
 import math
 import re
 import unicodedata
-import h3
 
-from shapely.geometry import Point, Polygon, mapping
 from modules.gaode_service.utils.transform_posi import gcj02_to_wgs84, wgs84_to_gcj02
 
 logger = logging.getLogger(__name__)
 
 AMAP_POLYGON_URL = "https://restapi.amap.com/v3/place/polygon"
-AMAP_REGEO_URL = "https://restapi.amap.com/v3/geocode/regeo"
+LOCAL_POLYGON_ENDPOINT = "/place/polygon"
 PARKING_TYPE_PREFIX = "1509"
 POI_DEDUP_GRID_SIZE_M = 120.0
 POI_DEDUP_DISTANCE_M = 90.0
@@ -163,347 +162,112 @@ async def fetch_pois_by_polygon(
     return all_pois
 
 
-def _safe_float(value: Optional[str]) -> Optional[float]:
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _parse_lnglat(location: str) -> Optional[List[float]]:
-    if not location:
-        return None
-    try:
-        lng_str, lat_str = (str(location).split(",") + ["", ""])[:2]
-        return [float(lng_str), float(lat_str)]
-    except (TypeError, ValueError):
-        return None
-
-
-def _build_sample_points(
+async def fetch_local_pois_by_polygon(
     polygon: List[List[float]],
-    spacing_m: int,
-    max_points: int,
-) -> List[List[float]]:
+    types: str = "",
+    year: Optional[int] = None,
+    max_count: int = 1000,
+) -> List[Dict]:
     """
-    Build staggered sampling points inside polygon.
-    Uses an approximate hex-like lattice in GCJ02 lng/lat degrees.
+    Fetch POIs from local search service via polygon query.
+    Input polygon is GCJ02 from frontend.
     """
-    poly = Polygon(polygon)
-    if not poly.is_valid:
-        poly = poly.buffer(0)
-    if poly.is_empty:
+    normalized_polygon = _normalize_polygon_points(polygon)
+    if len(normalized_polygon) < 3:
+        logger.error("Invalid local polygon input")
         return []
 
-    # Tiny polygon fallback
-    if poly.area <= 1e-12:
-        rp = poly.representative_point()
-        return [[rp.x, rp.y]]
+    request_polygon = _to_local_query_polygon(normalized_polygon)
+    polygon_str = ";".join(f"{p[0]:.8f},{p[1]:.8f}" for p in request_polygon)
 
-    minx, miny, maxx, maxy = poly.bounds
-    mean_lat = (miny + maxy) / 2.0
-    cos_lat = max(0.2, abs(math.cos(math.radians(mean_lat))))
+    base_url = str(settings.local_query_base_url or "").strip().rstrip("/")
+    if not base_url:
+        raise ValueError("LOCAL_QUERY_BASE_URL 未配置")
 
-    # Degree step approximation in GCJ02.
-    dlat = max(1e-6, spacing_m / 111_320.0)
-    dlng = max(1e-6, spacing_m / (111_320.0 * cos_lat))
-    y_step = dlat * 0.8660254037844386  # sqrt(3)/2
-
-    points: List[List[float]] = []
-    y = miny
-    row = 0
-
-    while y <= maxy and len(points) < max_points:
-        x = minx + (dlng * 0.5 if row % 2 else 0.0)
-        while x <= maxx and len(points) < max_points:
-            pt = Point(x, y)
-            if poly.contains(pt) or poly.touches(pt):
-                points.append([x, y])
-            x += dlng
-        y += y_step
-        row += 1
-
-    # Ensure at least one point exists.
-    if not points:
-        rp = poly.representative_point()
-        points.append([rp.x, rp.y])
-
-    # Ensure centroid-like point is included for stability.
-    rp = poly.representative_point()
-    rp_xy = [rp.x, rp.y]
-    if len(points) < max_points:
-        exists = any(abs(p[0] - rp_xy[0]) < 1e-9 and abs(p[1] - rp_xy[1]) < 1e-9 for p in points)
-        if not exists:
-            points.append(rp_xy)
-
-    return points[:max_points]
-
-
-def _spacing_to_h3_resolution(spacing_m: int) -> int:
-    """
-    Backward-compatible mapping:
-    old spacing controls approximate H3 density if caller does not pass h3_resolution.
-    """
-    s = max(30, int(spacing_m or 250))
-    if s <= 180:
-        return 10
-    if s <= 360:
-        return 9
-    if s <= 700:
-        return 8
-    return 7
-
-
-def _h3_cell_center_gcj02(h3_index: str) -> Optional[List[float]]:
-    """Convert one H3 cell center (WGS84) to GCJ02 [lng, lat]."""
-    try:
-        if hasattr(h3, "cell_to_latlng"):
-            lat, lng = h3.cell_to_latlng(h3_index)
-        elif hasattr(h3, "h3_to_geo"):
-            lat, lng = h3.h3_to_geo(h3_index)
-        else:
-            return None
-        gx, gy = wgs84_to_gcj02(float(lng), float(lat))
-        return [gx, gy]
-    except Exception:
-        return None
-
-
-def _pick_stable_subset(items: List[str], max_count: int) -> List[str]:
-    """Deterministic down-sampling to keep request count bounded."""
-    if max_count <= 0:
-        return []
-    if len(items) <= max_count:
-        return items
-    if max_count == 1:
-        return [items[0]]
-
-    last = len(items) - 1
-    indices = {
-        int(round((i * last) / (max_count - 1)))
-        for i in range(max_count)
+    payload: Dict[str, object] = {
+        "polygon": polygon_str,
+        "types": str(types or ""),
+        "pageSize": -1,
     }
-    return [items[i] for i in sorted(indices)]
+    if year is not None:
+        payload["year"] = int(year)
+
+    url = f"{base_url}{LOCAL_POLYGON_ENDPOINT}"
+    logger.info(
+        "Local polygon query: url=%s points=%s year=%s types=%s",
+        url,
+        len(request_polygon),
+        year,
+        str(types or ""),
+    )
+
+    timeout = aiohttp.ClientTimeout(total=60)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        try:
+            async with session.post(url, json=payload) as resp:
+                body = await resp.text()
+                if resp.status != 200:
+                    raise RuntimeError(
+                        f"Local query HTTP {resp.status}: {body[:200]}"
+                    )
+        except aiohttp.ClientError as exc:
+            raise RuntimeError(f"Local query request failed: {exc}") from exc
+
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Local query response is not JSON: {body[:200]}") from exc
+
+    status = str(data.get("status") or "")
+    if status and status != "1":
+        raise ValueError(
+            "Local query failed: "
+            f"status={status}, info={data.get('info')}, infocode={data.get('infocode')}"
+        )
+
+    normalized = _normalize_pois(data.get("pois") or [])
+    if settings.local_query_coord_system == "wgs84":
+        for poi in normalized:
+            coords = _extract_poi_location(poi)
+            if not coords:
+                continue
+            gx, gy = wgs84_to_gcj02(coords[0], coords[1])
+            poi["location"] = [gx, gy]
+
+    before_dedup = len(normalized)
+    normalized = _dedupe_polygon_pois(normalized)
+    if max_count > 0:
+        normalized = normalized[:max_count]
+    logger.info(
+        "Local polygon fetch complete: total=%s dedup_removed=%s",
+        len(normalized),
+        max(0, before_dedup - len(normalized)),
+    )
+    return normalized
 
 
-def _build_h3_sample_points(
-    polygon: List[List[float]],
-    h3_resolution: int,
-    max_points: int,
-) -> List[List[float]]:
-    """
-    Build sample points from H3 cells:
-    1) polyfill (intersects) over polygon
-    2) sample by each cell center in GCJ02
-    """
-    # Build a WGS84 polygon for H3 polyfill.
-    wgs_ring: List[List[float]] = []
-    for pt in polygon or []:
-        if not isinstance(pt, (list, tuple)) or len(pt) < 2:
+def _normalize_polygon_points(polygon: List[List[float]]) -> List[List[float]]:
+    points: List[List[float]] = []
+    for point in polygon or []:
+        if not isinstance(point, (list, tuple)) or len(point) < 2:
             continue
         try:
-            lng = float(pt[0])
-            lat = float(pt[1])
+            lng = float(point[0])
+            lat = float(point[1])
+            points.append([lng, lat])
         except (TypeError, ValueError):
             continue
-        wx, wy = gcj02_to_wgs84(lng, lat)
-        wgs_ring.append([wx, wy])
-
-    if len(wgs_ring) < 3:
-        return []
-    if wgs_ring[0] != wgs_ring[-1]:
-        wgs_ring.append(wgs_ring[0])
-
-    wgs_poly = Polygon(wgs_ring)
-    if not wgs_poly.is_valid:
-        wgs_poly = wgs_poly.buffer(0)
-    if wgs_poly.is_empty:
-        return []
-
-    geo_json = mapping(wgs_poly)
-    try:
-        if hasattr(h3, "geo_to_cells"):
-            cells = h3.geo_to_cells(geo_json, h3_resolution)
-        else:
-            cells = h3.polyfill(geo_json, h3_resolution, geo_json_conformant=True)
-    except Exception:
-        return []
-
-    cell_ids = sorted(str(cid) for cid in (cells or []) if cid)
-    if not cell_ids:
-        return []
-
-    selected = _pick_stable_subset(cell_ids, max_points)
-    points: List[List[float]] = []
-    for cid in selected:
-        pt = _h3_cell_center_gcj02(cid)
-        if pt:
-            points.append(pt)
     return points
 
 
-async def _fetch_regeo_aois(
-    lng: float,
-    lat: float,
-    key_manager: KeyManager,
-    limiter: RateLimiter,
-    session: aiohttp.ClientSession,
-    radius: int,
-) -> List[Dict]:
-    """Fetch aois from regeo endpoint for one point."""
-    for _ in range(len(key_manager.keys) + 1):
-        current_key = key_manager.get_current_key()
-        if not current_key:
-            return []
-
-        params = {
-            "key": current_key,
-            "location": f"{lng:.6f},{lat:.6f}",
-            "extensions": "all",
-            "radius": int(radius),
-            "output": "json",
-        }
-
-        for _retry in range(3):
-            await limiter.acquire()
-            try:
-                async with session.get(AMAP_REGEO_URL, params=params, timeout=5) as resp:
-                    if resp.status != 200:
-                        await asyncio.sleep(0.15)
-                        continue
-
-                    data = await resp.json()
-                    status = str(data.get("status") or "")
-                    infocode = str(data.get("infocode") or "")
-
-                    if status == "1":
-                        key_manager.rotate()
-                        return ((data.get("regeocode") or {}).get("aois") or [])
-
-                    if infocode == "10003":
-                        await limiter.trigger_backoff(1.5 + random.random())
-                        continue
-
-                    if infocode == "10044":
-                        await key_manager.report_limit_reached()
-                        break
-
-                    return []
-            except Exception:
-                await asyncio.sleep(0.15)
-
-    return []
-
-
-async def fetch_aois_by_polygon_sampling(
-    polygon: List[List[float]],
-    spacing_m: int = 250,
-    max_points: int = 300,
-    regeo_radius: int = 1000,
-    h3_resolution: Optional[int] = None,
-) -> Dict:
-    """
-    Sample polygon area and aggregate AOIs by id.
-
-    Notes:
-    - This is a "best effort" coverage strategy, not mathematical full AOI enumeration.
-    - Calls regeo once per sample point.
-    """
-    raw_keys = settings.amap_web_service_key
-    if not raw_keys:
-        raise ValueError("AMap Web Service Key is missing in settings")
-
-    if not polygon or len(polygon) < 3:
-        raise ValueError("Invalid polygon input")
-
-    capped_points = max(1, int(max_points))
-    resolution = int(h3_resolution) if h3_resolution is not None else _spacing_to_h3_resolution(spacing_m)
-    resolution = max(7, min(11, resolution))
-
-    # H3-first sampling path.
-    sample_points = _build_h3_sample_points(
-        polygon=polygon,
-        h3_resolution=resolution,
-        max_points=capped_points,
-    )
-    # Safety fallback to legacy lattice if H3 path yields nothing.
-    if not sample_points:
-        sample_points = _build_sample_points(
-            polygon=polygon,
-            spacing_m=max(30, int(spacing_m)),
-            max_points=capped_points,
-        )
-    if not sample_points:
-        return {"aois": [], "sample_points": 0, "total_calls": 0}
-
-    key_manager = KeyManager(raw_keys)
-    limiter = RateLimiter(calls_per_second=8)
-
-    agg: Dict[str, Dict] = {}
-    total_calls = 0
-
-    async with aiohttp.ClientSession() as session:
-        for pt in sample_points:
-            lng, lat = pt
-            aois = await _fetch_regeo_aois(
-                lng=lng,
-                lat=lat,
-                key_manager=key_manager,
-                limiter=limiter,
-                session=session,
-                radius=max(0, min(3000, int(regeo_radius))),
-            )
-            total_calls += 1
-
-            for aoi in aois:
-                aoi_id = str(aoi.get("id") or "").strip()
-                if not aoi_id:
-                    continue
-
-                distance = _safe_float(aoi.get("distance"))
-                center = _parse_lnglat(str(aoi.get("location") or ""))
-
-                if aoi_id not in agg:
-                    agg[aoi_id] = {
-                        "id": aoi_id,
-                        "name": str(aoi.get("name") or ""),
-                        "adcode": str(aoi.get("adcode") or ""),
-                        "type": str(aoi.get("type") or ""),
-                        "location": center,
-                        "area": _safe_float(aoi.get("area")),
-                        "min_distance": distance,
-                        "hit_count": 0,
-                        "inside_hits": 0,
-                    }
-
-                item = agg[aoi_id]
-                item["hit_count"] += 1
-                if distance == 0:
-                    item["inside_hits"] += 1
-                if distance is not None and (
-                    item.get("min_distance") is None or distance < item["min_distance"]
-                ):
-                    item["min_distance"] = distance
-                if not item.get("location") and center:
-                    item["location"] = center
-
-    aois = sorted(
-        agg.values(),
-        key=lambda x: (
-            -int(x.get("inside_hits") or 0),
-            -int(x.get("hit_count") or 0),
-            float(x.get("min_distance") or 9e15),
-            str(x.get("id") or ""),
-        ),
-    )
-
-    return {
-        "aois": aois,
-        "sample_points": len(sample_points),
-        "total_calls": total_calls,
-    }
+def _to_local_query_polygon(polygon_gcj02: List[List[float]]) -> List[List[float]]:
+    if settings.local_query_coord_system != "wgs84":
+        return polygon_gcj02
+    converted: List[List[float]] = []
+    for lng, lat in polygon_gcj02:
+        wx, wy = gcj02_to_wgs84(lng, lat)
+        converted.append([wx, wy])
+    return converted
 
 
 async def _fetch_amap_page_one(polygon, keywords, types, key_manager, limiter, session):

@@ -47,7 +47,7 @@ docker compose up -d --build
 ```
 5. 首次导入完成后可用此地址自测：
 ```bash
-http://localhost:12345/api/interpreter
+http://localhost:8003/api/interpreter
 ```
 
 ### 天地图本地开发配置

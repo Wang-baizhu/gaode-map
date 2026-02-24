@@ -195,13 +195,6 @@
                 this.dragInsertPosition = null;
                 this.isDraggingNav = false;
             },
-            clearAoiCacheState() {
-                this.clearAoiMarkers();
-                this.allAoisDetails = [];
-                this.aoiSamplePoints = 0;
-                this.aoiTotalCalls = 0;
-                this.aoiStatus = '';
-            },
             goToStep(targetStep) {
                 this.confirmNavigation(() => {
                     if (targetStep < this.step) {
@@ -212,7 +205,6 @@
                                 clearSimpleMarkers: true,
                                 resetFilterPanel: true,
                             });
-                            this.clearAoiCacheState();
                             this.resetRoadSyntaxState();
                             this.poiStatus = '';
                             this.clearH3Grid();
@@ -222,7 +214,6 @@
                             if (this.mapCore && this.mapCore.clearCustomPolygons) {
                                 this.mapCore.clearCustomPolygons();
                             }
-                            this.clearAoiCacheState();
                             this.resetRoadSyntaxState();
                             this.lastIsochroneGeoJSON = null;
                             this.clearH3Grid();
@@ -232,7 +223,7 @@
                 });
             },
             confirmNavigation(callback) {
-                if (this.isFetchingPois || this.isFetchingAois) {
+                if (this.isFetchingPois) {
                     if (confirm('数据抓取正在进行中，离开将取消未完成的任务。确定要离开吗？')) {
                         this.cancelFetch();
                         callback();
@@ -247,9 +238,7 @@
                     this.abortController = null;
                 }
                 this.isFetchingPois = false;
-                this.isFetchingAois = false;
                 this.poiStatus = '任务已取消';
-                this.aoiStatus = '任务已取消';
                 this.resetFetchSubtypeProgress();
             },
             backToHome() {

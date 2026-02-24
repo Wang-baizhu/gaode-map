@@ -34,10 +34,11 @@ from modules.poi.schemas import (
     PoiRequest,
     PoiResponse,
     HistorySaveRequest,
-    AoiSampleRequest,
-    AoiSampleResponse,
 )
-from modules.poi.core import fetch_pois_by_polygon, fetch_aois_by_polygon_sampling
+from modules.poi.core import (
+    fetch_pois_by_polygon,
+    fetch_local_pois_by_polygon,
+)
 from modules.grid_h3.analysis import analyze_h3_grid
 from modules.grid_h3.analysis_schemas import H3MetricsRequest, H3MetricsResponse, H3ExportRequest
 from modules.grid_h3.arcgis_bridge import run_arcgis_h3_export
@@ -430,9 +431,25 @@ async def analyze_road_syntax_api(payload: RoadSyntaxRequest):
 @router.post("/api/v1/analysis/pois", response_model=PoiResponse)
 async def fetch_pois_analysis(payload: PoiRequest):
     # payload.polygon assumed GCJ02
-    results = await fetch_pois_by_polygon(
-        payload.polygon, payload.keywords, payload.types, max_count=payload.max_count
-    )
+    source = (payload.source or "gaode").strip().lower()
+    try:
+        if source == "local":
+            results = await fetch_local_pois_by_polygon(
+                payload.polygon,
+                types=payload.types,
+                year=payload.year,
+                max_count=payload.max_count,
+            )
+        else:
+            results = await fetch_pois_by_polygon(
+                payload.polygon,
+                payload.keywords,
+                payload.types,
+                max_count=payload.max_count,
+            )
+    except Exception as exc:
+        logger.exception("POI fetch failed: source=%s", source)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     
     if payload.save_history:
         # Standardize to WGS84 for storage
@@ -458,23 +475,12 @@ async def fetch_pois_analysis(payload: PoiRequest):
         if payload.time_min: desc = f"{payload.time_min}min - {desc}"
         
         history_repo.create_record(
-            {"center": s_center, "time_min": payload.time_min, "keywords": payload.keywords, "mode": payload.mode},
+            {"center": s_center, "time_min": payload.time_min, "keywords": payload.keywords, "mode": payload.mode, "source": source},
             s_poly, s_pois, desc
         )
         
     return {"pois": results, "count": len(results)}
 
-
-@router.post("/api/v1/analysis/aois", response_model=AoiSampleResponse)
-async def fetch_aois_analysis(payload: AoiSampleRequest):
-    result = await fetch_aois_by_polygon_sampling(
-        polygon=payload.polygon,
-        spacing_m=payload.spacing_m,
-        h3_resolution=payload.h3_resolution,
-        max_points=payload.max_points,
-        regeo_radius=payload.regeo_radius,
-    )
-    return result
 
 @router.post("/api/v1/analysis/history/save")
 async def save_history_manually(payload: HistorySaveRequest):

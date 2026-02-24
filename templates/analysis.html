@@ -274,6 +274,15 @@
                             </div>
                         </div>
 
+                        <div class="form-group" style="display:flex; align-items:center; gap:8px;">
+                            <label style="margin:0;">数据来源</label>
+                            <select v-model="poiDataSource" class="minimal-input"
+                                style="padding:4px 8px; max-width:180px;">
+                                <option value="gaode">高德源</option>
+                                <option value="local">本地源（2018年）</option>
+                            </select>
+                        </div>
+
                         <button class="btn-black" :disabled="isFetchingPois" @click="fetchPois">
                             {% raw %}{{ isFetchingPois ? '数据抓取中 ' + fetchProgress + '%' : '下一步: 抓取数据' }}{% endraw %}
                         </button>
@@ -920,11 +929,6 @@
                                     </div>
                                 </div>
 
-                                <div class="panel" v-show="activeStep3Panel === 'aoi'">
-                                    <h4>AOI 面数据分析</h4>
-                                    <div class="panel-placeholder" style="margin-top:10px;">AOI 面数据分析（待开发）</div>
-                                </div>
-
                             </div>
                         </div>
                     </div>
@@ -1184,7 +1188,7 @@
                     selectedPoint: null, // {lng, lat}
                     transportMode: 'walking',
                     timeHorizon: 15,
-                    captureTarget: 'poi', // poi | aoi
+                    poiDataSource: 'gaode', // gaode | local
                     isCalculating: false,
                     errorMessage: '',
                     basemapSource: 'amap',
@@ -1208,8 +1212,7 @@
                     step3NavItems: [
                         { id: 'poi', label: 'POI', title: 'POI 点数据分析' },
                         { id: 'h3', label: '网格', title: '网格分析' },
-                        { id: 'syntax', label: '路网', title: '空间句法路网分析' },
-                        { id: 'aoi', label: 'AOI', title: 'AOI 面数据分析' }
+                        { id: 'syntax', label: '路网', title: '空间句法路网分析' }
                     ],
                     activeStep3Panel: 'poi',
                     dragIndex: null,
@@ -1217,10 +1220,8 @@
                     dragInsertPosition: null,
                     isDraggingNav: false,
                     isFetchingPois: false,
-                    isFetchingAois: false,
                     fetchProgress: 0,
                     poiStatus: '',
-                    aoiStatus: '',
                     roadSyntaxModulesReady: ROAD_SYNTAX_MODULES_READY,
                     roadSyntaxModuleMissing: ROAD_SYNTAX_MODULE_MISSING.slice(),
                     ...buildRoadSyntaxInitialState(),
@@ -1234,14 +1235,7 @@
                     },
                     lastIsochroneGeoJSON: null,
                     poiMarkers: [],
-                    aoiMarkers: [],
                     allPoisDetails: [], // Store full fetched data for client-side filtering
-                    allAoisDetails: [],
-                    aoiH3Resolution: 9,
-                    aoiRegeoRadius: 1000,
-                    aoiMaxPoints: 300,
-                    aoiSamplePoints: 0,
-                    aoiTotalCalls: 0,
                     poiChart: null,
                     poiChartResizeHandler: null,
 
@@ -2097,11 +2091,6 @@
                         };
                     }
                 },
-                enqueueAoiMapWrite(fn, options = {}) {
-                    const opts = (options && typeof options === 'object') ? Object.assign({}, options) : {};
-                    opts.scope = 'aoi';
-                    return this.enqueuePoiMapWrite(fn, opts);
-                },
                 safeMapSet(overlay, targetMap = null) {
                     if (!overlay || typeof overlay.setMap !== 'function') return false;
                     try {
@@ -2221,16 +2210,11 @@
                         this.abortController = null;
                     }
                     this.isFetchingPois = false;
-                    this.isFetchingAois = false;
                     this.fetchProgress = 0;
                     this.poiStatus = '';
-                    this.aoiStatus = '';
                     this.roadSyntaxStatus = '';
                     this.resetFetchSubtypeProgress();
                     this.allPoisDetails = [];
-                    this.allAoisDetails = [];
-                    this.aoiSamplePoints = 0;
-                    this.aoiTotalCalls = 0;
                     this.lastIsochroneGeoJSON = null;
                     this.h3GridStatus = '';
                     this.h3GridCount = 0;
@@ -2244,7 +2228,6 @@
                         clearSimpleMarkers: true,
                         resetFilterPanel: true
                     });
-                    this.clearAoiMarkers();
                     this.resetRoadSyntaxState();
 
                     if (this.mapCore) {
@@ -4921,27 +4904,14 @@
                         map.setCenter(target);
                     }
                 },
-                onCaptureTargetChange(target) {
-                    const next = target === 'aoi' ? 'aoi' : 'poi';
-                    this.captureTarget = next;
-                    this.poiStatus = '';
-                    this.aoiStatus = '';
-                    this.fetchProgress = 0;
-                    if (this.step === 3) {
-                        this.activeStep3Panel = next === 'aoi' ? 'aoi' : 'poi';
-                    }
-                },
                 isStep3PanelVisible(panelId) {
                     if (panelId === 'syntax' && !this.roadSyntaxModulesReady) {
                         return false;
                     }
-                    if (this.captureTarget === 'aoi') {
-                        return panelId === 'aoi' || panelId === 'syntax';
-                    }
-                    return panelId !== 'aoi';
+                    return true;
                 },
                 step2StatusText() {
-                    return this.captureTarget === 'aoi' ? this.aoiStatus : this.poiStatus;
+                    return this.poiStatus;
                 },
                 getIsochronePolygonPoints() {
                     if (!this.lastIsochroneGeoJSON || !this.lastIsochroneGeoJSON.geometry) return [];
@@ -4956,10 +4926,6 @@
                     }).filter((pt) => Array.isArray(pt) && pt.length >= 2);
                 },
                 async fetchStep2Data() {
-                    if (this.captureTarget === 'aoi') {
-                        await this.fetchAois();
-                        return;
-                    }
                     await this.fetchPois();
                 },
                 async startAnalysis() {
@@ -4968,11 +4934,6 @@
                     this.errorMessage = '';
                     this.fetchProgress = 0;
                     this.poiStatus = '';
-                    this.aoiStatus = '';
-                    this.allAoisDetails = [];
-                    this.aoiSamplePoints = 0;
-                    this.aoiTotalCalls = 0;
-                    this.clearAoiMarkers();
                     this.roadSyntaxMode = this.transportMode || 'walking';
                     this.resetRoadSyntaxState();
 
@@ -4998,7 +4959,7 @@
                         this.lastIsochroneGeoJSON = geojson;
                         this.renderResult(geojson);
                         this.step = 2; // Advance to Step 2
-                        this.activeStep3Panel = this.captureTarget === 'aoi' ? 'aoi' : 'poi';
+                        this.activeStep3Panel = 'poi';
 
                     } catch (e) {
                         console.error(e);
@@ -5012,11 +4973,6 @@
                     this.isFetchingPois = true;
                     this.fetchProgress = 0;
                     this.poiStatus = "准备抓取...";
-                    this.aoiStatus = '';
-                    this.allAoisDetails = [];
-                    this.aoiSamplePoints = 0;
-                    this.aoiTotalCalls = 0;
-                    this.clearAoiMarkers();
                     this.resetRoadSyntaxState();
                     this.resetFetchSubtypeProgress();
 
@@ -5041,6 +4997,7 @@
 
                         let totalFetched = 0;
                         const totalCats = selectedCats.length;
+                        const fetchErrors = [];
                         if (selectedCats[0]) {
                             this.updateFetchSubtypeProgressDisplay(selectedCats[0]);
                         }
@@ -5048,13 +5005,15 @@
                         // Parallel Fetching: process in batches.
                         this.abortController = new AbortController();
                         const batchSize = 4;
-                        this.poiStatus = `正在并行抓取 ${totalCats} 个分类（每批 ${batchSize} 个）...`;
+                        const sourceLabel = this.poiDataSource === 'local' ? '本地源（2018年）' : '高德源';
+                        this.poiStatus = `正在并行抓取 ${totalCats} 个分类（每批 ${batchSize} 个，${sourceLabel}）...`;
 
                         const fetchOneCategory = async (cat) => {
                             const payload = {
                                 polygon: polygon,
                                 keywords: "",
                                 types: String(cat.types || ''),
+                                source: this.poiDataSource,
                                 save_history: false, // Don't save individual batches
                                 center: [this.selectedPoint.lng, this.selectedPoint.lat],
                                 time_min: parseInt(this.timeHorizon),
@@ -5069,26 +5028,43 @@
                                     body: JSON.stringify(payload),
                                     signal: this.abortController.signal
                                 });
-
-                                if (res.ok) {
-                                    const data = await res.json();
-                                    return data.pois || [];
+                                if (!res.ok) {
+                                    let detail = '';
+                                    try {
+                                        detail = await res.text();
+                                    } catch (_) { }
+                                    return {
+                                        list: [],
+                                        error: `HTTP ${res.status}${detail ? ` ${detail.slice(0, 240)}` : ''}`,
+                                    };
                                 }
+                                const data = await res.json();
+                                return { list: data.pois || [], error: '' };
                             } catch (err) {
                                 if (err.name !== 'AbortError') {
                                     console.warn(`Failed to fetch category ${cat.name}`, err);
                                 }
+                                return {
+                                    list: [],
+                                    error: err && err.message ? String(err.message) : String(err),
+                                };
                             }
-                            return [];
                         };
 
                         for (let i = 0; i < selectedCats.length; i += batchSize) {
                             if (this.abortController.signal.aborted) return;
                             const batch = selectedCats.slice(i, i + batchSize);
                             const resultsArray = await Promise.all(batch.map(fetchOneCategory));
-                            resultsArray.forEach((list, index) => {
+                            resultsArray.forEach((result, index) => {
+                                const list = Array.isArray(result && result.list) ? result.list : [];
                                 if (list && list.length) this.allPoisDetails.push(...list);
                                 const cat = batch[index];
+                                if (cat && result && result.error) {
+                                    fetchErrors.push({
+                                        category: cat.name || cat.id || `cat_${i + index + 1}`,
+                                        error: result.error,
+                                    });
+                                }
                                 if (cat) {
                                     this.accumulateFetchSubtypeHits(cat, list || []);
                                 }
@@ -5105,7 +5081,15 @@
                         this.allPoisDetails = this.deduplicateFetchedPois(this.allPoisDetails);
                         totalFetched = this.allPoisDetails.length;
                         this.fetchProgress = 100;
+                        if (totalFetched === 0 && fetchErrors.length > 0) {
+                            const first = fetchErrors[0];
+                            throw new Error(`本地源请求失败（${fetchErrors.length}/${totalCats} 分类）。示例：${first.category} -> ${first.error}`);
+                        }
                         this.poiStatus = `完成！共找到 ${totalFetched} 个结果`;
+                        if (fetchErrors.length > 0) {
+                            console.warn('[poi-fetch] partial category failures', fetchErrors);
+                            this.poiStatus += `（${fetchErrors.length} 个分类失败，已输出到控制台）`;
+                        }
 
                         // Integration with Legacy Filter Panel (single render path).
                         this.updateLegacySystem(this.allPoisDetails);
@@ -7646,171 +7630,6 @@
                         this.isComputingRoadSyntax = false;
                     }
                 },
-                clearAoiMarkers() {
-                    if (!Array.isArray(this.aoiMarkers)) {
-                        this.aoiMarkers = [];
-                        return;
-                    }
-                    const markers = this.aoiMarkers.slice();
-                    this.aoiMarkers = [];
-                    if (!markers.length) return;
-                    markers.forEach((marker) => this.safeMapSet(marker, null));
-                },
-                renderAois(aois) {
-                    this.clearAoiMarkers();
-                    if (!this.mapCore || !this.mapCore.map || !window.AMap) return;
-                    const list = Array.isArray(aois) ? aois : [];
-                    const markers = [];
-                    let invalidCount = 0;
-                    const invalidSamples = [];
-                    list.forEach((aoi) => {
-                        const loc = this.normalizeLngLat(aoi && aoi.location, 'aoi.render.location');
-                        if (!loc) {
-                            invalidCount += 1;
-                            if (invalidSamples.length < 5) {
-                                invalidSamples.push({
-                                    id: (aoi && aoi.id) || '',
-                                    name: (aoi && aoi.name) || '',
-                                    location: this.roadSyntaxSummarizeCoordInput(aoi && aoi.location)
-                                });
-                            }
-                            return;
-                        }
-                        const marker = new AMap.CircleMarker({
-                            center: loc,
-                            radius: 5,
-                            strokeColor: '#ffffff',
-                            strokeWeight: 1,
-                            fillColor: '#16a34a',
-                            fillOpacity: 0.9,
-                            zIndex: 110,
-                            bubble: true,
-                            cursor: 'pointer',
-                        });
-                        marker.on('click', () => {
-                            const name = (aoi && aoi.name) ? String(aoi.name) : String((aoi && aoi.id) || 'AOI');
-                            const area = Number(aoi && aoi.area);
-                            const areaText = Number.isFinite(area) ? `${(area / 1000000).toFixed(3)} km²` : '-';
-                            const insideHits = Number(aoi && aoi.inside_hits);
-                            const minDist = aoi && aoi.min_distance;
-                            const info = [
-                                `<div style="padding:6px 8px;">`,
-                                `<div style="font-weight:600;">${name}</div>`,
-                                `<div style="font-size:12px;color:#666;">ID: ${(aoi && aoi.id) || '-'}</div>`,
-                                `<div style="font-size:12px;color:#666;">面积: ${areaText}</div>`,
-                                `<div style="font-size:12px;color:#666;">inside_hits: ${Number.isFinite(insideHits) ? insideHits : 0} ｜ min_distance: ${minDist ?? '-'}</div>`,
-                                `</div>`,
-                            ];
-                            new AMap.InfoWindow({
-                                content: info.join(""),
-                                offset: new AMap.Pixel(0, -6)
-                            }).open(this.mapCore.map, loc);
-                        });
-                        markers.push(marker);
-                    });
-                    if (invalidCount > 0) {
-                        console.warn('[aoi-render] skipped invalid coordinates', {
-                            invalid_count: invalidCount,
-                            total_candidates: list.length,
-                            samples: invalidSamples
-                        });
-                    }
-                    this.aoiMarkers = markers;
-                    this.enqueueAoiMapWrite(() => {
-                        const targetMap = (this.mapCore && this.mapCore.map) ? this.mapCore.map : null;
-                        markers.forEach((marker) => this.safeMapSet(marker, targetMap));
-                        return {
-                            ok: true,
-                            marker_count: markers.length,
-                            visible: !!targetMap
-                        };
-                    }, {
-                        key: 'render_markers',
-                        replaceExisting: true,
-                        meta: {
-                            reason: 'aoi_render_markers',
-                            marker_count: markers.length
-                        }
-                    });
-                },
-                async fetchAois() {
-                    if (!this.lastIsochroneGeoJSON) return;
-                    this.isFetchingAois = true;
-                    this.fetchProgress = 0;
-                    this.aoiStatus = '准备抓取...';
-                    this.poiStatus = '';
-                    this.resetFetchSubtypeProgress();
-
-                    this.clearPoiOverlayLayers({
-                        reason: 'fetch_aois_start',
-                        clearManager: true,
-                        clearSimpleMarkers: true,
-                        resetFilterPanel: true
-                    });
-
-                    this.clearAoiMarkers();
-                    this.allPoisDetails = [];
-                    this.allAoisDetails = [];
-                    this.aoiSamplePoints = 0;
-                    this.aoiTotalCalls = 0;
-                    this.resetRoadSyntaxState();
-
-                    try {
-                        const polygon = this.getIsochronePolygonPoints();
-                        if (!polygon.length) {
-                            throw new Error('等时圈范围无效');
-                        }
-
-                        this.abortController = new AbortController();
-                        this.fetchProgress = 30;
-
-                        const payload = {
-                            polygon: polygon,
-                            h3_resolution: this.aoiH3Resolution,
-                            max_points: this.aoiMaxPoints,
-                            regeo_radius: this.aoiRegeoRadius,
-                            spacing_m: 250,
-                        };
-
-                        const res = await fetch('/api/v1/analysis/aois', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(payload),
-                            signal: this.abortController.signal,
-                        });
-                        if (!res.ok) {
-                            let detail = '';
-                            try {
-                                detail = await res.text();
-                            } catch (_) { }
-                            throw new Error(detail || 'AOI 抓取失败');
-                        }
-                        this.fetchProgress = 85;
-                        const data = await res.json();
-                        const aois = Array.isArray(data && data.aois) ? data.aois : [];
-                        this.allAoisDetails = aois;
-                        this.aoiSamplePoints = Number(data && data.sample_points) || 0;
-                        this.aoiTotalCalls = Number(data && data.total_calls) || 0;
-
-                        this.renderAois(aois);
-                        this.fetchProgress = 100;
-                        this.aoiStatus = `完成！共 ${aois.length} 个 AOI（采样点 ${this.aoiSamplePoints}，请求 ${this.aoiTotalCalls}）`;
-                        setTimeout(() => {
-                            this.step = 3;
-                            this.activeStep3Panel = 'aoi';
-                        }, 120);
-                    } catch (e) {
-                        if (e.name !== 'AbortError') {
-                            console.error(e);
-                            this.aoiStatus = '失败: ' + e.message;
-                        } else {
-                            this.aoiStatus = '任务已取消';
-                        }
-                    } finally {
-                        this.isFetchingAois = false;
-                        this.abortController = null;
-                    }
-                },
                 renderPois(pois) {
                     this.updateLegacySystem(Array.isArray(pois) ? pois : []);
                 },
@@ -7964,11 +7783,6 @@
                             resetFilterPanel: true
                         });
                         this.mapCore.clearCustomPolygons();
-                        this.clearAoiMarkers();
-                        this.allAoisDetails = [];
-                        this.aoiSamplePoints = 0;
-                        this.aoiTotalCalls = 0;
-                        this.aoiStatus = '';
                         this.resetRoadSyntaxState();
 
                         if (data.params && data.params.center) {
@@ -7988,7 +7802,6 @@
                         // Switch to Results Step before building panels
                         this.step = 3;
                         this.sidebarView = 'wizard'; // Return to wizard
-                        this.captureTarget = 'poi';
                         this.activeStep3Panel = 'poi';
                         this.poiStatus = '正在加载历史点位...';
                         await this.$nextTick();

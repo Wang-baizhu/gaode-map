@@ -1,4 +1,14 @@
 services:
+  search:
+    build:
+      context: ../search
+      dockerfile: Dockerfile
+    container_name: gaode-map-search
+    env_file:
+      - ../search/.env
+    ports:
+      - "8001:8001"
+
   app:
     build:
       context: .
@@ -11,10 +21,14 @@ services:
     environment:
       - VALHALLA_BASE_URL=http://valhalla:8002
       - AMAP_WEB_SERVICE_KEY
+      # Default only for same compose network; override LOCAL_QUERY_BASE_URL in .env for split deployment.
+      - LOCAL_QUERY_BASE_URL=${LOCAL_QUERY_BASE_URL:-http://search:8001}
+      - LOCAL_QUERY_COORD_SYSTEM=${LOCAL_QUERY_COORD_SYSTEM:-gcj02}
       - DEPTHMAPX_CLI_PATH=${DEPTHMAPX_CLI_PATH:-/usr/local/bin/depthmapXcli}
       - OVERPASS_ENDPOINT=${OVERPASS_ENDPOINT}
       - PYTHONUNBUFFERED=1
     depends_on:
+      - search
       - valhalla
       - overpass
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
@@ -47,7 +61,7 @@ services:
     image: wiktorn/overpass-api:latest
     container_name: gaode-map-overpass
     ports:
-      - "12345:80"
+      - "8003:80"
     environment:
       - OVERPASS_MODE=init
       - OVERPASS_META=no
