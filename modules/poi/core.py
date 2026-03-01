@@ -9,6 +9,7 @@ import random
 import math
 import re
 import unicodedata
+from urllib.parse import urlencode
 
 from modules.gaode_service.utils.transform_posi import gcj02_to_wgs84, wgs84_to_gcj02
 
@@ -16,6 +17,8 @@ logger = logging.getLogger(__name__)
 
 AMAP_POLYGON_URL = "https://restapi.amap.com/v3/place/polygon"
 LOCAL_POLYGON_ENDPOINT = "/place/polygon"
+AMAP_POLYGON_MAX_QUERY_LEN = 4300
+AMAP_POLYGON_MIN_VERTEX_COUNT = 3
 PARKING_TYPE_PREFIX = "1509"
 POI_DEDUP_GRID_SIZE_M = 120.0
 POI_DEDUP_DISTANCE_M = 90.0
@@ -118,41 +121,93 @@ async def fetch_pois_by_polygon(
     key_manager = KeyManager(raw_keys)
 
     # 1. Geometry - Validate only
-    if not polygon or len(polygon) < 3:
-        # Simple validation
+    normalized_polygon = _normalize_polygon_points(polygon)
+    if len(normalized_polygon) < AMAP_POLYGON_MIN_VERTEX_COUNT:
         logger.error("Invalid polygon input")
         return []
+    normalized_polygon = _ensure_polygon_closed(normalized_polygon)
 
     logger.info(
         "POI polygon input: points=%s first=%s last=%s",
-        len(polygon),
-        polygon[0] if polygon else None,
-        polygon[-1] if polygon else None,
+        len(normalized_polygon),
+        normalized_polygon[0] if normalized_polygon else None,
+        normalized_polygon[-1] if normalized_polygon else None,
+    )
+
+    sample_key = key_manager.keys[0] if key_manager.keys else ""
+    split_base_polygon = _fit_polygon_to_query_limit(
+        normalized_polygon,
+        keywords,
+        types,
+        sample_key,
+    )
+    type_batches = _split_types_by_query_limit(
+        split_base_polygon,
+        keywords,
+        types,
+        sample_key,
     )
 
     # 2. Execution
+    all_pois: List[Dict] = []
     async with aiohttp.ClientSession() as session:
-        # Check Count First (Page 1)
-        count, first_page_pois = await _fetch_amap_page_one(polygon, keywords, types, key_manager, global_limiter, session)
-        logger.info(f"Polygon Search: Found {count} results total (Page 1 fetched {len(first_page_pois)}).")
-
-        all_pois = list(first_page_pois)
-
-        # Fetch remaining pages if needed
-        if count > len(all_pois):
-            remaining = await _fetch_remaining_pages(
-                polygon,
+        for batch_index, batch_types in enumerate(type_batches, start=1):
+            request_polygon = _fit_polygon_to_query_limit(
+                split_base_polygon,
                 keywords,
-                types,
+                batch_types,
+                sample_key,
+            )
+            query_len = _estimate_amap_polygon_query_len(
+                request_polygon,
+                keywords,
+                batch_types,
+                sample_key,
+            )
+            logger.info(
+                "POI polygon batch request: batch=%s/%s polygon_points=%s type_codes=%s query_len=%s",
+                batch_index,
+                len(type_batches),
+                len(request_polygon),
+                len(_split_type_codes(batch_types)),
+                query_len,
+            )
+
+            count, first_page_pois = await _fetch_amap_page_one(
+                request_polygon,
+                keywords,
+                batch_types,
                 key_manager,
-                count,
                 global_limiter,
                 session,
             )
-            all_pois.extend(remaining)
+            logger.info(
+                "Polygon Search batch %s/%s: Found %s results total (Page 1 fetched %s).",
+                batch_index,
+                len(type_batches),
+                count,
+                len(first_page_pois),
+            )
+
+            all_pois.extend(first_page_pois)
+
+            # Fetch remaining pages if needed
+            if count > len(first_page_pois):
+                remaining = await _fetch_remaining_pages(
+                    request_polygon,
+                    keywords,
+                    batch_types,
+                    key_manager,
+                    count,
+                    global_limiter,
+                    session,
+                )
+                all_pois.extend(remaining)
         
     before_dedup = len(all_pois)
     all_pois = _dedupe_polygon_pois(all_pois)
+    if max_count > 0:
+        all_pois = all_pois[:max_count]
     after_dedup = len(all_pois)
     logger.info(
         "Fetch Complete. Total POIs: %s (dedup removed=%s)",
@@ -258,6 +313,122 @@ def _normalize_polygon_points(polygon: List[List[float]]) -> List[List[float]]:
         except (TypeError, ValueError):
             continue
     return points
+
+
+def _ensure_polygon_closed(polygon: List[List[float]]) -> List[List[float]]:
+    if not polygon:
+        return []
+    if len(polygon) == 1:
+        return [polygon[0], polygon[0]]
+    first = polygon[0]
+    last = polygon[-1]
+    if first[0] == last[0] and first[1] == last[1]:
+        return polygon
+    return polygon + [first]
+
+
+def _split_type_codes(types: str) -> List[str]:
+    seen = set()
+    codes: List[str] = []
+    for raw in str(types or "").split("|"):
+        code = re.sub(r"\D", "", raw.strip())
+        if len(code) >= 6:
+            code = code[:6]
+        if not code:
+            continue
+        if code in seen:
+            continue
+        seen.add(code)
+        codes.append(code)
+    return codes
+
+
+def _estimate_amap_polygon_query_len(
+    polygon: List[List[float]],
+    keywords: str,
+    types: str,
+    key: str,
+) -> int:
+    polygon_str = ";".join(f"{p[0]:.6f},{p[1]:.6f}" for p in polygon)
+    params = {
+        "key": str(key or ""),
+        "polygon": polygon_str,
+        "keywords": str(keywords or ""),
+        "types": str(types or ""),
+        "offset": 25,
+        "page": 1,
+        "extensions": "base",
+    }
+    return len(f"{AMAP_POLYGON_URL}?{urlencode(params)}")
+
+
+def _split_types_by_query_limit(
+    polygon: List[List[float]],
+    keywords: str,
+    types: str,
+    key: str,
+    max_query_len: int = AMAP_POLYGON_MAX_QUERY_LEN,
+) -> List[str]:
+    codes = _split_type_codes(types)
+    if not codes:
+        return [""]
+
+    batches: List[str] = []
+    current_batch: List[str] = []
+
+    for code in codes:
+        candidate = current_batch + [code]
+        candidate_types = "|".join(candidate)
+        candidate_len = _estimate_amap_polygon_query_len(
+            polygon, keywords, candidate_types, key
+        )
+        if current_batch and candidate_len > max_query_len:
+            batches.append("|".join(current_batch))
+            current_batch = [code]
+            continue
+        current_batch = candidate
+
+    if current_batch:
+        batches.append("|".join(current_batch))
+
+    return batches
+
+
+def _downsample_polygon_vertices(polygon: List[List[float]]) -> List[List[float]]:
+    if len(polygon) <= AMAP_POLYGON_MIN_VERTEX_COUNT + 1:
+        return polygon
+
+    open_ring = polygon[:-1]
+    reduced = open_ring[::2]
+    if len(reduced) < AMAP_POLYGON_MIN_VERTEX_COUNT:
+        reduced = open_ring[:AMAP_POLYGON_MIN_VERTEX_COUNT]
+    return _ensure_polygon_closed(reduced)
+
+
+def _fit_polygon_to_query_limit(
+    polygon: List[List[float]],
+    keywords: str,
+    types: str,
+    key: str,
+    max_query_len: int = AMAP_POLYGON_MAX_QUERY_LEN,
+) -> List[List[float]]:
+    fitted = _ensure_polygon_closed(_normalize_polygon_points(polygon))
+    if len(fitted) < AMAP_POLYGON_MIN_VERTEX_COUNT + 1:
+        return fitted
+
+    query_len = _estimate_amap_polygon_query_len(fitted, keywords, types, key)
+    while query_len > max_query_len and len(fitted) > AMAP_POLYGON_MIN_VERTEX_COUNT + 1:
+        fitted = _downsample_polygon_vertices(fitted)
+        query_len = _estimate_amap_polygon_query_len(fitted, keywords, types, key)
+
+    if query_len > max_query_len:
+        logger.warning(
+            "AMap polygon query remains long after downsample: query_len=%s points=%s",
+            query_len,
+            len(fitted),
+        )
+
+    return fitted
 
 
 def _to_local_query_polygon(polygon_gcj02: List[List[float]]) -> List[List[float]]:
