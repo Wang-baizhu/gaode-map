@@ -1,13 +1,19 @@
 from typing import Any, Dict, List, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class RoadSyntaxRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str | None = Field(
+        None,
+        description="Optional client run id for progress polling",
+    )
     polygon: List[List[float]] = Field(
         ...,
         min_length=3,
-        description="Polygon ring coordinates ([[lng, lat], ...])",
+        description="Output polygon ring coordinates ([[lng, lat], ...])",
     )
     coord_type: Literal["gcj02", "wgs84"] = Field(
         "gcj02",
@@ -16,6 +22,14 @@ class RoadSyntaxRequest(BaseModel):
     mode: Literal["walking", "bicycling", "driving"] = Field(
         "walking",
         description="Travel mode used to select highway classes",
+    )
+    graph_model: Literal["segment", "axial"] = Field(
+        "segment",
+        description="Graph model for road-syntax analysis: segment/axial",
+    )
+    highway_filter: Literal["mode", "all", "major"] = Field(
+        "all",
+        description="Road filtering strategy: mode=filter by travel mode, all=include all OSM highway classes, major=main roads only",
     )
     include_geojson: bool = Field(
         True,
@@ -38,8 +52,8 @@ class RoadSyntaxRequest(BaseModel):
         description="Bucket step used when merging edges by accessibility score",
     )
     radii_m: List[int] = Field(
-        default_factory=lambda: [800, 2000],
-        description="Local analysis radii in meters, e.g. [800, 2000]",
+        default_factory=lambda: [600, 800],
+        description="Local analysis radii in meters, e.g. [600, 800]",
     )
     metric: Literal["choice", "integration"] = Field(
         "choice",
@@ -48,6 +62,12 @@ class RoadSyntaxRequest(BaseModel):
     depthmap_cli_path: str | None = Field(
         None,
         description="Optional override path of depthmapXcli executable",
+    )
+    tulip_bins: int | None = Field(
+        None,
+        ge=4,
+        le=1024,
+        description="Optional tulip angle bins override for depthmapX segment analysis",
     )
     use_arcgis_webgl: bool = Field(
         False,

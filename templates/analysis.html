@@ -216,6 +216,10 @@
                         <button class="btn-black" :disabled="!selectedPoint || isCalculating" @click="startAnalysis">
                             {% raw %}{{ isCalculating ? '计算中...' : '下一步: 生成等时圈' }}{% endraw %}
                         </button>
+                        <button class="btn-outline" style="margin-top:8px;" :disabled="isCalculating"
+                            @click="startCityScopeAnalysis('长沙市')">
+                            按长沙行政边界分析
+                        </button>
                         <div v-if="errorMessage" class="error-msg">{% raw %}{{ errorMessage }}{% endraw %}</div>
                         <div v-if="basemapSource === 'tianditu' && tdtDiag && tdtDiag.ok === false"
                             style="margin-top:10px; padding:10px; border:1px solid #f1b0b7; border-radius:8px; background:#fff7f7;">
@@ -759,7 +763,7 @@
                                 </div>
 
                                 <div class="panel" v-show="activeStep3Panel === 'syntax'">
-                                    <h4>空间句法路网分析</h4>
+                                    <h4>路网分析</h4>
                                     <div class="h3-subtabs" style="margin-top:8px;">
                                         <button type="button"
                                             class="h3-subtab-pill"
@@ -775,19 +779,18 @@
                                     <div v-if="roadSyntaxMainTab === 'params'" class="h3-params-card" style="margin-top:10px;">
                                         <div class="h3-params-grid">
                                             <label class="h3-params-field">
-                                                <span class="h3-params-label">交通方式</span>
-                                                <select v-model="roadSyntaxMode" class="h3-params-select">
-                                                    <option value="walking">步行</option>
-                                                    <option value="bicycling">骑行</option>
-                                                    <option value="driving">驾车</option>
-                                                </select>
-                                            </label>
-                                            <label class="h3-params-field">
                                                 <span class="h3-params-label">指标预设</span>
                                                 <select v-model="roadSyntaxLastMetricTab" class="h3-params-select">
                                                     <option v-for="tab in roadSyntaxMetricTabs()" :key="`road-syntax-pref-${tab.value}`" :value="tab.value">
                                                         {% raw %}{{ tab.label }}{% endraw %}
                                                     </option>
+                                                </select>
+                                            </label>
+                                            <label class="h3-params-field">
+                                                <span class="h3-params-label">图模型</span>
+                                                <select v-model="roadSyntaxGraphModel" class="h3-params-select">
+                                                    <option value="segment">线段图（Segment）</option>
+                                                    <option value="axial">轴线图（Axial）</option>
                                                 </select>
                                             </label>
                                             <label class="h3-params-field">
@@ -873,12 +876,49 @@
                                             </label>
                                             <label v-if="roadSyntaxMetricUsesRadius(roadSyntaxMetric)" style="display:flex; align-items:center; gap:6px; font-size:12px; color:#666;">
                                                 半径
-                                                <select v-model="roadSyntaxRadiusLabel" @change="refreshRoadSyntaxOverlay"
-                                                    style="padding:4px 6px; border:1px solid #ddd; border-radius:6px; font-size:12px;">
-                                                    <option v-for="opt in roadSyntaxRadiusOptions()" :key="`road-syntax-radius-${opt.value}`" :value="opt.value">
-                                                        {% raw %}{{ opt.label }}{% endraw %}
-                                                    </option>
-                                                </select>
+                                                <div style="display:inline-flex; border:1px solid #d1d5db; border-radius:8px; overflow:hidden;">
+                                                    <button
+                                                        type="button"
+                                                        @click="setRoadSyntaxRadiusLabel('global')"
+                                                        :disabled="isComputingRoadSyntax"
+                                                        :style="{
+                                                            border:'0',
+                                                            padding:'4px 10px',
+                                                            fontSize:'12px',
+                                                            cursor: isComputingRoadSyntax ? 'not-allowed' : 'pointer',
+                                                            color: roadSyntaxRadiusLabel === 'global' ? '#fff' : '#374151',
+                                                            background: roadSyntaxRadiusLabel === 'global' ? '#2563eb' : '#fff',
+                                                            opacity: isComputingRoadSyntax ? 0.45 : 1
+                                                        }">等时圈内</button>
+                                                    <button
+                                                        type="button"
+                                                        @click="setRoadSyntaxRadiusLabel('r600')"
+                                                        :disabled="isComputingRoadSyntax || !roadSyntaxHasRadiusLabel('r600')"
+                                                        :style="{
+                                                            border:'0',
+                                                            borderLeft:'1px solid #d1d5db',
+                                                            padding:'4px 10px',
+                                                            fontSize:'12px',
+                                                            cursor: (isComputingRoadSyntax || !roadSyntaxHasRadiusLabel('r600')) ? 'not-allowed' : 'pointer',
+                                                            color: roadSyntaxRadiusLabel === 'r600' ? '#fff' : '#374151',
+                                                            background: roadSyntaxRadiusLabel === 'r600' ? '#2563eb' : '#fff',
+                                                            opacity: (isComputingRoadSyntax || !roadSyntaxHasRadiusLabel('r600')) ? 0.45 : 1
+                                                        }">600m</button>
+                                                    <button
+                                                        type="button"
+                                                        @click="setRoadSyntaxRadiusLabel('r800')"
+                                                        :disabled="isComputingRoadSyntax || !roadSyntaxHasRadiusLabel('r800')"
+                                                        :style="{
+                                                            border:'0',
+                                                            borderLeft:'1px solid #d1d5db',
+                                                            padding:'4px 10px',
+                                                            fontSize:'12px',
+                                                            cursor: (isComputingRoadSyntax || !roadSyntaxHasRadiusLabel('r800')) ? 'not-allowed' : 'pointer',
+                                                            color: roadSyntaxRadiusLabel === 'r800' ? '#fff' : '#374151',
+                                                            background: roadSyntaxRadiusLabel === 'r800' ? '#2563eb' : '#fff',
+                                                            opacity: (isComputingRoadSyntax || !roadSyntaxHasRadiusLabel('r800')) ? 0.45 : 1
+                                                        }">800m</button>
+                                                </div>
                                             </label>
                                             <label v-if="roadSyntaxSupportsSkeleton(roadSyntaxMetric)" class="h3-check-chip h3-check-chip-compact">
                                                 <input type="checkbox"
@@ -920,12 +960,14 @@
                                         class="status-text"
                                         style="margin-top:10px; display:flex; align-items:center; gap:8px; justify-content:flex-start;">
                                         <span>{% raw %}{{ roadSyntaxStatus }}{% endraw %}</span>
-                                        <button type="button"
-                                            style="border:1px solid #d9dee7; background:#fff; color:#4b5563; border-radius:999px; padding:2px 8px; font-size:11px; cursor:pointer;"
-                                            @click="copyRoadSyntaxStatus">
-                                            复制状态
-                                        </button>
-                                        <span style="font-size:11px; color:#6b7280;">{% raw %}{{ roadSyntaxStatusCopyHint }}{% endraw %}</span>
+                                        <span v-if="isComputingRoadSyntax && Number(roadSyntaxProgressElapsedSec || 0) > 0"
+                                            class="count-badge">
+                                            {% raw %}{{ `计时 ${Math.floor(Number(roadSyntaxProgressElapsedSec || 0))}s` }}{% endraw %}
+                                        </span>
+                                        <span v-if="isComputingRoadSyntax && Number(roadSyntaxProgressStep || 0) > 0 && Number(roadSyntaxProgressTotal || 0) > 0"
+                                            class="count-badge">
+                                            {% raw %}{{ `进度 ${roadSyntaxProgressStep}/${roadSyntaxProgressTotal}` }}{% endraw %}
+                                        </span>
                                     </div>
                                 </div>
 
@@ -1212,7 +1254,7 @@
                     step3NavItems: [
                         { id: 'poi', label: 'POI', title: 'POI 点数据分析' },
                         { id: 'h3', label: '网格', title: '网格分析' },
-                        { id: 'syntax', label: '路网', title: '空间句法路网分析' }
+                        { id: 'syntax', label: '路网', title: '路网分析' }
                     ],
                     activeStep3Panel: 'poi',
                     dragIndex: null,
@@ -1225,6 +1267,8 @@
                     roadSyntaxModulesReady: ROAD_SYNTAX_MODULES_READY,
                     roadSyntaxModuleMissing: ROAD_SYNTAX_MODULE_MISSING.slice(),
                     ...buildRoadSyntaxInitialState(),
+                    cityBoundaryCacheCityName: '长沙市',
+                    cityBoundaryCacheRing: [],
                     fetchSubtypeHitMap: {},
                     fetchSubtypeProgress: {
                         categoryId: '',
@@ -1404,6 +1448,9 @@
                     immediate: true
                 });
                 this.roadSyntaxDetachMapListeners();
+                if (typeof this.cancelRoadSyntaxRequest === 'function') {
+                    this.cancelRoadSyntaxRequest('before_unmount');
+                }
                 this.invalidateRoadSyntaxCache('unmount', { resetData: true });
                 if (this.h3ToastTimer) {
                     clearTimeout(this.h3ToastTimer);
@@ -1438,24 +1485,11 @@
                         this.restoreH3GridDisplayOnEnter();
                     }
                 },
-                transportMode(newMode, oldMode) {
-                    if (!oldMode || newMode === oldMode) return;
-                    if (this.roadSyntaxMode === oldMode || !this.roadSyntaxSummary) {
-                        this.roadSyntaxMode = newMode || 'walking';
-                    }
-                    const hasCache = this.roadSyntaxHasCache();
-                    if (this.roadSyntaxSummary || hasCache) {
-                        this.resetRoadSyntaxState();
-                        this.roadSyntaxStatus = '交通方式已切换，请重新计算路网指标';
-                    }
-                },
-                roadSyntaxMode(newMode, oldMode) {
-                    if (!oldMode || newMode === oldMode) return;
-                    const hasCache = this.roadSyntaxHasCache();
-                    if (this.roadSyntaxSummary || hasCache) {
-                        this.resetRoadSyntaxState();
-                        this.roadSyntaxStatus = '路网交通模式已变更，请重新计算路网指标';
-                    }
+                roadSyntaxGraphModel(newModel, oldModel) {
+                    const nextModel = String(newModel || '').trim().toLowerCase();
+                    const prevModel = String(oldModel || '').trim().toLowerCase();
+                    if (!prevModel || nextModel === prevModel) return;
+                    this.roadSyntaxSetStatus(`图模型已切换为${this.roadSyntaxGraphModelLabel(nextModel)}，请重新计算路网指标`);
                 },
             },
             methods: {
@@ -4934,7 +4968,6 @@
                     this.errorMessage = '';
                     this.fetchProgress = 0;
                     this.poiStatus = '';
-                    this.roadSyntaxMode = this.transportMode || 'walking';
                     this.resetRoadSyntaxState();
 
                     try {
@@ -4964,6 +4997,72 @@
                     } catch (e) {
                         console.error(e);
                         this.errorMessage = "计算失败: " + e.message;
+                    } finally {
+                        this.isCalculating = false;
+                    }
+                },
+                async startCityScopeAnalysis(cityName = '长沙市') {
+                    if (this.isCalculating) return;
+                    if (!this.mapCore || !this.mapCore.map) {
+                        this.errorMessage = '地图尚未初始化，请稍后重试';
+                        return;
+                    }
+                    this.isCalculating = true;
+                    this.errorMessage = '';
+                    this.fetchProgress = 0;
+                    this.poiStatus = '';
+                    this.resetRoadSyntaxState();
+
+                    try {
+                        const targetCity = String(cityName || '长沙市').trim() || '长沙市';
+                        const largestRing = await this.loadCityBoundaryRing(targetCity);
+
+                        this.clearH3Grid();
+                        this.lastIsochroneGeoJSON = {
+                            type: 'Feature',
+                            properties: {
+                                mode: 'city_boundary',
+                                city: targetCity,
+                            },
+                            geometry: {
+                                type: 'Polygon',
+                                coordinates: [largestRing],
+                            },
+                        };
+                        this.mapCore.clearBoundaryPolygons();
+                        this.mapCore.setCustomPolygons([largestRing]);
+
+                        let minLng = Infinity;
+                        let maxLng = -Infinity;
+                        let minLat = Infinity;
+                        let maxLat = -Infinity;
+                        largestRing.forEach((pt) => {
+                            if (!Array.isArray(pt) || pt.length < 2) return;
+                            const lng = Number(pt[0]);
+                            const lat = Number(pt[1]);
+                            if (!Number.isFinite(lng) || !Number.isFinite(lat)) return;
+                            if (lng < minLng) minLng = lng;
+                            if (lng > maxLng) maxLng = lng;
+                            if (lat < minLat) minLat = lat;
+                            if (lat > maxLat) maxLat = lat;
+                        });
+                        const centerLng = Number.isFinite(minLng) && Number.isFinite(maxLng) ? (minLng + maxLng) / 2 : NaN;
+                        const centerLat = Number.isFinite(minLat) && Number.isFinite(maxLat) ? (minLat + maxLat) / 2 : NaN;
+                        if (Number.isFinite(centerLng) && Number.isFinite(centerLat)) {
+                            const centerPoint = [centerLng, centerLat];
+                            this.selectedPoint = { lng: centerLng, lat: centerLat };
+                            if (this.mapCore.map && typeof this.mapCore.map.setCenter === 'function') {
+                                this.mapCore.map.setCenter(centerPoint);
+                            }
+                            this.mapCore.center = { lng: centerLng, lat: centerLat };
+                        }
+
+                        this.step = 2;
+                        this.activeStep3Panel = 'poi';
+                        this.poiStatus = `${targetCity}行政边界已加载，可直接抓取POI和计算路网句法`;
+                    } catch (e) {
+                        console.error(e);
+                        this.errorMessage = '城市范围生成失败: ' + (e && e.message ? e.message : String(e));
                     } finally {
                         this.isCalculating = false;
                     }
@@ -5363,13 +5462,6 @@
                         indexSet,
                     };
                 },
-                roadSyntaxHasCache() {
-                    if (Array.isArray(this.roadSyntaxPolylines) && this.roadSyntaxPolylines.length) return true;
-                    const pool = this.roadSyntaxLayerPool || {};
-                    if (Object.keys(pool).length > 0) return true;
-                    const styleCache = this.roadSyntaxLayerStyleCache || {};
-                    return Object.keys(styleCache).length > 0;
-                },
                 roadSyntaxGetLayer(layerKey = '') {
                     const pool = this.roadSyntaxLayerPool || {};
                     const key = String(layerKey || '');
@@ -5377,6 +5469,105 @@
                 },
                 roadSyntaxSetStatus(text = '') {
                     this.roadSyntaxStatus = String(text || '');
+                },
+                cancelRoadSyntaxRequest(reason = '') {
+                    const controller = this.roadSyntaxFetchAbortController;
+                    if (!controller) return false;
+                    try {
+                        controller.abort();
+                    } catch (_) { }
+                    this.roadSyntaxFetchAbortController = null;
+                    if (reason) {
+                        console.info('[road-syntax] request aborted', { reason: String(reason || '') });
+                    }
+                    return true;
+                },
+                roadSyntaxCreateRunId() {
+                    const rand = Math.random().toString(36).slice(2, 10);
+                    return `rs_${Date.now()}_${rand}`;
+                },
+                roadSyntaxStopProgressTracking() {
+                    if (this.roadSyntaxProgressPollTimer) {
+                        window.clearInterval(this.roadSyntaxProgressPollTimer);
+                        this.roadSyntaxProgressPollTimer = null;
+                    }
+                    if (this.roadSyntaxProgressTickTimer) {
+                        window.clearInterval(this.roadSyntaxProgressTickTimer);
+                        this.roadSyntaxProgressTickTimer = null;
+                    }
+                    this.roadSyntaxProgressPolling = false;
+                },
+                roadSyntaxResetProgressState() {
+                    this.roadSyntaxStopProgressTracking();
+                    this.roadSyntaxProgressRunId = '';
+                    this.roadSyntaxProgressStage = '';
+                    this.roadSyntaxProgressMessage = '';
+                    this.roadSyntaxProgressStep = 0;
+                    this.roadSyntaxProgressTotal = 0;
+                    this.roadSyntaxProgressElapsedSec = 0;
+                    this.roadSyntaxProgressStartedAtMs = 0;
+                },
+                async roadSyntaxPollProgressOnce(requestToken = null) {
+                    const runId = String(this.roadSyntaxProgressRunId || '').trim();
+                    if (!runId) return;
+                    if (this.roadSyntaxProgressPolling) return;
+                    if (requestToken !== null && requestToken !== this.roadSyntaxRequestToken) return;
+                    this.roadSyntaxProgressPolling = true;
+                    try {
+                        const resp = await fetch(`/api/v1/analysis/road-syntax/progress?run_id=${encodeURIComponent(runId)}`, {
+                            cache: 'no-store',
+                        });
+                        if (!resp.ok) return;
+                        const data = await resp.json();
+                        const stage = String(data && data.stage || '');
+                        const message = String(data && data.message || '');
+                        const status = String(data && data.status || 'running');
+                        const step = Number(data && data.step);
+                        const total = Number(data && data.total);
+                        const elapsedSec = Number(data && data.elapsed_sec);
+                        this.roadSyntaxProgressStage = stage;
+                        this.roadSyntaxProgressMessage = message;
+                        this.roadSyntaxProgressStep = Number.isFinite(step) ? Math.max(0, Math.floor(step)) : 0;
+                        this.roadSyntaxProgressTotal = Number.isFinite(total) ? Math.max(0, Math.floor(total)) : 0;
+                        if (Number.isFinite(elapsedSec) && elapsedSec >= 0) {
+                            this.roadSyntaxProgressElapsedSec = elapsedSec;
+                        }
+                        if (message) {
+                            const showStep = this.roadSyntaxProgressStep > 0 && this.roadSyntaxProgressTotal > 0;
+                            const withStep = showStep ? `进度 ${this.roadSyntaxProgressStep}/${this.roadSyntaxProgressTotal}：${message}` : message;
+                            this.roadSyntaxSetStatus(withStep);
+                        }
+                        if (status !== 'running') {
+                            this.roadSyntaxStopProgressTracking();
+                        }
+                    } catch (_) {
+                    } finally {
+                        this.roadSyntaxProgressPolling = false;
+                    }
+                },
+                roadSyntaxStartProgressTracking(runId, requestToken = null, initialMessage = '已提交计算请求') {
+                    this.roadSyntaxStopProgressTracking();
+                    this.roadSyntaxProgressRunId = String(runId || '').trim();
+                    this.roadSyntaxProgressStage = 'queued';
+                    this.roadSyntaxProgressMessage = String(initialMessage || '');
+                    this.roadSyntaxProgressStep = 0;
+                    this.roadSyntaxProgressTotal = 9;
+                    this.roadSyntaxProgressStartedAtMs = Date.now();
+                    this.roadSyntaxProgressElapsedSec = 0;
+                    if (initialMessage) {
+                        this.roadSyntaxSetStatus(initialMessage);
+                    }
+                    if (!this.roadSyntaxProgressRunId) return;
+                    this.roadSyntaxProgressTickTimer = window.setInterval(() => {
+                        if (!this.isComputingRoadSyntax) return;
+                        if (!this.roadSyntaxProgressStartedAtMs) return;
+                        const sec = Math.max(0, Math.floor((Date.now() - this.roadSyntaxProgressStartedAtMs) / 1000));
+                        this.roadSyntaxProgressElapsedSec = sec;
+                    }, 1000);
+                    this.roadSyntaxProgressPollTimer = window.setInterval(() => {
+                        this.roadSyntaxPollProgressOnce(requestToken);
+                    }, 1000);
+                    this.roadSyntaxPollProgressOnce(requestToken);
                 },
                 roadSyntaxUseLegacyPoolStatus() {
                     return false;
@@ -5487,12 +5678,12 @@
                     this.disposeRoadSyntaxScatterChart();
                     this.roadSyntaxWebglPayload = null;
                     this.roadSyntaxWebglStatus = '';
+                    this.roadSyntaxWebglRadiusFilterCache = null;
                     if (typeof this.clearRoadSyntaxArcgisWebgl === 'function') {
                         this.clearRoadSyntaxArcgisWebgl({ dispose: reason === 'unmount' });
                     }
                     if (resetData) {
                         this.roadSyntaxStatus = '';
-                        this.roadSyntaxStatusCopyHint = '';
                         this.roadSyntaxSummary = null;
                         this.roadSyntaxRoadFeatures = [];
                         this.roadSyntaxNodes = [];
@@ -5521,6 +5712,7 @@
                 resetRoadSyntaxState() {
                     this.roadSyntaxRequestToken += 1;
                     this.isComputingRoadSyntax = false;
+                    this.roadSyntaxResetProgressState();
                     this.invalidateRoadSyntaxCache('reset-state', { resetData: true, resetPerf: true });
                 },
                 clearRoadSyntaxOverlays() {
@@ -5574,7 +5766,7 @@
                     }
                     if (this.roadSyntaxStrictWebglOnly) {
                         this.roadSyntaxDisplaySuspended = false;
-                        this.roadSyntaxSetStatus('ArcGIS-WebGL 数据未就绪（已禁用旧版回退）');
+                        this.roadSyntaxSetStatus(this.buildRoadSyntaxWebglUnavailableMessage(this.roadSyntaxWebglPayload));
                         return;
                     }
                     this._roadSyntaxPinnedAttachKey = '';
@@ -5792,6 +5984,9 @@
                         this.cancelRoadSyntaxNodeBuild();
                         this.setRoadSyntaxNodeMarkersVisible(false);
                         this.disposeRoadSyntaxScatterChart();
+                        if (this.mapCore && typeof this.mapCore.setRadius === 'function') {
+                            this.mapCore.setRadius(0);
+                        }
                         return;
                     }
                     if (!this.isRoadSyntaxMetricReady(value)) {
@@ -5813,7 +6008,10 @@
                     }
                     if (!this.roadSyntaxMetricUsesRadius(value)) {
                         this.roadSyntaxRadiusLabel = 'global';
+                    } else if (!this.roadSyntaxHasRadiusLabel(this.roadSyntaxRadiusLabel)) {
+                        this.roadSyntaxRadiusLabel = 'global';
                     }
+                    this.roadSyntaxApplyRadiusCircle(value);
                     if (previousTab === value && previousMetric === this.roadSyntaxMetric) {
                         return;
                     }
@@ -5873,9 +6071,27 @@
                     } else if (metric === 'depth') {
                         value = Number(summary.avg_depth);
                     } else if (metric === 'choice') {
-                        value = Number(summary.avg_choice_global);
+                        const radiusLabel = this.roadSyntaxNormalizeRadiusLabel(this.roadSyntaxRadiusLabel, metric);
+                        const byRadius = (summary.avg_choice_by_radius && typeof summary.avg_choice_by_radius === 'object')
+                            ? summary.avg_choice_by_radius
+                            : {};
+                        value = radiusLabel === 'global'
+                            ? Number(summary.avg_choice_global)
+                            : Number(byRadius[radiusLabel]);
+                        if (!Number.isFinite(value)) {
+                            value = Number(summary.avg_choice_global);
+                        }
                     } else if (metric === 'integration') {
-                        value = Number(summary.avg_integration_global);
+                        const radiusLabel = this.roadSyntaxNormalizeRadiusLabel(this.roadSyntaxRadiusLabel, metric);
+                        const byRadius = (summary.avg_integration_by_radius && typeof summary.avg_integration_by_radius === 'object')
+                            ? summary.avg_integration_by_radius
+                            : {};
+                        value = radiusLabel === 'global'
+                            ? Number(summary.avg_integration_global)
+                            : Number(byRadius[radiusLabel]);
+                        if (!Number.isFinite(value)) {
+                            value = Number(summary.avg_integration_global);
+                        }
                     } else if (metric === 'intelligibility') {
                         value = Number(summary.avg_intelligibility);
                     }
@@ -5884,33 +6100,195 @@
                     if (metric === 'intelligibility') return value.toFixed(4);
                     return value.toFixed(6);
                 },
-                async copyRoadSyntaxStatus() {
-                    const text = String(this.roadSyntaxStatus || '').trim();
-                    if (!text) return;
-                    try {
-                        await navigator.clipboard.writeText(text);
-                        this.roadSyntaxStatusCopyHint = '已复制';
-                    } catch (_) {
-                        this.roadSyntaxStatusCopyHint = '复制失败';
-                    }
-                    if (this._syntaxCopyHintTimer) {
-                        window.clearTimeout(this._syntaxCopyHintTimer);
-                    }
-                    this._syntaxCopyHintTimer = window.setTimeout(() => {
-                        this.roadSyntaxStatusCopyHint = '';
-                    }, 1400);
-                },
                 roadSyntaxRadiusOptions() {
-                    const labels = (this.roadSyntaxSummary && Array.isArray(this.roadSyntaxSummary.radius_labels))
+                    const labelsRaw = (this.roadSyntaxSummary && Array.isArray(this.roadSyntaxSummary.radius_labels))
                         ? this.roadSyntaxSummary.radius_labels
                         : [];
-                    const options = labels.map((label) => {
-                        const radiusNum = Number(String(label || '').replace(/^r/i, ''));
-                        const radiusText = Number.isFinite(radiusNum) && radiusNum > 0 ? `${radiusNum}m` : String(label || '');
-                        return { value: label, label: `局部 ${radiusText}` };
+                    const labels = labelsRaw.map((item) => String(item || '').trim().toLowerCase());
+                    const out = [{ value: 'global', label: '等时圈内' }];
+                    if (labels.includes('r600')) {
+                        out.push({ value: 'r600', label: '600m' });
+                    }
+                    if (labels.includes('r800')) {
+                        out.push({ value: 'r800', label: '800m' });
+                    }
+                    return out;
+                },
+                roadSyntaxHasRadiusLabel(radiusLabel) {
+                    const target = String(radiusLabel || '').trim().toLowerCase();
+                    if (!target) return false;
+                    return this.roadSyntaxRadiusOptions().some((opt) => String(opt.value) === target);
+                },
+                roadSyntaxNormalizeRadiusLabel(radiusLabel, metricValue = null) {
+                    const metric = metricValue || this.resolveRoadSyntaxActiveMetric();
+                    const target = String(radiusLabel || 'global').trim().toLowerCase();
+                    if (this.roadSyntaxMetricUsesRadius(metric) && this.roadSyntaxHasRadiusLabel(target)) {
+                        return target;
+                    }
+                    return 'global';
+                },
+                roadSyntaxRadiusMeters(radiusLabel = null, metricValue = null) {
+                    const label = this.roadSyntaxNormalizeRadiusLabel(
+                        radiusLabel == null ? this.roadSyntaxRadiusLabel : radiusLabel,
+                        metricValue
+                    );
+                    if (label === 'r600') return 600;
+                    if (label === 'r800') return 800;
+                    return 0;
+                },
+                roadSyntaxApplyRadiusCircle(metricValue = null) {
+                    const metric = metricValue || this.resolveRoadSyntaxActiveMetric();
+                    let radiusMeters = 0;
+                    if (this.roadSyntaxMetricUsesRadius(metric)) {
+                        radiusMeters = this.roadSyntaxRadiusMeters(this.roadSyntaxRadiusLabel, metric);
+                    }
+                    const centerReady = !!(
+                        this.selectedPoint
+                        && Number.isFinite(Number(this.selectedPoint.lng))
+                        && Number.isFinite(Number(this.selectedPoint.lat))
+                    );
+                    if (this.mapCore && typeof this.mapCore.setRadius === 'function') {
+                        this.mapCore.setRadius((radiusMeters > 0 && centerReady) ? radiusMeters : 0);
+                    }
+                },
+                setRoadSyntaxRadiusLabel(radiusLabel) {
+                    const metric = this.resolveRoadSyntaxActiveMetric();
+                    if (!this.roadSyntaxMetricUsesRadius(metric)) return;
+                    const nextLabel = this.roadSyntaxNormalizeRadiusLabel(radiusLabel, metric);
+                    if (!this.roadSyntaxHasRadiusLabel(nextLabel)) return;
+                    if (nextLabel === String(this.roadSyntaxRadiusLabel || 'global')) {
+                        this.roadSyntaxApplyRadiusCircle(metric);
+                        return;
+                    }
+                    this.roadSyntaxRadiusLabel = nextLabel;
+                    this.roadSyntaxApplyRadiusCircle(metric);
+                    this.refreshRoadSyntaxOverlay();
+                },
+                normalizeRoadSyntaxGraphModel(model = null) {
+                    const raw = String(
+                        model == null
+                            ? this.roadSyntaxGraphModel
+                            : model
+                    ).trim().toLowerCase();
+                    return raw === 'axial' ? 'axial' : 'segment';
+                },
+                roadSyntaxGraphModelLabel(model = null) {
+                    const normalized = this.normalizeRoadSyntaxGraphModel(model);
+                    return normalized === 'axial' ? '轴线图' : '线段图';
+                },
+                async fetchRoadSyntaxApi(payload, options = {}) {
+                    const signal = options && options.signal ? options.signal : undefined;
+                    const res = await fetch('/api/v1/analysis/road-syntax', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload),
+                        signal,
                     });
-                    options.push({ value: 'global', label: '全局 (Rn)' });
-                    return options;
+                    if (!res.ok) {
+                        let detail = '';
+                        try {
+                            const body = await res.json();
+                            if (body && typeof body === 'object') {
+                                if (typeof body.detail === 'string' && body.detail.trim()) {
+                                    detail = body.detail.trim();
+                                } else {
+                                    detail = JSON.stringify(body);
+                                }
+                            }
+                        } catch (_) {
+                            try {
+                                detail = await res.text();
+                            } catch (_) { }
+                        }
+                        throw new Error(detail || '路网分析失败');
+                    }
+                    return await res.json();
+                },
+                async loadCityBoundaryRing(cityName = '长沙市') {
+                    const targetCity = String(cityName || '长沙市').trim() || '长沙市';
+                    const cached = Array.isArray(this.cityBoundaryCacheRing) ? this.cityBoundaryCacheRing : [];
+                    if (targetCity === this.cityBoundaryCacheCityName && cached.length >= 4) {
+                        return cached.map((pt) => [pt[0], pt[1]]);
+                    }
+                    const storageKey = `road_syntax_city_boundary_${targetCity}`;
+                    const storageSourceKey = `${storageKey}_source`;
+                    const storageSourceTag = 'local_geojson_v1';
+                    try {
+                        const sourceTag = window.localStorage ? window.localStorage.getItem(storageSourceKey) : '';
+                        const rawCached = (window.localStorage && sourceTag === storageSourceTag) ? window.localStorage.getItem(storageKey) : '';
+                        if (sourceTag === storageSourceTag && rawCached) {
+                            const parsed = JSON.parse(rawCached);
+                            const restored = Array.isArray(parsed)
+                                ? parsed
+                                    .map((pt) => {
+                                        if (!Array.isArray(pt) || pt.length < 2) return null;
+                                        const lng = Number(pt[0]);
+                                        const lat = Number(pt[1]);
+                                        if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
+                                        return [lng, lat];
+                                    })
+                                    .filter((pt) => Array.isArray(pt) && pt.length >= 2)
+                                : [];
+                            if (restored.length >= 4) {
+                                this.cityBoundaryCacheCityName = targetCity;
+                                this.cityBoundaryCacheRing = restored.map((pt) => [pt[0], pt[1]]);
+                                return this.cityBoundaryCacheRing.map((pt) => [pt[0], pt[1]]);
+                            }
+                        }
+                    } catch (_) { }
+                    const normalizeRing = (path) => {
+                        const ring = (Array.isArray(path) ? path : [])
+                            .map((pt) => {
+                                if (!Array.isArray(pt) || pt.length < 2) return null;
+                                const lng = Number(pt[0]);
+                                const lat = Number(pt[1]);
+                                if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
+                                return [lng, lat];
+                            })
+                            .filter((pt) => Array.isArray(pt) && pt.length >= 2);
+                        if (ring.length < 3) return [];
+                        const first = ring[0];
+                        const last = ring[ring.length - 1];
+                        if (Math.abs(first[0] - last[0]) > 1e-9 || Math.abs(first[1] - last[1]) > 1e-9) {
+                            ring.push([first[0], first[1]]);
+                        }
+                        return ring;
+                    };
+                    const resp = await fetch(`/api/v1/analysis/city-boundary?city=${encodeURIComponent(targetCity)}`);
+                    if (!resp.ok) {
+                        let detail = '';
+                        try {
+                            detail = await resp.text();
+                        } catch (_) { }
+                        throw new Error(detail || `边界接口失败: HTTP ${resp.status}`);
+                    }
+                    const payload = await resp.json();
+                    const largestRing = normalizeRing(payload && payload.ring);
+                    if (largestRing.length < 4) {
+                        throw new Error('本地边界返回无效 ring');
+                    }
+                    this.cityBoundaryCacheCityName = targetCity;
+                    this.cityBoundaryCacheRing = largestRing.map((pt) => [pt[0], pt[1]]);
+                    try {
+                        if (window.localStorage) {
+                            window.localStorage.setItem(storageKey, JSON.stringify(this.cityBoundaryCacheRing));
+                            window.localStorage.setItem(storageSourceKey, storageSourceTag);
+                        }
+                    } catch (_) { }
+                    return this.cityBoundaryCacheRing.map((pt) => [pt[0], pt[1]]);
+                },
+                async applyRoadSyntaxDataset(data, preferredMetricTab = 'connectivity') {
+                    this.invalidateRoadSyntaxCache('switch-road-syntax-scope', { resetData: false, resetPerf: false });
+                    this.applyRoadSyntaxResponseData(data, preferredMetricTab);
+                    if (!this.roadSyntaxSummary) return;
+                    const targetMetric = this.roadSyntaxLastMetricTab || this.roadSyntaxMetric || this.roadSyntaxDefaultMetric();
+                    this.setRoadSyntaxMainTab(targetMetric, {
+                        refresh: false,
+                        syncMetric: true,
+                    });
+                    if (this.activeStep3Panel === 'syntax') {
+                        await this.renderRoadSyntaxByMetric(targetMetric);
+                    }
                 },
                 resolveRoadSyntaxRequestMetric() {
                     return this.roadSyntaxMetric === 'choice' ? 'choice' : 'integration';
@@ -6264,9 +6642,10 @@
                 },
                 resolveRoadSyntaxMetricField(metricValue = null, radiusLabelValue = null) {
                     const metric = metricValue || this.resolveRoadSyntaxActiveMetric();
-                    const radiusLabel = radiusLabelValue || (this.roadSyntaxMetricUsesRadius(metric)
-                        ? (this.roadSyntaxRadiusLabel || 'global')
-                        : 'global');
+                    const radiusLabel = this.roadSyntaxNormalizeRadiusLabel(
+                        radiusLabelValue == null ? this.roadSyntaxRadiusLabel : radiusLabelValue,
+                        metric
+                    );
                     if (metric === 'connectivity') {
                         return 'connectivity_score';
                     }
@@ -6292,9 +6671,10 @@
                     const skeletonOnly = options && Object.prototype.hasOwnProperty.call(options, 'skeletonOnly')
                         ? !!options.skeletonOnly
                         : !!this.roadSyntaxSkeletonOnly;
-                    const radiusLabel = options && Object.prototype.hasOwnProperty.call(options, 'radiusLabel')
+                    const radiusLabelRaw = options && Object.prototype.hasOwnProperty.call(options, 'radiusLabel')
                         ? String(options.radiusLabel || 'global')
                         : (this.roadSyntaxMetricUsesRadius(metric) ? String(this.roadSyntaxRadiusLabel || 'global') : 'global');
+                    const radiusLabel = this.roadSyntaxNormalizeRadiusLabel(radiusLabelRaw, metric);
                     const supportsSkeleton = typeof this.roadSyntaxSupportsSkeleton === 'function'
                         ? !!this.roadSyntaxSupportsSkeleton(metric)
                         : (metric === 'choice' || metric === 'integration');
@@ -6310,13 +6690,15 @@
                     return { metric, radiusLabel, skeletonOnly };
                 },
                 roadSyntaxLayerKeysForPrebuild() {
-                    const radiusLabel = String(this.roadSyntaxRadiusLabel || 'global');
+                    const radiusLabels = this.roadSyntaxRadiusOptions().map((opt) => String(opt.value || 'global'));
+                    const choiceKeys = radiusLabels.map((radiusLabel) => this.resolveRoadSyntaxLayerKey('choice', { radiusLabel, skeletonOnly: false }));
+                    const integrationKeys = radiusLabels.map((radiusLabel) => this.resolveRoadSyntaxLayerKey('integration', { radiusLabel, skeletonOnly: false }));
                     return [
                         this.resolveRoadSyntaxLayerKey('connectivity', { radiusLabel: 'global', skeletonOnly: false }),
                         this.resolveRoadSyntaxLayerKey('control', { radiusLabel: 'global', skeletonOnly: false }),
                         this.resolveRoadSyntaxLayerKey('depth', { radiusLabel: 'global', skeletonOnly: false }),
-                        this.resolveRoadSyntaxLayerKey('choice', { radiusLabel, skeletonOnly: false }),
-                        this.resolveRoadSyntaxLayerKey('integration', { radiusLabel, skeletonOnly: false }),
+                        ...choiceKeys,
+                        ...integrationKeys,
                         this.resolveRoadSyntaxLayerKey('intelligibility', { radiusLabel: 'global', skeletonOnly: false }),
                     ];
                 },
@@ -6603,7 +6985,7 @@
                     const targetReady = this.isRoadSyntaxMetricReady(metric, { skeletonOnly: effectiveSkeletonOnly });
                     if (!targetReady) {
                         if (this.roadSyntaxStrictWebglOnly) {
-                            this.roadSyntaxSetStatus('ArcGIS-WebGL 数据未就绪（已禁用旧版回退）');
+                            this.roadSyntaxSetStatus(this.buildRoadSyntaxWebglUnavailableMessage(this.roadSyntaxWebglPayload));
                         } else {
                             const counts = this.roadSyntaxLayerReadyCounts();
                             this.roadSyntaxSetStatus(`目标图层仍在预处理（${counts.ready}/${counts.total || 0}）`);
@@ -6614,6 +6996,7 @@
                 },
                 async renderRoadSyntaxByMetric(metricValue = null) {
                     const activeMetric = metricValue || this.resolveRoadSyntaxActiveMetric();
+                    this.roadSyntaxApplyRadiusCircle(activeMetric);
                     const webglPayloadReady = (
                         this.roadSyntaxUseArcgisWebgl
                         && typeof this.roadSyntaxCanUseArcgisWebglPayload === 'function'
@@ -6657,7 +7040,7 @@
                                 : 'ArcGIS-WebGL 渲染失败（已禁用旧版回退）'
                         );
                     } else {
-                        this.roadSyntaxSetStatus('ArcGIS-WebGL 数据未就绪（已禁用旧版回退）');
+                        this.roadSyntaxSetStatus(this.buildRoadSyntaxWebglUnavailableMessage(this.roadSyntaxWebglPayload));
                     }
                 },
                 resolveRoadSyntaxFallbackField(activeMetric) {
@@ -7258,7 +7641,7 @@
                         }
                         return;
                     }
-                    this.roadSyntaxSetStatus('ArcGIS-WebGL 数据未就绪（已禁用旧版回退）');
+                    this.roadSyntaxSetStatus(this.buildRoadSyntaxWebglUnavailableMessage(this.roadSyntaxWebglPayload));
                 },
                 warmRoadSyntaxLayerPool(activeLayerKey = '') {
                     const state = this.roadSyntaxLayerBuildState || {};
@@ -7444,25 +7827,69 @@
                     this.refreshRoadSyntaxLayerReadyMap();
                     this.roadSyntaxPolylineItems = renderItems;
                 },
-                buildRoadSyntaxRequestPayload(polygon, edgeCap) {
+                buildRoadSyntaxRequestPayload(polygon, edgeCap, runId = null) {
                     const activeMetric = this.resolveRoadSyntaxActiveMetric();
-                    const metricField = this.resolveRoadSyntaxMetricField(activeMetric);
+                    const metricField = this.resolveRoadSyntaxMetricField(activeMetric, this.roadSyntaxRadiusLabel);
                     const useArcgisWebgl = this.roadSyntaxStrictWebglOnly ? true : !!this.roadSyntaxUseArcgisWebgl;
                     const shouldBypassCap = activeMetric === 'control' || activeMetric === 'depth' || activeMetric === 'connectivity' || activeMetric === 'intelligibility';
+                    const localGraphModel = this.normalizeRoadSyntaxGraphModel();
                     return {
+                        run_id: runId ? String(runId) : null,
                         polygon: polygon,
                         coord_type: 'gcj02',
-                        mode: this.roadSyntaxMode || this.transportMode || 'walking',
+                        mode: 'walking',
+                        graph_model: localGraphModel,
+                        highway_filter: 'all',
                         include_geojson: true,
                         max_edge_features: shouldBypassCap ? null : edgeCap,
                         merge_geojson_edges: true,
                         merge_bucket_step: 0.025,
-                        radii_m: [800, 2000],
+                        radii_m: [600, 800],
+                        tulip_bins: 1024,
                         metric: this.resolveRoadSyntaxRequestMetric(),
                         use_arcgis_webgl: useArcgisWebgl,
-                        arcgis_timeout_sec: 20,
+                        arcgis_timeout_sec: 120,
                         arcgis_metric_field: metricField,
                     };
+                },
+                roadSyntaxResponseHasReadyWebgl(data) {
+                    const payload = (data && data.webgl && typeof data.webgl === 'object')
+                        ? data.webgl
+                        : null;
+                    if (typeof this.roadSyntaxCanUseArcgisWebglPayload !== 'function') return false;
+                    return this.roadSyntaxCanUseArcgisWebglPayload(payload);
+                },
+                buildRoadSyntaxWebglUnavailableMessage(data) {
+                    const payload = (data && data.webgl && typeof data.webgl === 'object')
+                        ? data.webgl
+                        : ((data && typeof data === 'object') ? data : null);
+                    if (!payload || typeof payload !== 'object') {
+                        return 'ArcGIS-WebGL 数据未就绪（已禁用旧版回退）: payload_missing';
+                    }
+                    const enabled = !!payload.enabled;
+                    const status = String((payload && payload.status) || '').trim();
+                    const roads = (payload && payload.roads && typeof payload.roads === 'object')
+                        ? payload.roads
+                        : {};
+                    const features = Array.isArray(roads.features) ? roads.features : [];
+                    const featureCount = features.length;
+                    const countRaw = Number(roads.count);
+                    const count = Number.isFinite(countRaw) ? countRaw : features.length;
+                    if (!enabled) {
+                        return status
+                            ? `ArcGIS-WebGL 数据未就绪（已禁用旧版回退）: enabled=false, status=${status}, features=${featureCount}, count=${count}`
+                            : `ArcGIS-WebGL 数据未就绪（已禁用旧版回退）: enabled=false, features=${featureCount}, count=${count}`;
+                    }
+                    if (status && status !== 'ok') {
+                        return `ArcGIS-WebGL 数据未就绪（已禁用旧版回退）: ${status}`;
+                    }
+                    if (featureCount <= 0) {
+                        return `ArcGIS-WebGL 数据未就绪（已禁用旧版回退）: features=0, count=${count}`;
+                    }
+                    if (count <= 0) {
+                        return 'ArcGIS-WebGL 数据未就绪（已禁用旧版回退）: roads=0';
+                    }
+                    return `ArcGIS-WebGL 数据未就绪（已禁用旧版回退）: payload_invalid(status=${status || 'empty'}, features=${featureCount}, count=${count})`;
                 },
                 applyRoadSyntaxResponseData(data, preferredMetricTab = 'connectivity') {
                     this.roadSyntaxRoadFeatures = Array.isArray((data && data.roads && data.roads.features) || [])
@@ -7480,6 +7907,7 @@
                         ? data.webgl
                         : null;
                     this.roadSyntaxWebglStatus = String((this.roadSyntaxWebglPayload && this.roadSyntaxWebglPayload.status) || '');
+                    this.roadSyntaxWebglRadiusFilterCache = null;
                     this.roadSyntaxSkeletonOnly = false;
                     if (!this.roadSyntaxSummary) return;
                     const validMetrics = this.roadSyntaxMetricTabs().map((item) => item.value);
@@ -7490,13 +7918,8 @@
                     this.roadSyntaxMetric = targetMetric;
                     this.roadSyntaxLastMetricTab = targetMetric;
                     const radiusOptions = this.roadSyntaxRadiusOptions();
-                    const candidateRadius = String(this.roadSyntaxSummary.default_radius_label || 'global');
-                    const hasCandidate = radiusOptions.some((opt) => opt.value === candidateRadius);
-                    if (this.roadSyntaxMetricUsesRadius(targetMetric)) {
-                        this.roadSyntaxRadiusLabel = hasCandidate ? candidateRadius : 'global';
-                    } else {
-                        this.roadSyntaxRadiusLabel = 'global';
-                    }
+                    const hasGlobal = radiusOptions.some((opt) => String(opt.value || '') === 'global');
+                    this.roadSyntaxRadiusLabel = hasGlobal ? 'global' : String((radiusOptions[0] && radiusOptions[0].value) || 'global');
                 },
                 buildRoadSyntaxCompletionStatus(poolReady) {
                     if (!this.roadSyntaxSummary) return '完成：未返回有效汇总数据';
@@ -7537,11 +7960,16 @@
                         this.roadSyntaxUseArcgisWebgl = true;
                     }
                     this.isComputingRoadSyntax = true;
-                    this.roadSyntaxStatusCopyHint = '';
-                    this.roadSyntaxSetStatus('正在请求路网并计算空间句法指标...');
+                    const graphModelLabel = this.roadSyntaxGraphModelLabel();
+                    this.roadSyntaxSetStatus(`正在请求路网并计算路网指标（${graphModelLabel}）...`);
                     const requestToken = this.roadSyntaxRequestToken + 1;
                     this.roadSyntaxRequestToken = requestToken;
+                    const runId = this.roadSyntaxCreateRunId();
+                    this.roadSyntaxStartProgressTracking(runId, requestToken, `局部任务已启动（${graphModelLabel}），正在准备路网`);
                     const preferredMetricTab = this.roadSyntaxLastMetricTab || this.roadSyntaxMetric || this.roadSyntaxDefaultMetric();
+                    this.cancelRoadSyntaxRequest('start_new_compute');
+                    const requestAbortController = new AbortController();
+                    this.roadSyntaxFetchAbortController = requestAbortController;
 
                     try {
                         const polygon = this.getIsochronePolygonPoints();
@@ -7555,24 +7983,12 @@
                         this.roadSyntaxDiagnostics = null;
                         this.roadSyntaxLegendModel = null;
                         const edgeCap = this.resolveRoadSyntaxEdgeCap();
-                        const payload = this.buildRoadSyntaxRequestPayload(polygon, edgeCap);
-
-                        const res = await fetch('/api/v1/analysis/road-syntax', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(payload),
-                        });
-                        if (!res.ok) {
-                            let detail = '';
-                            try {
-                                detail = await res.text();
-                            } catch (_) { }
-                            throw new Error(detail || '路网分析失败');
-                        }
-                        const data = await res.json();
+                        const payload = this.buildRoadSyntaxRequestPayload(polygon, edgeCap, runId);
+                        const data = await this.fetchRoadSyntaxApi(payload, { signal: requestAbortController.signal });
                         if (requestToken !== this.roadSyntaxRequestToken) {
                             return;
                         }
+                        this.roadSyntaxRadiusLabel = 'global';
                         this.applyRoadSyntaxResponseData(data, preferredMetricTab);
                         const webglPayloadReady = (
                             this.roadSyntaxUseArcgisWebgl
@@ -7580,7 +7996,7 @@
                             && this.roadSyntaxCanUseArcgisWebglPayload(this.roadSyntaxWebglPayload)
                         );
                         if (!webglPayloadReady) {
-                            throw new Error('ArcGIS-WebGL 数据未就绪（已禁用旧版回退）');
+                            throw new Error(this.buildRoadSyntaxWebglUnavailableMessage(data));
                         }
 
                         let webglRendered = false;
@@ -7619,15 +8035,44 @@
                                 await this.renderRoadSyntaxByMetric(this.roadSyntaxLastMetricTab || this.roadSyntaxMetric || this.roadSyntaxDefaultMetric());
                             }
                         }
-                        this.roadSyntaxSetStatus(this.buildRoadSyntaxCompletionStatus(poolReady));
+                        this.roadSyntaxSetStatus(`局部（当前多边形）${this.buildRoadSyntaxCompletionStatus(poolReady)}`);
                     } catch (e) {
                         if (requestToken !== this.roadSyntaxRequestToken) {
                             return;
                         }
+                        if (e && (e.name === 'AbortError' || String(e.message || '').indexOf('aborted') >= 0)) {
+                            this.roadSyntaxSetStatus('已取消旧请求，正在使用最新参数计算...');
+                            return;
+                        }
                         console.error(e);
-                        this.roadSyntaxSetStatus('失败: ' + (e && e.message ? e.message : String(e)));
+                        const rawMessage = (e && e.message ? e.message : String(e));
+                        const overpassTimeout = (
+                            typeof rawMessage === 'string'
+                            && (
+                                rawMessage.indexOf('Overpass query timeout/error') >= 0
+                                || rawMessage.indexOf('Local Overpass request failed') >= 0
+                            )
+                        );
+                        if (overpassTimeout) {
+                            this.roadSyntaxSetStatus('失败: 路网抓取超时（Overpass 忙），请等几秒再试，或缩小等时圈范围后重试。');
+                            return;
+                        }
+                        if (this.normalizeRoadSyntaxGraphModel() === 'axial') {
+                            const axialMessage = String(rawMessage || '').trim();
+                            if (axialMessage.startsWith('轴线图计算失败')) {
+                                this.roadSyntaxSetStatus(`失败: ${axialMessage}`);
+                            } else {
+                                this.roadSyntaxSetStatus(`失败: 轴线图计算失败：${axialMessage || '请改用线段图或缩小范围后重试。'}`);
+                            }
+                        } else {
+                            this.roadSyntaxSetStatus('失败: ' + rawMessage);
+                        }
                     } finally {
+                        if (this.roadSyntaxFetchAbortController === requestAbortController) {
+                            this.roadSyntaxFetchAbortController = null;
+                        }
                         this.isComputingRoadSyntax = false;
+                        this.roadSyntaxStopProgressTracking();
                     }
                 },
                 renderPois(pois) {

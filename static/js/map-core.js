@@ -466,30 +466,26 @@
         this.basemapMuted = !!muted;
         if (!this.map) return;
 
-        if (this.basemapSource === 'tianditu') {
-            var opacity = this.basemapMuted ? 0.75 : 1;
-            if (this._tdtVecLayer && this._tdtVecLayer.setOpacity) {
-                this._tdtVecLayer.setOpacity(opacity);
-            }
-            if (this._tdtCvaLayer && this._tdtCvaLayer.setOpacity) {
-                this._tdtCvaLayer.setOpacity(opacity);
-            }
-            return;
+        var opacity = this.basemapMuted ? 0 : 1;
+        this._toggleTiandituContainer(false);
+
+        // Do not replace map layer stack in simplify mode.
+        // Replacing layers may drop analysis overlays (e.g. road syntax result lines).
+        if (this._amapTileLayer && this._amapTileLayer.setOpacity) {
+            this._amapTileLayer.setOpacity(opacity);
+        }
+        if (this._osmTileLayer && this._osmTileLayer.setOpacity) {
+            this._osmTileLayer.setOpacity(opacity);
+        }
+        if (this._tdtVecLayer && this._tdtVecLayer.setOpacity) {
+            this._tdtVecLayer.setOpacity(opacity);
+        }
+        if (this._tdtCvaLayer && this._tdtCvaLayer.setOpacity) {
+            this._tdtCvaLayer.setOpacity(opacity);
         }
 
-        if (this.basemapSource === 'osm') {
-            if (this._osmTileLayer && this._osmTileLayer.setOpacity) {
-                this._osmTileLayer.setOpacity(this.basemapMuted ? 0.75 : 1);
-            }
-            return;
-        }
-
-        if (this.basemapSource === 'amap') {
-            if (!this.map.setFeatures) return;
-            this.map.setFeatures(this.basemapMuted
-                ? ['road']
-                : ['bg', 'point', 'road', 'building']);
-            return;
+        if (this.basemapSource === 'amap' && this.map.setFeatures) {
+            this.map.setFeatures(this.basemapMuted ? [] : ['bg', 'point', 'road', 'building']);
         }
     };
 

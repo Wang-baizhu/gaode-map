@@ -2,7 +2,8 @@ import asyncio
 import json
 import logging
 from io import BytesIO
-from typing import Optional, Sequence
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence
 from datetime import datetime
 from urllib.parse import urlencode
 
@@ -10,7 +11,6 @@ from fastapi import APIRouter, HTTPException, Security, Query, status, Response,
 from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 
-from core.config import settings
 from core.config import settings
 # REMOVED: from core.models import (...)
 
@@ -67,6 +67,8 @@ from router.utils.deps import load_map_request, verify_api_key
 
 import os
 import time
+import threading
+import uuid
 from shapely.geometry import mapping
 from shapely.ops import transform
 
@@ -74,6 +76,200 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 templates = Jinja2Templates(directory=settings.templates_dir)
+
+
+ROAD_SYNTAX_PROGRESS_LOCK = threading.Lock()
+ROAD_SYNTAX_PROGRESS: Dict[str, Dict[str, Any]] = {}
+ROAD_SYNTAX_PROGRESS_TTL_SEC = 3600
+
+
+def _cleanup_road_syntax_progress(now_ts: Optional[float] = None) -> None:
+    now_value = float(now_ts if now_ts is not None else time.time())
+    stale_ids: List[str] = []
+    for run_id, item in ROAD_SYNTAX_PROGRESS.items():
+        updated_at = float(item.get("updated_at") or 0.0)
+        if (now_value - updated_at) > float(ROAD_SYNTAX_PROGRESS_TTL_SEC):
+            stale_ids.append(run_id)
+    for run_id in stale_ids:
+        ROAD_SYNTAX_PROGRESS.pop(run_id, None)
+
+
+def _update_road_syntax_progress(
+    run_id: str,
+    *,
+    status: str = "running",
+    stage: str = "",
+    message: str = "",
+    step: Optional[int] = None,
+    total: Optional[int] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    now_ts = float(time.time())
+    run_key = str(run_id or "").strip()
+    if not run_key:
+        run_key = uuid.uuid4().hex
+    with ROAD_SYNTAX_PROGRESS_LOCK:
+        _cleanup_road_syntax_progress(now_ts)
+        existing = ROAD_SYNTAX_PROGRESS.get(run_key) or {}
+        started_at = float(existing.get("started_at") or now_ts)
+        step_value: Optional[int] = None
+        total_value: Optional[int] = None
+        try:
+            if step is not None:
+                step_value = int(step)
+        except (TypeError, ValueError):
+            step_value = None
+        try:
+            if total is not None:
+                total_value = int(total)
+        except (TypeError, ValueError):
+            total_value = None
+        payload = {
+            "run_id": run_key,
+            "status": str(status or "running"),
+            "stage": str(stage or ""),
+            "message": str(message or ""),
+            "step": step_value,
+            "total": total_value,
+            "started_at": started_at,
+            "updated_at": now_ts,
+            "elapsed_sec": round(max(0.0, now_ts - started_at), 1),
+            "extra": dict(extra or {}),
+        }
+        ROAD_SYNTAX_PROGRESS[run_key] = payload
+        return dict(payload)
+
+
+def _get_road_syntax_progress(run_id: str) -> Optional[Dict[str, Any]]:
+    run_key = str(run_id or "").strip()
+    if not run_key:
+        return None
+    now_ts = float(time.time())
+    with ROAD_SYNTAX_PROGRESS_LOCK:
+        _cleanup_road_syntax_progress(now_ts)
+        payload = ROAD_SYNTAX_PROGRESS.get(run_key)
+        if not payload:
+            return None
+        data = dict(payload)
+        started_at = float(data.get("started_at") or now_ts)
+        data["elapsed_sec"] = round(max(0.0, now_ts - started_at), 1)
+        return data
+
+
+def _normalize_boundary_ring(path: Any) -> List[List[float]]:
+    ring: List[List[float]] = []
+    for pt in path if isinstance(path, list) else []:
+        if not isinstance(pt, list) or len(pt) < 2:
+            continue
+        try:
+            lng = float(pt[0])
+            lat = float(pt[1])
+        except (TypeError, ValueError):
+            continue
+        ring.append([lng, lat])
+    if len(ring) < 3:
+        return []
+    first = ring[0]
+    last = ring[-1]
+    if abs(first[0] - last[0]) > 1e-9 or abs(first[1] - last[1]) > 1e-9:
+        ring.append([first[0], first[1]])
+    return ring if len(ring) >= 4 else []
+
+
+def _extract_boundary_rings(geometry: Dict[str, Any]) -> List[List[List[float]]]:
+    if not isinstance(geometry, dict):
+        return []
+    geom_type = str(geometry.get("type") or "")
+    coords = geometry.get("coordinates")
+    rings: List[List[List[float]]] = []
+    if geom_type == "Polygon" and isinstance(coords, list) and coords and isinstance(coords[0], list):
+        ring = _normalize_boundary_ring(coords[0])
+        if ring:
+            rings.append(ring)
+    elif geom_type == "MultiPolygon" and isinstance(coords, list):
+        for polygon in coords:
+            if not isinstance(polygon, list) or not polygon or not isinstance(polygon[0], list):
+                continue
+            ring = _normalize_boundary_ring(polygon[0])
+            if ring:
+                rings.append(ring)
+    return rings
+
+
+def _signed_ring_area(ring: List[List[float]]) -> float:
+    if len(ring) < 4:
+        return 0.0
+    area = 0.0
+    for i in range(len(ring) - 1):
+        a = ring[i]
+        b = ring[i + 1]
+        area += (float(a[0]) * float(b[1])) - (float(b[0]) * float(a[1]))
+    return area / 2.0
+
+
+def _resolve_city_boundary_candidates(city_name: str) -> List[str]:
+    city = (city_name or "").strip().lower()
+    is_changsha = ("长沙" in city_name) or city in {"changsha", "changsha city", "cs"}
+    if is_changsha:
+        return [
+            "changsha_boundary_gcj02.geojson",
+            "changsha_boundary.geojson",
+        ]
+    return []
+
+
+def _load_city_boundary_ring(city_name: str) -> Dict[str, Any]:
+    candidates = _resolve_city_boundary_candidates(city_name)
+    if not candidates:
+        raise HTTPException(status_code=400, detail=f"暂不支持城市边界: {city_name}")
+
+    boundary_dir = Path(settings.city_boundary_dir).expanduser()
+    if not boundary_dir.exists() or not boundary_dir.is_dir():
+        raise HTTPException(status_code=500, detail=f"城市边界目录不存在: {boundary_dir}")
+
+    rings: List[List[List[float]]] = []
+    used_file: Optional[Path] = None
+    tried_paths: List[str] = []
+    for filename in candidates:
+        path = boundary_dir / filename
+        tried_paths.append(str(path))
+        if not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"边界文件读取失败: {path} ({exc})") from exc
+
+        if isinstance(payload, dict) and payload.get("type") == "FeatureCollection":
+            for feature in payload.get("features") or []:
+                if not isinstance(feature, dict):
+                    continue
+                rings.extend(_extract_boundary_rings(feature.get("geometry") or {}))
+        elif isinstance(payload, dict) and payload.get("type") == "Feature":
+            rings.extend(_extract_boundary_rings(payload.get("geometry") or {}))
+        elif isinstance(payload, dict):
+            rings.extend(_extract_boundary_rings(payload))
+
+        if rings:
+            used_file = path
+            break
+
+    if not rings:
+        raise HTTPException(
+            status_code=404,
+            detail=f"未找到可用城市边界文件，请检查: {', '.join(tried_paths)}",
+        )
+
+    largest_ring = sorted(
+        rings,
+        key=lambda ring: (abs(_signed_ring_area(ring)), len(ring)),
+        reverse=True,
+    )[0]
+    return {
+        "city": city_name,
+        "source_file": str(used_file) if used_file else "",
+        "ring": largest_ring,
+    }
 
 # =============================================================================
 # 1. Base / Misc
@@ -343,6 +539,12 @@ async def build_h3_grid(payload: GridRequest):
     return feature_collection
 
 
+@router.get("/api/v1/analysis/city-boundary")
+async def get_city_boundary(city: str = Query("长沙市", description="城市名称")):
+    target_city = (city or "长沙市").strip() or "长沙市"
+    return _load_city_boundary_ring(target_city)
+
+
 @router.post("/api/v1/analysis/h3-metrics", response_model=H3MetricsResponse)
 async def analyze_h3_metrics(payload: H3MetricsRequest):
     poi_payload = [
@@ -405,12 +607,36 @@ async def export_h3_analysis(payload: H3ExportRequest):
 
 @router.post("/api/v1/analysis/road-syntax", response_model=RoadSyntaxResponse)
 async def analyze_road_syntax_api(payload: RoadSyntaxRequest):
+    run_id = str(payload.run_id or "").strip() or uuid.uuid4().hex
+    _update_road_syntax_progress(
+        run_id,
+        status="running",
+        stage="queued",
+        message="已接收请求，等待开始计算",
+        step=0,
+        total=9,
+        extra={},
+    )
+
+    def _progress_callback(snapshot: Dict[str, Any]) -> None:
+        _update_road_syntax_progress(
+            run_id,
+            status="running",
+            stage=str(snapshot.get("stage") or ""),
+            message=str(snapshot.get("message") or ""),
+            step=snapshot.get("step"),
+            total=snapshot.get("total"),
+            extra=snapshot.get("extra") if isinstance(snapshot.get("extra"), dict) else {},
+        )
+
     try:
         result = await asyncio.to_thread(
             analyze_road_syntax,
             polygon=payload.polygon,
             coord_type=payload.coord_type,
             mode=payload.mode,
+            graph_model=payload.graph_model,
+            highway_filter=payload.highway_filter,
             include_geojson=payload.include_geojson,
             max_edge_features=payload.max_edge_features,
             merge_geojson_edges=payload.merge_geojson_edges,
@@ -418,14 +644,40 @@ async def analyze_road_syntax_api(payload: RoadSyntaxRequest):
             radii_m=payload.radii_m,
             metric=payload.metric,
             depthmap_cli_path=payload.depthmap_cli_path,
+            tulip_bins=payload.tulip_bins,
             use_arcgis_webgl=payload.use_arcgis_webgl,
             arcgis_python_path=payload.arcgis_python_path,
             arcgis_timeout_sec=payload.arcgis_timeout_sec,
             arcgis_metric_field=payload.arcgis_metric_field,
+            progress_callback=_progress_callback,
         )
     except RuntimeError as exc:
+        _update_road_syntax_progress(
+            run_id,
+            status="failed",
+            stage="failed",
+            message=str(exc),
+            extra={},
+        )
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    _update_road_syntax_progress(
+        run_id,
+        status="success",
+        stage="completed",
+        message="计算完成",
+        step=9,
+        total=9,
+        extra={},
+    )
     return result
+
+
+@router.get("/api/v1/analysis/road-syntax/progress")
+async def get_road_syntax_progress(run_id: str = Query(..., description="Road syntax run id")):
+    payload = _get_road_syntax_progress(run_id)
+    if not payload:
+        raise HTTPException(status_code=404, detail="run_id 不存在或已过期")
+    return payload
 
 
 @router.post("/api/v1/analysis/pois", response_model=PoiResponse)

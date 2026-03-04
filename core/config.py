@@ -104,6 +104,36 @@ class Settings(BaseSettings):
         validation_alias="OVERPASS_ENDPOINT",
         description="Local Overpass API endpoint",
     )
+    overpass_query_timeout_s: int = Field(
+        60,
+        validation_alias="OVERPASS_QUERY_TIMEOUT_S",
+        description="Timeout passed to Overpass QL [timeout] (seconds)",
+    )
+    overpass_http_timeout_s: int = Field(
+        90,
+        validation_alias="OVERPASS_HTTP_TIMEOUT_S",
+        description="HTTP read timeout for Overpass request (seconds)",
+    )
+    overpass_retry_count: int = Field(
+        1,
+        validation_alias="OVERPASS_RETRY_COUNT",
+        description="Retry times for Overpass timeout/runtime errors",
+    )
+    overpass_cache_ttl_s: int = Field(
+        45,
+        validation_alias="OVERPASS_CACHE_TTL_S",
+        description="In-process cache TTL for Overpass responses (seconds)",
+    )
+    overpass_cache_max_entries: int = Field(
+        16,
+        validation_alias="OVERPASS_CACHE_MAX_ENTRIES",
+        description="Maximum in-process cached Overpass query entries",
+    )
+    city_boundary_dir: str = Field(
+        "/mapdata/boundaries",
+        validation_alias="CITY_BOUNDARY_DIR",
+        description="Directory containing local city boundary GeoJSON files",
+    )
 
     # ArcGIS HTTP bridge config
     arcgis_bridge_enabled: bool = Field(
@@ -152,6 +182,11 @@ class Settings(BaseSettings):
         1024,
         validation_alias="DEPTHMAPX_TULIP_BINS",
         description="Tulip bins for segment tulip analysis (4-1024)",
+    )
+    road_syntax_global_edge_cap: int = Field(
+        22000,
+        validation_alias="ROAD_SYNTAX_GLOBAL_EDGE_CAP",
+        description="Max input edges for global road-syntax major profile",
     )
 
 
