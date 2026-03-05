@@ -1,5 +1,6 @@
 import csv
 import bisect
+import json
 import logging
 import math
 import re
@@ -12,7 +13,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 
 import requests
-from shapely.geometry import LineString, Polygon
+from shapely.geometry import GeometryCollection, LineString, MultiLineString, Polygon
 from shapely.prepared import prep
 
 from core.config import settings
@@ -127,6 +128,59 @@ def _haversine_m(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
     a = math.sin(dphi / 2.0) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2.0) ** 2
     c = 2.0 * math.atan2(math.sqrt(a), math.sqrt(max(1e-12, 1.0 - a)))
     return r * c
+
+
+def _collect_linestring_geoms(geom: Any, out: List[LineString]) -> None:
+    if geom is None:
+        return
+    if isinstance(geom, LineString):
+        if len(list(geom.coords)) >= 2:
+            out.append(geom)
+        return
+    if isinstance(geom, MultiLineString):
+        for part in geom.geoms:
+            _collect_linestring_geoms(part, out)
+        return
+    if isinstance(geom, GeometryCollection):
+        for part in geom.geoms:
+            _collect_linestring_geoms(part, out)
+        return
+
+
+def _clip_line_to_polygon_segment(
+    line: LineString,
+    polygon: Polygon,
+) -> Optional[Tuple[float, float, float, float]]:
+    if line.is_empty or polygon.is_empty:
+        return None
+    try:
+        clipped = line.intersection(polygon)
+    except Exception:  # noqa: BLE001
+        return None
+    if clipped.is_empty:
+        return None
+    parts: List[LineString] = []
+    _collect_linestring_geoms(clipped, parts)
+    if not parts:
+        return None
+    best = max(parts, key=lambda g: float(g.length))
+    coords = list(best.coords or [])
+    if len(coords) < 2:
+        return None
+    first = coords[0]
+    last = coords[-1]
+    try:
+        x1 = float(first[0])
+        y1 = float(first[1])
+        x2 = float(last[0])
+        y2 = float(last[1])
+    except (TypeError, ValueError):
+        return None
+    if not (math.isfinite(x1) and math.isfinite(y1) and math.isfinite(x2) and math.isfinite(y2)):
+        return None
+    if abs(x1 - x2) <= 1e-12 and abs(y1 - y2) <= 1e-12:
+        return None
+    return (x1, y1, x2, y2)
 
 
 def _build_overpass_query(
@@ -1150,6 +1204,7 @@ def analyze_road_syntax(
     if context_wgs_poly.is_empty:
         context_wgs_poly = output_wgs_poly
 
+    edge_inputs: List[Dict[str, Any]] = []
     minx, miny, maxx, maxy = context_wgs_poly.bounds
     overpass_query_timeout_s = int(getattr(settings, "overpass_query_timeout_s", 60) or 60)
     query = _build_overpass_query(
@@ -1200,8 +1255,8 @@ def analyze_road_syntax(
 
     _report_progress("build_edges", "正在构建线段拓扑", step=3)
     prepared_context = prep(context_wgs_poly)
-    edge_inputs: List[Dict[str, Any]] = []
     seen_edges = set()
+
     def _edge_key_by_coord(lon1: float, lat1: float, lon2: float, lat2: float) -> Tuple[Tuple[float, float], Tuple[float, float]]:
         a = (_safe_round(lon1, 7), _safe_round(lat1, 7))
         b = (_safe_round(lon2, 7), _safe_round(lat2, 7))
@@ -1301,12 +1356,12 @@ def analyze_road_syntax(
         )
     _report_progress(
         "edges_ready",
-        "线段构建完成，正在筛选主干路",
+        "输入线段构建完成，正在准备分析",
         step=4,
         extra={"context_edge_count": len(edge_inputs)},
     )
 
-    if highway_filter == "major":
+    if normalized_graph_model != "axial" and highway_filter == "major":
         raw_count = len(edge_inputs)
         global_edge_cap = int(getattr(settings, "road_syntax_global_edge_cap", 22000) or 22000)
         global_edge_cap = max(1000, global_edge_cap)
@@ -1328,7 +1383,10 @@ def analyze_road_syntax(
     pipeline_name = ""
     fieldnames: List[str] = []
     rows: List[Dict[str, Any]] = []
-    pipeline_name = "depthmapx-axial" if normalized_graph_model == "axial" else "depthmapx-segment"
+    if normalized_graph_model == "axial":
+        pipeline_name = "depthmapx-axial"
+    else:
+        pipeline_name = "depthmapx-segment"
     cli_path = _resolve_depthmap_cli_path(depthmap_cli_path)
     timeout_s = int(getattr(settings, "depthmapx_timeout_s", 300) or 300)
     if tulip_bins is None:
@@ -1601,13 +1659,25 @@ def analyze_road_syntax(
         line = LineString([(item["x1"], item["y1"]), (item["x2"], item["y2"])])
         if line.is_empty or not prepared_output_poly.intersects(line):
             continue
-        parsed_edges.append(item)
-        key1 = item["key1"]
-        key2 = item["key2"]
+        clipped_seg = _clip_line_to_polygon_segment(line, output_wgs_poly)
+        if not clipped_seg:
+            continue
+        x1c, y1c, x2c, y2c = clipped_seg
+        edge = dict(item)
+        edge["x1"] = x1c
+        edge["y1"] = y1c
+        edge["x2"] = x2c
+        edge["y2"] = y2c
+        edge["key1"] = (_safe_round(x1c, 7), _safe_round(y1c, 7))
+        edge["key2"] = (_safe_round(x2c, 7), _safe_round(y2c, 7))
+        edge["length_m"] = _haversine_m(x1c, y1c, x2c, y2c)
+        parsed_edges.append(edge)
+        key1 = edge["key1"]
+        key2 = edge["key2"]
         if key1 != key2:
             neighbor_sets.setdefault(key1, set()).add(key2)
             neighbor_sets.setdefault(key2, set()).add(key1)
-        total_length_m += max(0.0, float(item.get("length_m", 0.0)))
+        total_length_m += max(0.0, float(edge.get("length_m", 0.0)))
 
     if not parsed_edges:
         return _empty_result(

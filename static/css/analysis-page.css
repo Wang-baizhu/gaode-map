@@ -1011,6 +1011,55 @@ label {
     color: #ffffff;
 }
 
+.h3-map-simplify-btn.active .h3-map-tool-caret {
+    transform: rotate(180deg);
+}
+
+.h3-simplify-wrap {
+    position: relative;
+    display: inline-flex;
+}
+
+.h3-simplify-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 1210;
+    min-width: 188px;
+    border: 1px solid #d5deea;
+    border-radius: 10px;
+    background: #ffffff;
+    box-shadow: 0 16px 32px rgba(15, 23, 42, 0.2);
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    pointer-events: auto;
+}
+
+.h3-simplify-check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 8px;
+    color: #334155;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.h3-simplify-check:hover {
+    background: #f8fafc;
+}
+
+.h3-simplify-check input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    accent-color: #0f172a;
+    margin: 0;
+}
+
 .h3-export-wrap {
     position: relative;
 }
@@ -2095,6 +2144,16 @@ label {
         font-size: 11px;
     }
 
+    .h3-simplify-menu {
+        min-width: 164px;
+        padding: 7px;
+    }
+
+    .h3-simplify-check {
+        font-size: 11px;
+        padding: 5px 7px;
+    }
+
     .h3-map-tool-icon {
         width: 14px;
         height: 14px;
@@ -2227,7 +2286,11 @@ label {
 
 .mode-option {
     flex: 1;
-    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    white-space: nowrap;
     padding: 8px;
     font-size: 13px;
     cursor: pointer;
@@ -2584,6 +2647,11 @@ label {
     opacity: 0.7;
 }
 
+.source-tag {
+    background: #eef6ff;
+    color: #2457a6;
+}
+
 .meta-date {
     font-size: 12px;
     color: #999;
@@ -2737,8 +2805,7 @@ label {
 .mode-option img {
     width: 18px;
     height: 18px;
-    vertical-align: middle;
-    margin-left: 4px;
+    flex: 0 0 auto;
     opacity: 0.6;
     transition: opacity 0.2s;
 }

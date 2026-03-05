@@ -5,7 +5,7 @@ class PoiRequest(BaseModel):
     polygon: List[List[float]] = Field(..., description="Polygon (GCJ02) as [[lng, lat], [lng, lat], ...]")
     keywords: str = Field(..., description="Search keywords, e.g. 'KFC|Starbucks'")
     types: str = Field(default="", description="POI Types code, optional")
-    source: Literal["gaode", "local"] = Field(default="gaode", description="POI source")
+    source: Literal["gaode", "local"] = Field(default="local", description="POI source")
     year: Optional[int] = Field(default=None, description="Year filter for local source")
     max_count: int = Field(default=1000, description="Max number of POIs to return (to prevent abuse)")
     
@@ -33,8 +33,13 @@ class PoiResponse(BaseModel):
 class HistorySaveRequest(BaseModel):
     center: List[float] = Field(..., description="Center [lng, lat] (GCJ02)")
     polygon: list = Field(..., description="Polygon coordinates (GCJ02)") # Relaxed type to handle MultiPolygon if needed
+    drawn_polygon: Optional[List[List[float]]] = Field(
+        default=None,
+        description="Optional user-drawn polygon ring (GCJ02)"
+    )
     pois: List[dict] = Field(..., description="List of POI objects")
     keywords: str = Field(default="")
     mode: str = Field(default="walking")
     time_min: int = Field(default=15)
     location_name: Optional[str] = Field(None, description="Location name or coordinates for title")
+    source: Optional[Literal["gaode", "local"]] = Field(default="local", description="POI source for this analysis")

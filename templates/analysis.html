@@ -127,6 +127,9 @@
                                         <img src="/static/images/time.svg"> {% raw %}{{ item.params.time_min }}{% endraw
                                         %}分
                                     </span>
+                                    <span class="meta-tag source-tag">
+                                        数据源 {% raw %}{{ item._sourceLabel || '未标记' }}{% endraw %}
+                                    </span>
                                 </div>
                                 <span class="meta-date">
                                     {% raw %}{{ item._createdDateText || item.created_at }}{% endraw %}
@@ -161,7 +164,19 @@
                             <h3>1. 地点与范围</h3>
                         </div>
 
-                        <div class="form-group search-group">
+                        <div class="form-group">
+                            <label>范围模式</label>
+                            <div class="mode-select">
+                                <div class="mode-select">
+                                    <div class="mode-option" :class="{active: isochroneScopeMode==='point'}"
+                                        @click="setIsochroneScopeMode('point')">点等时圈</div>
+                                    <div class="mode-option" :class="{active: isochroneScopeMode==='area'}"
+                                        @click="setIsochroneScopeMode('area')">面等时圈</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div v-if="isochroneScopeMode === 'point'" class="form-group search-group">
                             <input type="text" id="keyword" class="minimal-input" placeholder="搜索地点..."
                                 @keyup.enter="triggerSearch">
                             <button class="btn-icon" @click="triggerSearch">
@@ -174,12 +189,16 @@
                         </div>
 
                         <div class="form-group">
-                            <div v-if="selectedPoint" class="status-badge success">
+                            <div v-if="isochroneScopeMode === 'area' && hasDrawnScopePolygon()" class="status-badge success">
+                                已绘制区域: {% raw %}{{ getDrawnScopePointCount() }}{% endraw %} 个顶点
+                            </div>
+                            <div v-else-if="isochroneScopeMode === 'point' && selectedPoint" class="status-badge success">
                                 已选: {% raw %}{{ selectedPoint.lng.toFixed(4) }}, {{ selectedPoint.lat.toFixed(4) }}{%
                                 endraw
                                 %}
                             </div>
-                            <div v-else class="status-badge warning">请在地图上点击或搜索选择起点</div>
+                            <div v-else-if="isochroneScopeMode === 'point'" class="status-badge warning">请在地图上点击/搜索选择起点</div>
+                            <div v-else class="status-badge warning">请先绘制分析区域</div>
                         </div>
 
                         <div class="form-group">
@@ -212,13 +231,18 @@
                             </select>
                         </div>
 
-
-                        <button class="btn-black" :disabled="!selectedPoint || isCalculating" @click="startAnalysis">
-                            {% raw %}{{ isCalculating ? '计算中...' : '下一步: 生成等时圈' }}{% endraw %}
+                        <button v-if="isochroneScopeMode === 'area'" class="btn-outline" style="margin-top:8px;" :disabled="isCalculating"
+                            @click="toggleScopeDrawing">
+                            {% raw %}{{ drawScopeActive ? '结束绘制' : '绘制区域（多边形）' }}{% endraw %}
                         </button>
-                        <button class="btn-outline" style="margin-top:8px;" :disabled="isCalculating"
-                            @click="startCityScopeAnalysis('长沙市')">
-                            按长沙行政边界分析
+                        <button v-if="isochroneScopeMode === 'area'" class="btn-outline" style="margin-top:8px;"
+                            :disabled="isCalculating || !hasDrawnScopePolygon()" @click="clearDrawnScopePolygon">
+                            清除绘制区域
+                        </button>
+                        <button class="btn-black"
+                            :disabled="(isochroneScopeMode === 'point' ? !selectedPoint : !hasDrawnScopePolygon()) || isCalculating || drawScopeActive"
+                            @click="startAnalysis">
+                            {% raw %}{{ isCalculating ? '处理中...' : (isochroneScopeMode === 'area' ? '下一步: 基于绘制范围生成等时圈' : '下一步: 生成等时圈') }}{% endraw %}
                         </button>
                         <div v-if="errorMessage" class="error-msg">{% raw %}{{ errorMessage }}{% endraw %}</div>
                         <div v-if="basemapSource === 'tianditu' && tdtDiag && tdtDiag.ok === false"
@@ -282,8 +306,8 @@
                             <label style="margin:0;">数据来源</label>
                             <select v-model="poiDataSource" class="minimal-input"
                                 style="padding:4px 8px; max-width:180px;">
-                                <option value="gaode">高德源</option>
                                 <option value="local">本地源（2018年）</option>
+                                <option value="gaode">高德源</option>
                             </select>
                         </div>
 
@@ -323,6 +347,9 @@
                     <div v-show="step === 3" class="wizard-step wizard-step-step3">
                         <div class="step-header-nav">
                             <h3>3. 结果分析</h3>
+                            <span class="count-badge" style="margin-left:10px;">
+                                数据源 {% raw %}{{ getPoiSourceLabel(resultDataSource) }}{% endraw %}
+                            </span>
                         </div>
 
                         <div class="step3-layout">
@@ -1004,17 +1031,31 @@
                     <span class="h3-map-tool-text">保存并新建</span>
                 </button>
 
-                <button type="button" class="h3-map-tool-btn h3-map-simplify-btn"
-                    :class="{ active: h3BasemapMuted }"
-                    @click="toggleH3BasemapMuted"
-                    title="底图简化">
-                    <svg class="h3-map-tool-icon" viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="M4 7h16"></path>
-                        <path d="M4 12h16"></path>
-                        <path d="M4 17h16"></path>
-                    </svg>
-                    <span class="h3-map-tool-text">{% raw %}{{ h3BasemapMuted ? '简化：开' : '简化：关' }}{% endraw %}</span>
-                </button>
+                <div class="h3-simplify-wrap">
+                    <button type="button" class="h3-map-tool-btn h3-map-simplify-btn"
+                        :class="{ active: h3SimplifyMenuOpen }"
+                        @click.stop="toggleSimplifyMenu"
+                        title="简化配置">
+                        <svg class="h3-map-tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M4 7h16"></path>
+                            <path d="M4 12h16"></path>
+                            <path d="M4 17h16"></path>
+                        </svg>
+                        <span class="h3-map-tool-text">简化</span>
+                        <svg class="h3-map-tool-caret" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="m6 9 6 6 6-6"></path>
+                        </svg>
+                    </button>
+                    <div v-if="h3SimplifyMenuOpen" class="h3-simplify-menu">
+                        <label v-for="option in getVisibleSimplifyOptions()" :key="'simplify-' + option.value"
+                            class="h3-simplify-check">
+                            <input type="checkbox"
+                                :checked="h3SimplifyTargets.includes(option.value)"
+                                @change="onSimplifyTargetToggle(option.value, $event.target.checked)">
+                            <span v-text="option.label"></span>
+                        </label>
+                    </div>
+                </div>
 
                 <div class="h3-export-wrap">
                     <button type="button" class="h3-map-tool-btn h3-map-export-btn"
@@ -1230,7 +1271,9 @@
                     selectedPoint: null, // {lng, lat}
                     transportMode: 'walking',
                     timeHorizon: 15,
-                    poiDataSource: 'gaode', // gaode | local
+                    isochroneScopeMode: 'point',
+                    poiDataSource: 'local', // gaode | local
+                    resultDataSource: 'local', // source used by current Step3 result
                     isCalculating: false,
                     errorMessage: '',
                     basemapSource: 'amap',
@@ -1267,8 +1310,6 @@
                     roadSyntaxModulesReady: ROAD_SYNTAX_MODULES_READY,
                     roadSyntaxModuleMissing: ROAD_SYNTAX_MODULE_MISSING.slice(),
                     ...buildRoadSyntaxInitialState(),
-                    cityBoundaryCacheCityName: '长沙市',
-                    cityBoundaryCacheRing: [],
                     fetchSubtypeHitMap: {},
                     fetchSubtypeProgress: {
                         categoryId: '',
@@ -1277,6 +1318,8 @@
                         typeNamesFullCount: 0,
                         hiddenTypeCount: 0,
                     },
+                    scopeSource: '',
+                    drawnScopePolygon: [],
                     lastIsochroneGeoJSON: null,
                     poiMarkers: [],
                     allPoisDetails: [], // Store full fetched data for client-side filtering
@@ -1288,6 +1331,9 @@
                     placeSearchErrorListener: null,
                     placeSearchLoadingPromise: null,
                     placeSearchBuildToken: 0,
+                    drawScopeMouseTool: null,
+                    drawScopeDrawHandler: null,
+                    drawScopeActive: false,
                     amapRuntimeErrorListener: null,
                     amapRuntimeRejectionListener: null,
 
@@ -1322,6 +1368,8 @@
                     isGeneratingH3ArcgisSnapshot: false,
                     pointSimplifyEnabled: false,
                     h3BasemapMuted: false,
+                    h3SimplifyMenuOpen: false,
+                    h3SimplifyTargets: [], // map | isochrone | drawn_polygon
                     pointLayersSuspendedForSyntax: false,
                     poiSystemSuspendedForSyntax: false,
                     poiAutoFitViewEnabled: false,
@@ -1439,6 +1487,7 @@
                 document.removeEventListener('click', this.handleGlobalClick, true);
                 this.detachAmapRuntimeErrorProbe();
                 this.destroyPlaceSearch();
+                this.stopScopeDrawing({ destroyTool: true });
                 this.clearPoiOverlayLayers({
                     reason: 'before_unmount',
                     clearManager: true,
@@ -1464,11 +1513,15 @@
                 step(newStep, oldStep) {
                     if (oldStep === 1 && newStep !== 1) {
                         this.destroyPlaceSearch();
+                        this.stopScopeDrawing();
                     }
                 },
                 sidebarView(newView, oldView) {
                     if (oldView === 'history' && newView !== 'history') {
                         this.cancelHistoryLoading();
+                    }
+                    if (oldView === 'wizard' && newView !== 'wizard') {
+                        this.stopScopeDrawing();
                     }
                 },
                 activeStep3Panel(newPanel, oldPanel) {
@@ -1587,7 +1640,24 @@
                         }
                     }
                     record._createdDateText = dateText;
+                    const rawSource = record && record.params ? record.params.source : '';
+                    const normalizedSource = this.normalizePoiSource(rawSource, 'unknown');
+                    record._source = normalizedSource;
+                    record._sourceLabel = this.getPoiSourceLabel(normalizedSource);
                     return record;
+                },
+                normalizePoiSource(source, fallback = 'local') {
+                    const raw = String(source || '').trim().toLowerCase();
+                    if (!raw) return fallback;
+                    if (raw === 'local' || raw === 'history' || raw === 'historical') return 'local';
+                    if (raw === 'gaode' || raw === 'amap') return 'gaode';
+                    return fallback;
+                },
+                getPoiSourceLabel(source) {
+                    const normalized = this.normalizePoiSource(source, 'unknown');
+                    if (normalized === 'local') return '本地源（2018年）';
+                    if (normalized === 'gaode') return '高德源';
+                    return '未标记';
                 },
                 progressiveRenderHistory(sessionId) {
                     if (sessionId !== this.historyRenderSessionId) return;
@@ -1995,6 +2065,13 @@
                 saveAnalysisHistoryAsync(polygon, selectedCats, pois) {
                     if (!this.selectedPoint || !Array.isArray(pois) || pois.length === 0) return;
                     const typesLabel = (selectedCats || []).map(c => c.name).join(',');
+                    const drawnPolygonForSave = (
+                        this.isochroneScopeMode === 'area'
+                        && Array.isArray(this.drawnScopePolygon)
+                        && this.drawnScopePolygon.length >= 3
+                    )
+                        ? this._closePolygonRing(this.normalizePath(this.drawnScopePolygon, 3, 'history.drawn_polygon'))
+                        : null;
                     const compactPois = pois.map((p) => ({
                         id: p && p.id ? String(p.id) : '',
                         name: p && p.name ? String(p.name) : '未命名',
@@ -2007,11 +2084,15 @@
                     const payload = {
                         center: [this.selectedPoint.lng, this.selectedPoint.lat],
                         polygon: polygon,
+                        drawn_polygon: Array.isArray(drawnPolygonForSave) && drawnPolygonForSave.length >= 4
+                            ? drawnPolygonForSave
+                            : null,
                         pois: compactPois,
                         keywords: typesLabel,
                         location_name: this.selectedPoint.lng.toFixed(4) + "," + this.selectedPoint.lat.toFixed(4),
                         mode: this.transportMode,
                         time_min: parseInt(this.timeHorizon),
+                        source: this.normalizePoiSource(this.resultDataSource || this.poiDataSource, 'local'),
                     };
                     setTimeout(() => {
                         fetch('/api/v1/analysis/history/save', {
@@ -2249,6 +2330,8 @@
                     this.roadSyntaxStatus = '';
                     this.resetFetchSubtypeProgress();
                     this.allPoisDetails = [];
+                    this.scopeSource = '';
+                    this.drawnScopePolygon = [];
                     this.lastIsochroneGeoJSON = null;
                     this.h3GridStatus = '';
                     this.h3GridCount = 0;
@@ -2268,9 +2351,10 @@
                         if (this.mapCore.clearGridPolygons) {
                             this.mapCore.clearGridPolygons();
                         }
-                        this.mapCore.clearCustomPolygons();
                         this.mapCore.setRadius(0);
                     }
+                    this.clearScopeOutlineDisplay();
+                    this.stopScopeDrawing();
                     this.disposePoiChart();
                 },
                 resetH3AnalysisState() {
@@ -2376,23 +2460,127 @@
                         this.h3GridStatus = `已切换到“相交优先（边缘保留）”，最小重叠比例=${this.h3GridMinOverlapRatio.toFixed(2)}，请点击“计算分析”`;
                     }
                 },
-                toggleH3BasemapMuted() {
-                    const next = !this.pointSimplifyEnabled;
-                    this.pointSimplifyEnabled = next;
-                    this.h3BasemapMuted = next;
-                    this.onH3BasemapStyleChange();
+                shouldShowDrawnPolygonSimplifyOption() {
+                    return (
+                        this.isochroneScopeMode === 'area'
+                        && Array.isArray(this.drawnScopePolygon)
+                        && this.drawnScopePolygon.length >= 3
+                    );
                 },
-                onH3BasemapStyleChange() {
-                    const hide = !!(this.pointSimplifyEnabled || this.h3BasemapMuted);
-                    this.pointSimplifyEnabled = hide;
-                    this.h3BasemapMuted = hide;
-                    console.info('[point-simplify]', {
-                        point_simplify: hide,
-                        step: this.step,
-                        panel: this.activeStep3Panel || ''
+                hasIsochroneOutlineForSimplifyOption() {
+                    return this.extractIsochroneOutlinePaths().length > 0;
+                },
+                getVisibleSimplifyOptions() {
+                    const options = [{ value: 'map', label: '地图' }];
+                    if (this.hasIsochroneOutlineForSimplifyOption()) {
+                        options.push({ value: 'isochrone', label: '等时圈' });
+                    }
+                    if (this.shouldShowDrawnPolygonSimplifyOption()) {
+                        options.push({ value: 'drawn_polygon', label: '手绘多边形' });
+                    }
+                    return options;
+                },
+                normalizeSimplifyTargets() {
+                    const rawTargets = Array.isArray(this.h3SimplifyTargets) ? this.h3SimplifyTargets : [];
+                    const allowed = new Set(this.getVisibleSimplifyOptions().map((item) => item.value));
+                    const normalized = [];
+                    rawTargets.forEach((item) => {
+                        const key = String(item || '').trim().toLowerCase();
+                        if (!allowed.has(key)) return;
+                        if (normalized.indexOf(key) >= 0) return;
+                        normalized.push(key);
                     });
+                    const changed = (
+                        normalized.length !== rawTargets.length
+                        || normalized.some((item, index) => item !== rawTargets[index])
+                    );
+                    if (changed) {
+                        this.h3SimplifyTargets = normalized;
+                    }
+                    return normalized;
+                },
+                toggleSimplifyMenu() {
+                    if (this.h3SimplifyMenuOpen) {
+                        this.h3SimplifyMenuOpen = false;
+                        return;
+                    }
+                    this.normalizeSimplifyTargets();
+                    this.h3ExportMenuOpen = false;
+                    this.h3ExportTasksOpen = false;
+                    this.h3SimplifyMenuOpen = true;
+                },
+                onSimplifyTargetToggle(target, checked) {
+                    const key = String(target || '').trim().toLowerCase();
+                    const next = this.normalizeSimplifyTargets().slice();
+                    const existingIndex = next.indexOf(key);
+                    if (checked) {
+                        if (existingIndex < 0) next.push(key);
+                    } else if (existingIndex >= 0) {
+                        next.splice(existingIndex, 1);
+                    }
+                    this.h3SimplifyTargets = next;
+                    this.applySimplifyConfig();
+                },
+                applySimplifyConfig() {
+                    const targets = this.normalizeSimplifyTargets();
+                    const muteMap = targets.indexOf('map') >= 0;
+                    this.pointSimplifyEnabled = muteMap;
+                    this.h3BasemapMuted = muteMap;
                     this.applySimplifyBasemapStyle();
                     this.applySimplifyPointVisibility();
+                    this.refreshScopeOutlineDisplay();
+                },
+                extractIsochroneOutlinePaths() {
+                    const feature = this.lastIsochroneGeoJSON || null;
+                    const geometry = feature && feature.geometry ? feature.geometry : null;
+                    if (!geometry || !geometry.type) return [];
+                    const mode = String(((feature && feature.properties) || {}).mode || '').toLowerCase();
+                    if (mode === 'drawn_polygon') return [];
+                    const paths = [];
+                    if (geometry.type === 'Polygon' && Array.isArray(geometry.coordinates) && Array.isArray(geometry.coordinates[0])) {
+                        const ring = this._closePolygonRing(this.normalizePath(geometry.coordinates[0], 3, 'scope.outline.iso.polygon'));
+                        if (Array.isArray(ring) && ring.length >= 4) paths.push(ring.map((pt) => [Number(pt[0]), Number(pt[1])]));
+                    } else if (geometry.type === 'MultiPolygon' && Array.isArray(geometry.coordinates)) {
+                        geometry.coordinates.forEach((poly, idx) => {
+                            const rawRing = Array.isArray(poly) ? poly[0] : null;
+                            const ring = this._closePolygonRing(this.normalizePath(rawRing, 3, `scope.outline.iso.multi_${idx}`));
+                            if (Array.isArray(ring) && ring.length >= 4) {
+                                paths.push(ring.map((pt) => [Number(pt[0]), Number(pt[1])]));
+                            }
+                        });
+                    }
+                    return paths;
+                },
+                refreshScopeOutlineDisplay() {
+                    if (!this.mapCore) return;
+                    const canClear = typeof this.mapCore.clearCustomPolygons === 'function';
+                    const canSet = typeof this.mapCore.setCustomPolygons === 'function';
+                    const targets = this.normalizeSimplifyTargets();
+                    const hideDrawnPolygon = targets.indexOf('drawn_polygon') >= 0;
+                    const hideIsochrone = targets.indexOf('isochrone') >= 0;
+                    const paths = [];
+
+                    if (!hideDrawnPolygon && this.shouldShowDrawnPolygonSimplifyOption()) {
+                        const drawnRing = this._closePolygonRing(this.normalizePath(this.drawnScopePolygon, 3, 'scope.outline.drawn'));
+                        if (Array.isArray(drawnRing) && drawnRing.length >= 4) {
+                            paths.push(drawnRing.map((pt) => [Number(pt[0]), Number(pt[1])]));
+                        }
+                    }
+                    if (!hideIsochrone) {
+                        paths.push(...this.extractIsochroneOutlinePaths());
+                    }
+
+                    if (!paths.length) {
+                        if (canClear) this.mapCore.clearCustomPolygons();
+                        return;
+                    }
+                    if (canSet) {
+                        this.mapCore.setCustomPolygons(paths);
+                    }
+                },
+                clearScopeOutlineDisplay() {
+                    if (!this.mapCore || typeof this.mapCore.clearCustomPolygons !== 'function') return;
+                    this.mapCore.clearCustomPolygons();
                 },
                 applySimplifyBasemapStyle() {
                     if (!this.mapCore || typeof this.mapCore.setBasemapMuted !== 'function') return;
@@ -2437,8 +2625,7 @@
                             }
                         }
                     }
-                    this.applySimplifyBasemapStyle();
-                    this.applySimplifyPointVisibility();
+                    this.applySimplifyConfig();
                 },
                 async generateH3Grid() {
                     const rawRing = this.getIsochronePolygonRing();
@@ -3948,6 +4135,7 @@
                     if (this.h3ExportScope === 'analysis_result' && !this.hasH3AnalysisForExport()) {
                         this.h3ExportScope = 'grid_only';
                     }
+                    this.h3SimplifyMenuOpen = false;
                     this.h3ExportTasksOpen = false;
                     this.h3ExportMenuOpen = !this.h3ExportMenuOpen;
                 },
@@ -3955,6 +4143,7 @@
                     this.h3ExportMenuOpen = false;
                 },
                 toggleH3ExportTasks() {
+                    this.h3SimplifyMenuOpen = false;
                     this.h3ExportMenuOpen = false;
                     this.h3ExportTasksOpen = !this.h3ExportTasksOpen;
                 },
@@ -3964,9 +4153,13 @@
                 handleGlobalClick(event) {
                     const target = event && event.target;
                     const hasClosest = !!(target && target.closest);
+                    const inSimplifyWrap = hasClosest && !!target.closest('.h3-simplify-wrap');
                     const inExportWrap = hasClosest && !!target.closest('.h3-export-wrap');
                     const inTaskPanel = hasClosest && !!target.closest('.h3-export-task-panel');
                     const inTaskWrap = hasClosest && !!target.closest('.h3-task-wrap');
+                    if (this.h3SimplifyMenuOpen && !inSimplifyWrap) {
+                        this.h3SimplifyMenuOpen = false;
+                    }
                     if (this.h3ExportMenuOpen && !inExportWrap) {
                         this.h3ExportMenuOpen = false;
                     }
@@ -4630,10 +4823,7 @@
                     });
                     mapCore.initMap();
                     this.mapCore = markRaw(mapCore);
-                    this.pointSimplifyEnabled = !!(this.pointSimplifyEnabled || this.h3BasemapMuted);
-                    this.h3BasemapMuted = this.pointSimplifyEnabled;
-                    this.applySimplifyBasemapStyle();
-                    this.applySimplifyPointVisibility();
+                    this.applySimplifyConfig();
                     if (this.basemapSource === 'tianditu' && mapCore.lastBasemapError) {
                         this.tdtDiag = {
                             ok: false,
@@ -4649,6 +4839,8 @@
                     mapCore.map.on('click', (e) => {
                         // Limit marker adjustment to Step 1 in Wizard mode
                         if (this.sidebarView !== 'wizard' || this.step !== 1) return;
+                        if (this.isochroneScopeMode !== 'point') return;
+                        if (this.drawScopeActive) return;
                         this.setSelectedPoint(e.lnglat);
                     });
                     this.roadSyntaxAttachMapListeners();
@@ -4866,7 +5058,222 @@
                         }
                     });
                 },
-                setSelectedPoint(lnglat) {
+                hasDrawnScopePolygon() {
+                    if (this.scopeSource !== 'drawn_polygon') return false;
+                    const polygon = this.getIsochronePolygonPoints();
+                    return Array.isArray(polygon) && polygon.length >= 3;
+                },
+                getDrawnScopePointCount() {
+                    const polygon = this.hasDrawnScopePolygon() ? this.getIsochronePolygonPoints() : [];
+                    if (!polygon.length) return 0;
+                    let count = polygon.length;
+                    const first = polygon[0];
+                    const last = polygon[polygon.length - 1];
+                    if (
+                        Array.isArray(first)
+                        && Array.isArray(last)
+                        && Math.abs(Number(first[0]) - Number(last[0])) < 1e-8
+                        && Math.abs(Number(first[1]) - Number(last[1])) < 1e-8
+                    ) {
+                        count -= 1;
+                    }
+                    return Math.max(0, count);
+                },
+                _closePolygonRing(path) {
+                    const normalized = Array.isArray(path) ? path.slice() : [];
+                    if (normalized.length < 3) return [];
+                    const first = normalized[0];
+                    const last = normalized[normalized.length - 1];
+                    if (
+                        !Array.isArray(first)
+                        || !Array.isArray(last)
+                        || first.length < 2
+                        || last.length < 2
+                    ) {
+                        return [];
+                    }
+                    if (
+                        Math.abs(Number(first[0]) - Number(last[0])) > 1e-8
+                        || Math.abs(Number(first[1]) - Number(last[1])) > 1e-8
+                    ) {
+                        normalized.push([first[0], first[1]]);
+                    }
+                    return normalized;
+                },
+                _estimatePolygonCenter(path) {
+                    const normalized = this.normalizePath(path, 3, 'draw_scope.center');
+                    if (!normalized.length) return null;
+                    let minLng = Infinity;
+                    let minLat = Infinity;
+                    let maxLng = -Infinity;
+                    let maxLat = -Infinity;
+                    normalized.forEach((pt) => {
+                        const lng = Number(pt[0]);
+                        const lat = Number(pt[1]);
+                        if (!Number.isFinite(lng) || !Number.isFinite(lat)) return;
+                        if (lng < minLng) minLng = lng;
+                        if (lat < minLat) minLat = lat;
+                        if (lng > maxLng) maxLng = lng;
+                        if (lat > maxLat) maxLat = lat;
+                    });
+                    if (!Number.isFinite(minLng) || !Number.isFinite(minLat) || !Number.isFinite(maxLng) || !Number.isFinite(maxLat)) {
+                        return null;
+                    }
+                    return [(minLng + maxLng) / 2, (minLat + maxLat) / 2];
+                },
+                stopScopeDrawing(options = {}) {
+                    const opts = (options && typeof options === 'object') ? options : {};
+                    const mouseTool = this.drawScopeMouseTool;
+                    if (mouseTool && this.drawScopeDrawHandler && typeof mouseTool.off === 'function') {
+                        try {
+                            mouseTool.off('draw', this.drawScopeDrawHandler);
+                        } catch (_) { }
+                    }
+                    if (mouseTool && typeof mouseTool.close === 'function') {
+                        try {
+                            mouseTool.close();
+                        } catch (_) { }
+                    }
+                    this.drawScopeDrawHandler = null;
+                    this.drawScopeActive = false;
+                    if (opts.destroyTool) {
+                        this.drawScopeMouseTool = null;
+                    }
+                },
+                async ensureDrawScopeToolReady() {
+                    if (this.drawScopeMouseTool) return { ok: true, cached: true };
+                    if (!this.mapCore || !this.mapCore.map) return { ok: false, reason: 'map-not-ready' };
+                    if (!window.AMap || typeof AMap.plugin !== 'function') return { ok: false, reason: 'amap-not-ready' };
+                    return new Promise((resolve) => {
+                        try {
+                            AMap.plugin(['AMap.MouseTool'], () => {
+                                try {
+                                    const markRaw = (window.Vue && typeof window.Vue.markRaw === 'function')
+                                        ? window.Vue.markRaw
+                                        : (value) => value;
+                                    this.drawScopeMouseTool = markRaw(new AMap.MouseTool(this.mapCore.map));
+                                    resolve({ ok: true, cached: false });
+                                } catch (e) {
+                                    console.error('MouseTool init failed', e);
+                                    resolve({ ok: false, reason: 'mouse-tool-init-failed' });
+                                }
+                            });
+                        } catch (e) {
+                            console.error('AMap.plugin MouseTool failed', e);
+                            resolve({ ok: false, reason: 'mouse-tool-plugin-failed' });
+                        }
+                    });
+                },
+                async toggleScopeDrawing() {
+                    if (this.drawScopeActive) {
+                        this.stopScopeDrawing();
+                        return;
+                    }
+                    if (this.isCalculating) return;
+                    const ready = await this.ensureDrawScopeToolReady();
+                    if (!ready || !ready.ok || !this.drawScopeMouseTool) {
+                        this.errorMessage = '绘制工具加载失败，请稍后重试';
+                        return;
+                    }
+
+                    this.stopScopeDrawing();
+                    const mouseTool = this.drawScopeMouseTool;
+                    this.drawScopeDrawHandler = (evt) => {
+                        const overlay = evt && evt.obj ? evt.obj : null;
+                        const rawPath = (overlay && typeof overlay.getPath === 'function') ? overlay.getPath() : [];
+                        if (overlay && typeof overlay.setMap === 'function') {
+                            try { overlay.setMap(null); } catch (_) { }
+                        }
+                        const normalized = this.normalizePath(rawPath, 3, 'draw_scope.path');
+                        const ring = this._closePolygonRing(normalized);
+                        this.stopScopeDrawing();
+                        if (ring.length < 4) {
+                            this.errorMessage = '绘制区域无效，请重新绘制';
+                            return;
+                        }
+
+                        this.clearH3Grid();
+                        this.lastIsochroneGeoJSON = {
+                            type: 'Feature',
+                            properties: {
+                                mode: 'drawn_polygon',
+                            },
+                            geometry: {
+                                type: 'Polygon',
+                                coordinates: [ring],
+                            },
+                        };
+                        this.drawnScopePolygon = ring.map((pt) => [pt[0], pt[1]]);
+                        this.scopeSource = 'drawn_polygon';
+                        if (this.mapCore && typeof this.mapCore.clearBoundaryPolygons === 'function') {
+                            this.mapCore.clearBoundaryPolygons();
+                        }
+                        this.applySimplifyConfig();
+                        const center = this._estimatePolygonCenter(ring);
+                        if (center) {
+                            this.setSelectedPoint({ lng: center[0], lat: center[1] }, { showMarker: false });
+                        }
+                        this.errorMessage = '';
+                        this.poiStatus = '已绘制范围，可直接进入下一步';
+                    };
+
+                    if (typeof mouseTool.on === 'function') {
+                        mouseTool.on('draw', this.drawScopeDrawHandler);
+                    }
+                    this.drawScopeActive = true;
+                    this.errorMessage = '绘制模式已开启：单击添加顶点，双击结束';
+                    try {
+                        mouseTool.polygon({
+                            strokeColor: '#ff6f00',
+                            strokeWeight: 2,
+                            strokeOpacity: 0.95,
+                            fillColor: '#ff6f00',
+                            fillOpacity: 0.12,
+                        });
+                    } catch (e) {
+                        console.error('MouseTool polygon start failed', e);
+                        this.stopScopeDrawing();
+                        this.errorMessage = '进入绘制模式失败，请重试';
+                    }
+                },
+                clearDrawnScopePolygon() {
+                    this.stopScopeDrawing();
+                    if (!this.hasDrawnScopePolygon()) return;
+                    this.scopeSource = '';
+                    this.drawnScopePolygon = [];
+                    this.lastIsochroneGeoJSON = null;
+                    this.clearH3Grid();
+                    this.applySimplifyConfig();
+                    this.poiStatus = '';
+                    this.errorMessage = '';
+                },
+                setIsochroneScopeMode(mode) {
+                    const next = String(mode || '').trim().toLowerCase() === 'area' ? 'area' : 'point';
+                    if (next === this.isochroneScopeMode) return;
+                    this.isochroneScopeMode = next;
+                    this.errorMessage = '';
+                    this.stopScopeDrawing();
+                    if (next === 'point') {
+                        if (this.scopeSource === 'drawn_polygon') {
+                            this.scopeSource = '';
+                            this.drawnScopePolygon = [];
+                            this.lastIsochroneGeoJSON = null;
+                            this.clearScopeOutlineDisplay();
+                        }
+                        this.poiStatus = '';
+                        this.applySimplifyConfig();
+                        return;
+                    }
+                    if (this.marker) {
+                        this.safeMapSet(this.marker, null);
+                        this.marker = null;
+                    }
+                    if (this.scopeSource !== 'drawn_polygon') {
+                        this.poiStatus = '已切换到面等时圈，请先绘制范围';
+                    }
+                    this.applySimplifyConfig();
+                },
+                setSelectedPoint(lnglat, options = {}) {
                     if (!lnglat) return;
                     const lng = (typeof lnglat.lng === 'number')
                         ? lnglat.lng
@@ -4881,6 +5288,16 @@
                         this.mapCore.center = { lng, lat };
                     }
                     this.errorMessage = '';
+                    const showMarker = Object.prototype.hasOwnProperty.call(options, 'showMarker')
+                        ? !!options.showMarker
+                        : (this.isochroneScopeMode === 'point');
+                    if (!showMarker) {
+                        if (this.marker) {
+                            this.safeMapSet(this.marker, null);
+                            this.marker = null;
+                        }
+                        return;
+                    }
                     const markerPos = (window.AMap && typeof AMap.LngLat === 'function')
                         ? new AMap.LngLat(lng, lat)
                         : [lng, lat];
@@ -4963,7 +5380,13 @@
                     await this.fetchPois();
                 },
                 async startAnalysis() {
-                    if (!this.selectedPoint || this.isCalculating) return;
+                    if (this.isCalculating || this.drawScopeActive) return;
+                    const useDrawnScope = this.isochroneScopeMode === 'area';
+                    if (useDrawnScope && !this.hasDrawnScopePolygon()) {
+                        this.errorMessage = '请先绘制分析区域';
+                        return;
+                    }
+                    if (!useDrawnScope && !this.selectedPoint) return;
                     this.isCalculating = true;
                     this.errorMessage = '';
                     this.fetchProgress = 0;
@@ -4971,6 +5394,45 @@
                     this.resetRoadSyntaxState();
 
                     try {
+                        if (useDrawnScope) {
+                            const drawnPolygon = this.getIsochronePolygonPoints();
+                            const fallbackCenter = this._estimatePolygonCenter(drawnPolygon);
+                            if (!this.selectedPoint && fallbackCenter) {
+                                this.setSelectedPoint({ lng: fallbackCenter[0], lat: fallbackCenter[1] }, { showMarker: false });
+                            }
+                            if (!this.selectedPoint) {
+                                throw new Error('手绘范围中心点无效，请重新绘制');
+                            }
+                            const payload = {
+                                lat: this.selectedPoint.lat,
+                                lon: this.selectedPoint.lng,
+                                time_min: parseInt(this.timeHorizon),
+                                mode: this.transportMode,
+                                coord_type: 'gcj02',
+                                origin_mode: 'multi_sample',
+                                clip_polygon: drawnPolygon,
+                                clip_output: false,
+                                sample_boundary_step_m: 120,
+                                sample_inner_step_m: 220,
+                                sample_max_points: 48
+                            };
+                            const res = await fetch('/api/v1/analysis/isochrone', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(payload)
+                            });
+                            if (!res.ok) throw new Error("API 请求失败");
+                            const geojson = await res.json();
+                            this.clearH3Grid();
+                            this.scopeSource = 'drawn_isochrone';
+                            this.lastIsochroneGeoJSON = geojson;
+                            this.renderResult(geojson);
+                            this.step = 2;
+                            this.activeStep3Panel = 'poi';
+                            this.poiStatus = '已按手绘范围计算等时圈';
+                            return;
+                        }
+
                         const payload = {
                             lat: this.selectedPoint.lat,
                             lon: this.selectedPoint.lng,
@@ -4989,6 +5451,7 @@
                         const geojson = await res.json();
 
                         this.clearH3Grid();
+                        this.scopeSource = 'isochrone';
                         this.lastIsochroneGeoJSON = geojson;
                         this.renderResult(geojson);
                         this.step = 2; // Advance to Step 2
@@ -4997,72 +5460,6 @@
                     } catch (e) {
                         console.error(e);
                         this.errorMessage = "计算失败: " + e.message;
-                    } finally {
-                        this.isCalculating = false;
-                    }
-                },
-                async startCityScopeAnalysis(cityName = '长沙市') {
-                    if (this.isCalculating) return;
-                    if (!this.mapCore || !this.mapCore.map) {
-                        this.errorMessage = '地图尚未初始化，请稍后重试';
-                        return;
-                    }
-                    this.isCalculating = true;
-                    this.errorMessage = '';
-                    this.fetchProgress = 0;
-                    this.poiStatus = '';
-                    this.resetRoadSyntaxState();
-
-                    try {
-                        const targetCity = String(cityName || '长沙市').trim() || '长沙市';
-                        const largestRing = await this.loadCityBoundaryRing(targetCity);
-
-                        this.clearH3Grid();
-                        this.lastIsochroneGeoJSON = {
-                            type: 'Feature',
-                            properties: {
-                                mode: 'city_boundary',
-                                city: targetCity,
-                            },
-                            geometry: {
-                                type: 'Polygon',
-                                coordinates: [largestRing],
-                            },
-                        };
-                        this.mapCore.clearBoundaryPolygons();
-                        this.mapCore.setCustomPolygons([largestRing]);
-
-                        let minLng = Infinity;
-                        let maxLng = -Infinity;
-                        let minLat = Infinity;
-                        let maxLat = -Infinity;
-                        largestRing.forEach((pt) => {
-                            if (!Array.isArray(pt) || pt.length < 2) return;
-                            const lng = Number(pt[0]);
-                            const lat = Number(pt[1]);
-                            if (!Number.isFinite(lng) || !Number.isFinite(lat)) return;
-                            if (lng < minLng) minLng = lng;
-                            if (lng > maxLng) maxLng = lng;
-                            if (lat < minLat) minLat = lat;
-                            if (lat > maxLat) maxLat = lat;
-                        });
-                        const centerLng = Number.isFinite(minLng) && Number.isFinite(maxLng) ? (minLng + maxLng) / 2 : NaN;
-                        const centerLat = Number.isFinite(minLat) && Number.isFinite(maxLat) ? (minLat + maxLat) / 2 : NaN;
-                        if (Number.isFinite(centerLng) && Number.isFinite(centerLat)) {
-                            const centerPoint = [centerLng, centerLat];
-                            this.selectedPoint = { lng: centerLng, lat: centerLat };
-                            if (this.mapCore.map && typeof this.mapCore.map.setCenter === 'function') {
-                                this.mapCore.map.setCenter(centerPoint);
-                            }
-                            this.mapCore.center = { lng: centerLng, lat: centerLat };
-                        }
-
-                        this.step = 2;
-                        this.activeStep3Panel = 'poi';
-                        this.poiStatus = `${targetCity}行政边界已加载，可直接抓取POI和计算路网句法`;
-                    } catch (e) {
-                        console.error(e);
-                        this.errorMessage = '城市范围生成失败: ' + (e && e.message ? e.message : String(e));
                     } finally {
                         this.isCalculating = false;
                     }
@@ -5104,8 +5501,9 @@
                         // Parallel Fetching: process in batches.
                         this.abortController = new AbortController();
                         const batchSize = 4;
-                        const sourceLabel = this.poiDataSource === 'local' ? '本地源（2018年）' : '高德源';
+                        const sourceLabel = this.getPoiSourceLabel(this.poiDataSource);
                         this.poiStatus = `正在并行抓取 ${totalCats} 个分类（每批 ${batchSize} 个，${sourceLabel}）...`;
+                        this.resultDataSource = this.normalizePoiSource(this.poiDataSource, 'local');
 
                         const fetchOneCategory = async (cat) => {
                             const payload = {
@@ -6203,79 +6601,6 @@
                         throw new Error(detail || '路网分析失败');
                     }
                     return await res.json();
-                },
-                async loadCityBoundaryRing(cityName = '长沙市') {
-                    const targetCity = String(cityName || '长沙市').trim() || '长沙市';
-                    const cached = Array.isArray(this.cityBoundaryCacheRing) ? this.cityBoundaryCacheRing : [];
-                    if (targetCity === this.cityBoundaryCacheCityName && cached.length >= 4) {
-                        return cached.map((pt) => [pt[0], pt[1]]);
-                    }
-                    const storageKey = `road_syntax_city_boundary_${targetCity}`;
-                    const storageSourceKey = `${storageKey}_source`;
-                    const storageSourceTag = 'local_geojson_v1';
-                    try {
-                        const sourceTag = window.localStorage ? window.localStorage.getItem(storageSourceKey) : '';
-                        const rawCached = (window.localStorage && sourceTag === storageSourceTag) ? window.localStorage.getItem(storageKey) : '';
-                        if (sourceTag === storageSourceTag && rawCached) {
-                            const parsed = JSON.parse(rawCached);
-                            const restored = Array.isArray(parsed)
-                                ? parsed
-                                    .map((pt) => {
-                                        if (!Array.isArray(pt) || pt.length < 2) return null;
-                                        const lng = Number(pt[0]);
-                                        const lat = Number(pt[1]);
-                                        if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
-                                        return [lng, lat];
-                                    })
-                                    .filter((pt) => Array.isArray(pt) && pt.length >= 2)
-                                : [];
-                            if (restored.length >= 4) {
-                                this.cityBoundaryCacheCityName = targetCity;
-                                this.cityBoundaryCacheRing = restored.map((pt) => [pt[0], pt[1]]);
-                                return this.cityBoundaryCacheRing.map((pt) => [pt[0], pt[1]]);
-                            }
-                        }
-                    } catch (_) { }
-                    const normalizeRing = (path) => {
-                        const ring = (Array.isArray(path) ? path : [])
-                            .map((pt) => {
-                                if (!Array.isArray(pt) || pt.length < 2) return null;
-                                const lng = Number(pt[0]);
-                                const lat = Number(pt[1]);
-                                if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
-                                return [lng, lat];
-                            })
-                            .filter((pt) => Array.isArray(pt) && pt.length >= 2);
-                        if (ring.length < 3) return [];
-                        const first = ring[0];
-                        const last = ring[ring.length - 1];
-                        if (Math.abs(first[0] - last[0]) > 1e-9 || Math.abs(first[1] - last[1]) > 1e-9) {
-                            ring.push([first[0], first[1]]);
-                        }
-                        return ring;
-                    };
-                    const resp = await fetch(`/api/v1/analysis/city-boundary?city=${encodeURIComponent(targetCity)}`);
-                    if (!resp.ok) {
-                        let detail = '';
-                        try {
-                            detail = await resp.text();
-                        } catch (_) { }
-                        throw new Error(detail || `边界接口失败: HTTP ${resp.status}`);
-                    }
-                    const payload = await resp.json();
-                    const largestRing = normalizeRing(payload && payload.ring);
-                    if (largestRing.length < 4) {
-                        throw new Error('本地边界返回无效 ring');
-                    }
-                    this.cityBoundaryCacheCityName = targetCity;
-                    this.cityBoundaryCacheRing = largestRing.map((pt) => [pt[0], pt[1]]);
-                    try {
-                        if (window.localStorage) {
-                            window.localStorage.setItem(storageKey, JSON.stringify(this.cityBoundaryCacheRing));
-                            window.localStorage.setItem(storageSourceKey, storageSourceTag);
-                        }
-                    } catch (_) { }
-                    return this.cityBoundaryCacheRing.map((pt) => [pt[0], pt[1]]);
                 },
                 async applyRoadSyntaxDataset(data, preferredMetricTab = 'connectivity') {
                     this.invalidateRoadSyntaxCache('switch-road-syntax-scope', { resetData: false, resetPerf: false });
@@ -8086,15 +8411,8 @@
                         this.errorMessage = "未获取到有效数据";
                         return;
                     }
-                    const coords = geojson.geometry.coordinates;
-                    const type = geojson.geometry.type;
-                    let paths = [];
-                    if (type === 'Polygon') {
-                        paths.push(coords[0]);
-                    } else if (type === 'MultiPolygon') {
-                        coords.forEach(poly => paths.push(poly[0]));
-                    }
-                    this.mapCore.setCustomPolygons(paths);
+                    this.lastIsochroneGeoJSON = geojson;
+                    this.applySimplifyConfig();
                 },
                 async loadHistoryList(options = {}) {
                     const force = !!(options && options.force);
@@ -8209,6 +8527,7 @@
                 async loadHistoryDetail(id) {
                     try {
                         this.cancelHistoryLoading();
+                        this.stopScopeDrawing();
                         if (!this.mapCore || !this.mapCore.map) {
                             this.errorMessage = '地图尚未初始化，请稍后重试';
                             return;
@@ -8227,7 +8546,8 @@
                             clearCenterMarker: true,
                             resetFilterPanel: true
                         });
-                        this.mapCore.clearCustomPolygons();
+                        this.clearScopeOutlineDisplay();
+                        this.drawnScopePolygon = [];
                         this.resetRoadSyntaxState();
 
                         if (data.params && data.params.center) {
@@ -8238,11 +8558,27 @@
                             // Restore time horizon if available
                             if (data.params.time_min) this.timeHorizon = data.params.time_min;
                         }
+                        this.resultDataSource = this.normalizePoiSource(
+                            data && data.params ? data.params.source : '',
+                            'unknown'
+                        );
+                        const historyDrawnPolygon = this._closePolygonRing(this.normalizePath(
+                            data && data.params ? data.params.drawn_polygon : [],
+                            3,
+                            'history.detail.drawn_polygon'
+                        ));
+                        const hasHistoryDrawnPolygon = Array.isArray(historyDrawnPolygon) && historyDrawnPolygon.length >= 4;
+                        this.drawnScopePolygon = hasHistoryDrawnPolygon ? historyDrawnPolygon.slice() : [];
+                        this.isochroneScopeMode = hasHistoryDrawnPolygon ? 'area' : 'point';
 
                         if (data.polygon) {
-                            this.mapCore.setCustomPolygons([data.polygon]);
+                            this.scopeSource = 'history';
                             this.lastIsochroneGeoJSON = { geometry: { type: 'Polygon', coordinates: [data.polygon] } };
+                        } else {
+                            this.scopeSource = '';
+                            this.lastIsochroneGeoJSON = null;
                         }
+                        this.applySimplifyConfig();
 
                         // Switch to Results Step before building panels
                         this.step = 3;
@@ -8258,6 +8594,7 @@
                             this.updateLegacySystem(data.pois);
                             this.poiStatus = `已加载历史: ${data.pois.length} 条`;
                         }
+                        this.applySimplifyConfig();
                         setTimeout(() => this.resizePoiChart(), 0);
 
                     } catch (e) {
@@ -8273,6 +8610,9 @@
                 resetAnalysis() {
                     this.destroyPlaceSearch();
                     this.step = 1;
+                    this.isochroneScopeMode = 'point';
+                    this.h3SimplifyMenuOpen = false;
+                    this.h3SimplifyTargets = [];
                     this.sidebarView = 'wizard';
                     this.selectedPoint = null;
                     this.errorMessage = '';
@@ -8284,8 +8624,13 @@
                     if (this.mapCore && this.mapCore.map) {
                         this.mapCore.map.setFitView();
                     }
+                    this.applySimplifyConfig();
                 },
                 async triggerSearch() {
+                    if (this.isochroneScopeMode !== 'point') {
+                        this.errorMessage = '点等时圈模式下才可搜索起点';
+                        return;
+                    }
                     const input = document.getElementById('keyword');
                     const keyword = input && input.value ? String(input.value).trim() : '';
                     if (!keyword) return;
@@ -8331,10 +8676,17 @@
                 },
                 saveAndRestart() {
                     this.destroyPlaceSearch();
+                    this.stopScopeDrawing();
                     this.step = 1;
+                    this.isochroneScopeMode = 'point';
+                    this.h3SimplifyMenuOpen = false;
+                    this.h3SimplifyTargets = [];
                     this.selectedPoint = null;
                     this.errorMessage = '';
                     this.poiStatus = '';
+                    this.scopeSource = '';
+                    this.drawnScopePolygon = [];
+                    this.lastIsochroneGeoJSON = null;
                     this.h3ExportMenuOpen = false;
                     this.h3ExportTasksOpen = false;
                     if (this.h3ToastTimer) {
@@ -8350,10 +8702,9 @@
                         resetFilterPanel: true
                     });
                     this.clearH3Grid();
-                    if (this.mapCore && this.mapCore.clearCustomPolygons) {
-                        this.mapCore.clearCustomPolygons();
-                    }
+                    this.clearScopeOutlineDisplay();
                     this.disposePoiChart();
+                    this.applySimplifyConfig();
                 },
                 initPoiChart() {
                     const el = document.getElementById('poiChart');

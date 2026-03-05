@@ -10,7 +10,7 @@
         return {
             isComputingRoadSyntax: false,
             roadSyntaxStatus: '',
-            roadSyntaxPerformanceProfile: 'unbounded',
+            roadSyntaxPerformanceProfile: 'high',
             roadSyntaxActiveEdgeCap: null,
             roadSyntaxDepthmapColorScale: 'axmanesque',
             roadSyntaxDisplayBlue: 0.0,
