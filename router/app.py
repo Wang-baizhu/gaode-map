@@ -2,7 +2,8 @@ import asyncio
 import json
 import logging
 from io import BytesIO
-from typing import Optional, Sequence
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence
 from datetime import datetime
 from urllib.parse import urlencode
 
@@ -10,7 +11,6 @@ from fastapi import APIRouter, HTTPException, Security, Query, status, Response,
 from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 
-from core.config import settings
 from core.config import settings
 # REMOVED: from core.models import (...)
 
@@ -29,7 +29,12 @@ from modules.map_manage.schemas import (
 # Modules & Logic
 from modules import generate_map_json
 from modules.isochrone import get_isochrone_polygon
-from modules.isochrone.schemas import IsochroneRequest, IsochroneResponse
+from modules.isochrone.schemas import (
+    IsochroneRequest,
+    IsochroneResponse,
+    IsochroneDebugSampleRequest,
+    IsochroneDebugSampleResponse,
+)
 from modules.poi.schemas import (
     PoiRequest,
     PoiResponse,
@@ -44,6 +49,15 @@ from modules.grid_h3.analysis_schemas import H3MetricsRequest, H3MetricsResponse
 from modules.grid_h3.arcgis_bridge import run_arcgis_h3_export
 from modules.grid_h3.core import build_h3_grid_feature_collection
 from modules.grid_h3.schemas import GridRequest, GridResponse
+from modules.export_bundle import (
+    AnalysisExportBundleRequest,
+    AnalysisExportEmptyError,
+    AnalysisExportOnlyProfessionalFailedError,
+    AnalysisExportTooLargeError,
+    REQUEST_SIZE_LIMIT_BYTES,
+    build_analysis_export_bundle,
+    estimate_request_size_bytes,
+)
 from modules.road_syntax.core import analyze_road_syntax
 from modules.road_syntax.schemas import RoadSyntaxRequest, RoadSyntaxResponse
 from modules.gaode_service.utils.transform_posi import gcj02_to_wgs84, wgs84_to_gcj02
@@ -67,13 +81,444 @@ from router.utils.deps import load_map_request, verify_api_key
 
 import os
 import time
-from shapely.geometry import mapping
-from shapely.ops import transform
+import threading
+import uuid
+import math
+from shapely.geometry import mapping, Polygon, MultiPolygon, Point
+from shapely.ops import transform, unary_union
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 templates = Jinja2Templates(directory=settings.templates_dir)
+
+
+ROAD_SYNTAX_PROGRESS_LOCK = threading.Lock()
+ROAD_SYNTAX_PROGRESS: Dict[str, Dict[str, Any]] = {}
+ROAD_SYNTAX_PROGRESS_TTL_SEC = 3600
+
+
+def _cleanup_road_syntax_progress(now_ts: Optional[float] = None) -> None:
+    now_value = float(now_ts if now_ts is not None else time.time())
+    stale_ids: List[str] = []
+    for run_id, item in ROAD_SYNTAX_PROGRESS.items():
+        updated_at = float(item.get("updated_at") or 0.0)
+        if (now_value - updated_at) > float(ROAD_SYNTAX_PROGRESS_TTL_SEC):
+            stale_ids.append(run_id)
+    for run_id in stale_ids:
+        ROAD_SYNTAX_PROGRESS.pop(run_id, None)
+
+
+def _update_road_syntax_progress(
+    run_id: str,
+    *,
+    status: str = "running",
+    stage: str = "",
+    message: str = "",
+    step: Optional[int] = None,
+    total: Optional[int] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    now_ts = float(time.time())
+    run_key = str(run_id or "").strip()
+    if not run_key:
+        run_key = uuid.uuid4().hex
+    with ROAD_SYNTAX_PROGRESS_LOCK:
+        _cleanup_road_syntax_progress(now_ts)
+        existing = ROAD_SYNTAX_PROGRESS.get(run_key) or {}
+        started_at = float(existing.get("started_at") or now_ts)
+        step_value: Optional[int] = None
+        total_value: Optional[int] = None
+        try:
+            if step is not None:
+                step_value = int(step)
+        except (TypeError, ValueError):
+            step_value = None
+        try:
+            if total is not None:
+                total_value = int(total)
+        except (TypeError, ValueError):
+            total_value = None
+        payload = {
+            "run_id": run_key,
+            "status": str(status or "running"),
+            "stage": str(stage or ""),
+            "message": str(message or ""),
+            "step": step_value,
+            "total": total_value,
+            "started_at": started_at,
+            "updated_at": now_ts,
+            "elapsed_sec": round(max(0.0, now_ts - started_at), 1),
+            "extra": dict(extra or {}),
+        }
+        ROAD_SYNTAX_PROGRESS[run_key] = payload
+        return dict(payload)
+
+
+def _get_road_syntax_progress(run_id: str) -> Optional[Dict[str, Any]]:
+    run_key = str(run_id or "").strip()
+    if not run_key:
+        return None
+    now_ts = float(time.time())
+    with ROAD_SYNTAX_PROGRESS_LOCK:
+        _cleanup_road_syntax_progress(now_ts)
+        payload = ROAD_SYNTAX_PROGRESS.get(run_key)
+        if not payload:
+            return None
+        data = dict(payload)
+        started_at = float(data.get("started_at") or now_ts)
+        data["elapsed_sec"] = round(max(0.0, now_ts - started_at), 1)
+        return data
+
+
+def _normalize_boundary_ring(path: Any) -> List[List[float]]:
+    ring: List[List[float]] = []
+    for pt in path if isinstance(path, list) else []:
+        if not isinstance(pt, list) or len(pt) < 2:
+            continue
+        try:
+            lng = float(pt[0])
+            lat = float(pt[1])
+        except (TypeError, ValueError):
+            continue
+        ring.append([lng, lat])
+    if len(ring) < 3:
+        return []
+    first = ring[0]
+    last = ring[-1]
+    if abs(first[0] - last[0]) > 1e-9 or abs(first[1] - last[1]) > 1e-9:
+        ring.append([first[0], first[1]])
+    return ring if len(ring) >= 4 else []
+
+
+def _extract_boundary_rings(geometry: Dict[str, Any]) -> List[List[List[float]]]:
+    if not isinstance(geometry, dict):
+        return []
+    geom_type = str(geometry.get("type") or "")
+    coords = geometry.get("coordinates")
+    rings: List[List[List[float]]] = []
+    if geom_type == "Polygon" and isinstance(coords, list) and coords and isinstance(coords[0], list):
+        ring = _normalize_boundary_ring(coords[0])
+        if ring:
+            rings.append(ring)
+    elif geom_type == "MultiPolygon" and isinstance(coords, list):
+        for polygon in coords:
+            if not isinstance(polygon, list) or not polygon or not isinstance(polygon[0], list):
+                continue
+            ring = _normalize_boundary_ring(polygon[0])
+            if ring:
+                rings.append(ring)
+    return rings
+
+
+def _signed_ring_area(ring: List[List[float]]) -> float:
+    if len(ring) < 4:
+        return 0.0
+    area = 0.0
+    for i in range(len(ring) - 1):
+        a = ring[i]
+        b = ring[i + 1]
+        area += (float(a[0]) * float(b[1])) - (float(b[0]) * float(a[1]))
+    return area / 2.0
+
+
+def _resolve_city_boundary_candidates(city_name: str) -> List[str]:
+    city = (city_name or "").strip().lower()
+    is_changsha = ("长沙" in city_name) or city in {"changsha", "changsha city", "cs"}
+    if is_changsha:
+        return [
+            "changsha_boundary_gcj02.geojson",
+            "changsha_boundary.geojson",
+        ]
+    return []
+
+
+def _load_city_boundary_ring(city_name: str) -> Dict[str, Any]:
+    candidates = _resolve_city_boundary_candidates(city_name)
+    if not candidates:
+        raise HTTPException(status_code=400, detail=f"暂不支持城市边界: {city_name}")
+
+    boundary_dir = Path(settings.city_boundary_dir).expanduser()
+    if not boundary_dir.exists() or not boundary_dir.is_dir():
+        raise HTTPException(status_code=500, detail=f"城市边界目录不存在: {boundary_dir}")
+
+    rings: List[List[List[float]]] = []
+    used_file: Optional[Path] = None
+    tried_paths: List[str] = []
+    for filename in candidates:
+        path = boundary_dir / filename
+        tried_paths.append(str(path))
+        if not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"边界文件读取失败: {path} ({exc})") from exc
+
+        if isinstance(payload, dict) and payload.get("type") == "FeatureCollection":
+            for feature in payload.get("features") or []:
+                if not isinstance(feature, dict):
+                    continue
+                rings.extend(_extract_boundary_rings(feature.get("geometry") or {}))
+        elif isinstance(payload, dict) and payload.get("type") == "Feature":
+            rings.extend(_extract_boundary_rings(payload.get("geometry") or {}))
+        elif isinstance(payload, dict):
+            rings.extend(_extract_boundary_rings(payload))
+
+        if rings:
+            used_file = path
+            break
+
+    if not rings:
+        raise HTTPException(
+            status_code=404,
+            detail=f"未找到可用城市边界文件，请检查: {', '.join(tried_paths)}",
+        )
+
+    largest_ring = sorted(
+        rings,
+        key=lambda ring: (abs(_signed_ring_area(ring)), len(ring)),
+        reverse=True,
+    )[0]
+    return {
+        "city": city_name,
+        "source_file": str(used_file) if used_file else "",
+        "ring": largest_ring,
+    }
+
+
+def _meters_per_degree_lon(lat_deg: float) -> float:
+    lat_rad = math.radians(float(lat_deg))
+    # Avoid near-zero in high latitude while keeping rough conversion stable.
+    return max(1000.0, 111320.0 * abs(math.cos(lat_rad)))
+
+
+def _segment_length_m(x1: float, y1: float, x2: float, y2: float, lat_ref: float) -> float:
+    dx_m = (float(x2) - float(x1)) * _meters_per_degree_lon(lat_ref)
+    dy_m = (float(y2) - float(y1)) * 111320.0
+    return math.sqrt(dx_m * dx_m + dy_m * dy_m)
+
+
+def _dedupe_points(points: List[List[float]], precision: int = 6) -> List[List[float]]:
+    out: List[List[float]] = []
+    seen = set()
+    for pt in points:
+        if not isinstance(pt, list) or len(pt) < 2:
+            continue
+        x = float(pt[0])
+        y = float(pt[1])
+        key = (round(x, precision), round(y, precision))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append([x, y])
+    return out
+
+
+def _limit_points_evenly(points: List[List[float]], limit: int) -> List[List[float]]:
+    if len(points) <= limit:
+        return points
+    if limit <= 1:
+        return [points[0]]
+    span = len(points) - 1
+    selected: List[List[float]] = []
+    used = set()
+    for i in range(limit):
+        idx = int(round((i * span) / (limit - 1)))
+        idx = min(max(idx, 0), len(points) - 1)
+        if idx in used:
+            continue
+        used.add(idx)
+        selected.append(points[idx])
+    if not selected:
+        return [points[0]]
+    return selected
+
+
+def _sample_boundary_points(poly: Polygon, step_m: float, cap: Optional[int] = 300) -> List[List[float]]:
+    if not poly or poly.is_empty or not poly.exterior:
+        return []
+    coords = list(poly.exterior.coords)
+    if len(coords) < 2:
+        return []
+    lat_ref = float(poly.centroid.y)
+    sampled: List[List[float]] = []
+    for i in range(len(coords) - 1):
+        x1, y1 = float(coords[i][0]), float(coords[i][1])
+        x2, y2 = float(coords[i + 1][0]), float(coords[i + 1][1])
+        seg_len = _segment_length_m(x1, y1, x2, y2, lat_ref)
+        steps = max(1, int(math.ceil(seg_len / max(1.0, step_m))))
+        for k in range(steps):
+            t = float(k) / float(steps)
+            sampled.append([x1 + (x2 - x1) * t, y1 + (y2 - y1) * t])
+            if cap is not None and len(sampled) >= cap:
+                return _dedupe_points(sampled)
+    sampled.append([float(coords[-1][0]), float(coords[-1][1])])
+    return _dedupe_points(sampled)
+
+
+def _sample_inner_points(poly: Polygon, step_m: float, cap: int = 300) -> List[List[float]]:
+    if not poly or poly.is_empty:
+        return []
+    min_x, min_y, max_x, max_y = poly.bounds
+    if max_x <= min_x or max_y <= min_y:
+        return []
+
+    lat_ref = float(poly.centroid.y)
+    dx_deg = max(step_m / _meters_per_degree_lon(lat_ref), 1e-6)
+    dy_deg = max(step_m / 111320.0, 1e-6)
+    if dx_deg <= 0 or dy_deg <= 0:
+        return []
+
+    y = float(min_y)
+    row = 0
+    sampled: List[List[float]] = []
+    while y <= float(max_y) and len(sampled) < cap:
+        x_start = float(min_x) + (0.5 * dx_deg if (row % 2 == 1) else 0.0)
+        x = x_start
+        while x <= float(max_x) and len(sampled) < cap:
+            pt = Point(float(x), float(y))
+            if poly.covers(pt):
+                sampled.append([float(x), float(y)])
+            x += dx_deg
+        y += dy_deg
+        row += 1
+    return _dedupe_points(sampled)
+
+
+def _pick_largest_polygon(geom: Any) -> Optional[Polygon]:
+    if geom is None:
+        return None
+    if isinstance(geom, Polygon):
+        return geom if not geom.is_empty else None
+    if isinstance(geom, MultiPolygon):
+        geoms = [g for g in geom.geoms if isinstance(g, Polygon) and not g.is_empty]
+        if not geoms:
+            return None
+        return max(geoms, key=lambda g: g.area)
+    if getattr(geom, "geom_type", "") == "GeometryCollection":
+        polys: List[Polygon] = []
+        for g in getattr(geom, "geoms", []):
+            picked = _pick_largest_polygon(g)
+            if picked is not None:
+                polys.append(picked)
+        if not polys:
+            return None
+        return max(polys, key=lambda g: g.area)
+    return None
+
+
+def _has_non_empty_area_geometry(geom: Any) -> bool:
+    return bool(getattr(geom, "is_empty", True) is False)
+
+
+def _transform_polygon_payload_coords(raw: Any, transformer) -> list:
+    if not isinstance(raw, list) or not raw:
+        return []
+    if isinstance(raw[0], list) and len(raw[0]) >= 2 and isinstance(raw[0][0], (int, float)) and isinstance(raw[0][1], (int, float)):
+        out: List[List[float]] = []
+        for pt in raw:
+            if not isinstance(pt, list) or len(pt) < 2:
+                continue
+            out.append(list(transformer(pt[0], pt[1])))
+        return out
+
+    out_nested = []
+    for item in raw:
+        transformed = _transform_polygon_payload_coords(item, transformer)
+        if transformed:
+            out_nested.append(transformed)
+    return out_nested
+
+
+def _build_scope_sample_points(
+    scope_poly: Polygon,
+    center_lon: float,
+    center_lat: float,
+    *,
+    boundary_step_m: float,
+    inner_step_m: float,
+    max_points: Optional[int],
+) -> List[List[float]]:
+    _ = inner_step_m
+    boundary_cap = None if max_points is None else max(120, int(max_points) * 4)
+    boundary_pts = _sample_boundary_points(scope_poly, float(boundary_step_m), cap=boundary_cap)
+    if boundary_pts:
+        if max_points is not None and len(boundary_pts) > int(max_points):
+            return _limit_points_evenly(boundary_pts, int(max_points))
+        return boundary_pts
+
+    base_points: List[List[float]] = [[float(center_lon), float(center_lat)]]
+    if scope_poly and not scope_poly.is_empty:
+        rp = scope_poly.representative_point()
+        base_points.append([float(rp.x), float(rp.y)])
+    deduped = _dedupe_points(base_points)
+    if max_points is not None and len(deduped) > int(max_points):
+        return _limit_points_evenly(deduped, int(max_points))
+    return deduped
+
+
+def _parse_clip_polygon(
+    clip_polygon_raw: Optional[List[List[float]]],
+    coord_type: str,
+) -> Optional[Polygon]:
+    if not clip_polygon_raw:
+        return None
+
+    clip_ring: List[List[float]] = []
+    for pt in clip_polygon_raw or []:
+        if not isinstance(pt, list) or len(pt) < 2:
+            continue
+        try:
+            x = float(pt[0])
+            y = float(pt[1])
+        except (TypeError, ValueError):
+            continue
+        if coord_type == "gcj02":
+            x, y = gcj02_to_wgs84(x, y)
+        clip_ring.append([x, y])
+
+    if len(clip_ring) >= 3:
+        first = clip_ring[0]
+        last = clip_ring[-1]
+        if abs(first[0] - last[0]) > 1e-9 or abs(first[1] - last[1]) > 1e-9:
+            clip_ring.append([first[0], first[1]])
+    if len(clip_ring) < 4:
+        raise HTTPException(400, "Invalid clip_polygon")
+
+    clip_geom = Polygon(clip_ring)
+    if not clip_geom.is_valid:
+        clip_geom = clip_geom.buffer(0)
+    clip_poly = _pick_largest_polygon(clip_geom)
+    if clip_poly is None:
+        raise HTTPException(400, "Invalid clip_polygon")
+    return clip_poly
+
+
+def _transform_area_geometry_to_coord_type(geom: Any, coord_type: str) -> Any:
+    if coord_type != "gcj02" or geom is None:
+        return geom
+
+    def _trans(x, y, z=None):
+        try:
+            iter(x)
+            nx, ny = [], []
+            for i in range(len(x)):
+                tx, ty = wgs84_to_gcj02(x[i], y[i])
+                nx.append(tx)
+                ny.append(ty)
+            return tuple(nx), tuple(ny)
+        except Exception:
+            return wgs84_to_gcj02(x, y)
+
+    return transform(_trans, geom)
+
+
+def _transform_point_from_wgs84(lon: float, lat: float, coord_type: str) -> List[float]:
+    if coord_type == "gcj02":
+        tlon, tlat = wgs84_to_gcj02(float(lon), float(lat))
+        return [float(tlon), float(tlat)]
+    return [float(lon), float(lat)]
 
 # =============================================================================
 # 1. Base / Misc
@@ -291,42 +736,192 @@ async def delete_map_polygon(map_id: int, polygon_id: int):
 async def calculate_isochrone(payload: IsochroneRequest):
     start = time.time()
     lat, lon = payload.lat, payload.lon
-    # Transform to WGS84 for engine
+    # Transform to WGS84 for engine.
     if payload.coord_type == "gcj02":
         lon, lat = gcj02_to_wgs84(payload.lon, payload.lat)
-        
-    poly_wgs84 = await asyncio.to_thread(
-        get_isochrone_polygon, lat, lon, payload.time_min * 60, payload.mode
-    )
-    
-    if poly_wgs84.is_empty:
-        raise HTTPException(404, "Empty isochrone result")
-        
-    final_poly = poly_wgs84
-    # Transform back if needed
-    if payload.coord_type == "gcj02":
-        def _trans(x, y, z=None):
-            # Shapely transform handler
-            try:
-                iter(x)
-                nx, ny = [], []
-                for i in range(len(x)):
-                    tx, ty = wgs84_to_gcj02(x[i], y[i])
-                    nx.append(tx); ny.append(ty)
-                return tuple(nx), tuple(ny)
-            except:
-                return wgs84_to_gcj02(x, y)
-        final_poly = transform(_trans, poly_wgs84)
-        
+
+    clip_poly = _parse_clip_polygon(payload.clip_polygon, payload.coord_type)
+
+    sample_points: List[List[float]] = [[lon, lat]]
+    if payload.origin_mode == "multi_sample":
+        if clip_poly is None:
+            raise HTTPException(400, "origin_mode=multi_sample requires clip_polygon")
+        sample_points = _build_scope_sample_points(
+            clip_poly,
+            lon,
+            lat,
+            boundary_step_m=float(payload.sample_boundary_step_m),
+            inner_step_m=float(payload.sample_inner_step_m),
+            max_points=int(payload.sample_max_points) if payload.sample_max_points is not None else None,
+        )
+        if not sample_points:
+            sample_points = [[lon, lat]]
+
+    if payload.origin_mode == "multi_sample":
+        sem = asyncio.Semaphore(8)
+
+        async def _compute_one(pt: List[float]):
+            async with sem:
+                return await asyncio.to_thread(
+                    get_isochrone_polygon,
+                    float(pt[1]),
+                    float(pt[0]),
+                    payload.time_min * 60,
+                    payload.mode,
+                )
+
+        results = await asyncio.gather(*[_compute_one(pt) for pt in sample_points], return_exceptions=True)
+        polys = []
+        for item in results:
+            if isinstance(item, Exception):
+                continue
+            picked = _pick_largest_polygon(item)
+            if picked is not None and not picked.is_empty:
+                polys.append(picked)
+        if clip_poly is not None:
+            polys.append(clip_poly)
+        if not polys:
+            raise HTTPException(404, "Empty isochrone result")
+        final_poly = unary_union(polys)
+        if not _has_non_empty_area_geometry(final_poly):
+            raise HTTPException(404, "Empty isochrone result")
+    else:
+        poly_wgs84 = await asyncio.to_thread(
+            get_isochrone_polygon, lat, lon, payload.time_min * 60, payload.mode
+        )
+        final_poly = _pick_largest_polygon(poly_wgs84)
+        if final_poly is None:
+            raise HTTPException(404, "Empty isochrone result")
+
+    should_clip_output = bool(payload.clip_output) if payload.clip_output is not None else (payload.origin_mode != "multi_sample")
+    if clip_poly is not None and should_clip_output:
+        clipped = final_poly.intersection(clip_poly)
+        final_poly = clipped
+        if not _has_non_empty_area_geometry(final_poly):
+            raise HTTPException(404, "Empty isochrone result after clip")
+
+    # Transform back if needed.
+    final_poly = _transform_area_geometry_to_coord_type(final_poly, payload.coord_type)
+
     return {
         "type": "Feature",
         "properties": {
             "center": [payload.lon, payload.lat],
             "time_min": payload.time_min,
             "mode": payload.mode,
+            "origin_mode": payload.origin_mode,
+            "origin_count": len(sample_points),
+            "scope_clipped": bool(payload.clip_polygon and should_clip_output),
             "calc_time_ms": int((time.time() - start) * 1000)
         },
         "geometry": mapping(final_poly)
+    }
+
+
+@router.post("/api/v1/analysis/isochrone/debug-samples", response_model=IsochroneDebugSampleResponse)
+async def debug_isochrone_samples(payload: IsochroneDebugSampleRequest):
+    lat, lon = payload.lat, payload.lon
+    if payload.coord_type == "gcj02":
+        lon, lat = gcj02_to_wgs84(payload.lon, payload.lat)
+
+    clip_poly = _parse_clip_polygon(payload.clip_polygon, payload.coord_type)
+    if clip_poly is None:
+        raise HTTPException(400, "Invalid clip_polygon")
+
+    sample_points = _build_scope_sample_points(
+        clip_poly,
+        lon,
+        lat,
+        boundary_step_m=float(payload.sample_boundary_step_m),
+        inner_step_m=220.0,
+        max_points=int(payload.sample_max_points) if payload.sample_max_points is not None else None,
+    )
+    if not sample_points:
+        sample_points = [[float(lon), float(lat)]]
+
+    sem = asyncio.Semaphore(8)
+
+    async def _compute_one(sample_id: str, seq: int, pt: List[float]):
+        async with sem:
+            try:
+                geom = await asyncio.to_thread(
+                    get_isochrone_polygon,
+                    float(pt[1]),
+                    float(pt[0]),
+                    payload.time_min * 60,
+                    payload.mode,
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "sample_id": sample_id,
+                    "seq": seq,
+                    "message": str(exc) or exc.__class__.__name__,
+                }
+
+            if geom is None or getattr(geom, "is_empty", True):
+                return {
+                    "ok": False,
+                    "sample_id": sample_id,
+                    "seq": seq,
+                    "message": "Empty isochrone result",
+                }
+
+            transformed_geom = _transform_area_geometry_to_coord_type(geom, payload.coord_type)
+            return {
+                "ok": True,
+                "sample_id": sample_id,
+                "seq": seq,
+                "geometry": mapping(transformed_geom),
+            }
+
+    sample_point_rows = []
+    tasks = []
+    for idx, pt in enumerate(sample_points, start=1):
+        sample_id = f"sample_{idx:03d}"
+        sample_point_rows.append({
+            "id": sample_id,
+            "seq": idx,
+            "location": _transform_point_from_wgs84(float(pt[0]), float(pt[1]), payload.coord_type),
+        })
+        tasks.append(_compute_one(sample_id, idx, pt))
+
+    raw_results = await asyncio.gather(*tasks)
+    feature_rows = []
+    errors = []
+    for item in raw_results:
+        if item.get("ok"):
+            feature_rows.append({
+                "type": "Feature",
+                "properties": {
+                    "sample_id": item["sample_id"],
+                    "seq": item["seq"],
+                },
+                "geometry": item["geometry"],
+            })
+            continue
+        errors.append({
+            "sample_id": item["sample_id"],
+            "seq": item["seq"],
+            "message": item["message"],
+        })
+
+    if not feature_rows:
+        raise HTTPException(502, "All debug sample isochrone requests failed")
+
+    scope_geometry = mapping(_transform_area_geometry_to_coord_type(clip_poly, payload.coord_type))
+    return {
+        "scope_geometry": scope_geometry,
+        "sample_points": sample_point_rows,
+        "isochrone_features": feature_rows,
+        "meta": {
+            "origin_count": len(sample_point_rows),
+            "time_min": payload.time_min,
+            "mode": payload.mode,
+            "coord_type": payload.coord_type,
+            "sample_boundary_step_m": payload.sample_boundary_step_m,
+            "errors": errors,
+        },
     }
 
 
@@ -341,6 +936,12 @@ async def build_h3_grid(payload: GridRequest):
         payload.min_overlap_ratio,
     )
     return feature_collection
+
+
+@router.get("/api/v1/analysis/city-boundary")
+async def get_city_boundary(city: str = Query("长沙市", description="城市名称")):
+    target_city = (city or "长沙市").strip() or "长沙市"
+    return _load_city_boundary_ring(target_city)
 
 
 @router.post("/api/v1/analysis/h3-metrics", response_model=H3MetricsResponse)
@@ -403,14 +1004,70 @@ async def export_h3_analysis(payload: H3ExportRequest):
     return Response(content=content, media_type=content_type, headers=headers)
 
 
+@router.post("/api/v1/analysis/export/bundle")
+async def export_analysis_bundle(payload: AnalysisExportBundleRequest, request: Request):
+    raw_content_length = request.headers.get("content-length")
+    if raw_content_length:
+        try:
+            content_length = int(raw_content_length)
+            if content_length > REQUEST_SIZE_LIMIT_BYTES:
+                raise HTTPException(status_code=413, detail="导出请求体过大")
+        except ValueError:
+            content_length = 0
+
+    payload_size = estimate_request_size_bytes(payload)
+    if payload_size > REQUEST_SIZE_LIMIT_BYTES:
+        raise HTTPException(status_code=413, detail="导出请求体过大")
+
+    try:
+        export_result = await asyncio.to_thread(build_analysis_export_bundle, payload)
+    except AnalysisExportOnlyProfessionalFailedError as exc:
+        raise HTTPException(status_code=502, detail=f"仅专业导出失败: {exc}") from exc
+    except AnalysisExportEmptyError as exc:
+        raise HTTPException(status_code=400, detail=f"无可导出内容: {exc}") from exc
+    except AnalysisExportTooLargeError as exc:
+        raise HTTPException(status_code=413, detail=f"导出包过大: {exc}") from exc
+
+    filename = str(export_result.get("filename") or "analysis_export.zip")
+    content = export_result.get("content") or b""
+    if not content:
+        raise HTTPException(status_code=400, detail="导出失败：空文件")
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return Response(content=content, media_type="application/zip", headers=headers)
+
+
 @router.post("/api/v1/analysis/road-syntax", response_model=RoadSyntaxResponse)
 async def analyze_road_syntax_api(payload: RoadSyntaxRequest):
+    run_id = str(payload.run_id or "").strip() or uuid.uuid4().hex
+    _update_road_syntax_progress(
+        run_id,
+        status="running",
+        stage="queued",
+        message="已接收请求，等待开始计算",
+        step=0,
+        total=9,
+        extra={},
+    )
+
+    def _progress_callback(snapshot: Dict[str, Any]) -> None:
+        _update_road_syntax_progress(
+            run_id,
+            status="running",
+            stage=str(snapshot.get("stage") or ""),
+            message=str(snapshot.get("message") or ""),
+            step=snapshot.get("step"),
+            total=snapshot.get("total"),
+            extra=snapshot.get("extra") if isinstance(snapshot.get("extra"), dict) else {},
+        )
+
     try:
         result = await asyncio.to_thread(
             analyze_road_syntax,
             polygon=payload.polygon,
             coord_type=payload.coord_type,
             mode=payload.mode,
+            graph_model=payload.graph_model,
+            highway_filter=payload.highway_filter,
             include_geojson=payload.include_geojson,
             max_edge_features=payload.max_edge_features,
             merge_geojson_edges=payload.merge_geojson_edges,
@@ -418,20 +1075,46 @@ async def analyze_road_syntax_api(payload: RoadSyntaxRequest):
             radii_m=payload.radii_m,
             metric=payload.metric,
             depthmap_cli_path=payload.depthmap_cli_path,
+            tulip_bins=payload.tulip_bins,
             use_arcgis_webgl=payload.use_arcgis_webgl,
             arcgis_python_path=payload.arcgis_python_path,
             arcgis_timeout_sec=payload.arcgis_timeout_sec,
             arcgis_metric_field=payload.arcgis_metric_field,
+            progress_callback=_progress_callback,
         )
     except RuntimeError as exc:
+        _update_road_syntax_progress(
+            run_id,
+            status="failed",
+            stage="failed",
+            message=str(exc),
+            extra={},
+        )
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    _update_road_syntax_progress(
+        run_id,
+        status="success",
+        stage="completed",
+        message="计算完成",
+        step=9,
+        total=9,
+        extra={},
+    )
     return result
+
+
+@router.get("/api/v1/analysis/road-syntax/progress")
+async def get_road_syntax_progress(run_id: str = Query(..., description="Road syntax run id")):
+    payload = _get_road_syntax_progress(run_id)
+    if not payload:
+        raise HTTPException(status_code=404, detail="run_id 不存在或已过期")
+    return payload
 
 
 @router.post("/api/v1/analysis/pois", response_model=PoiResponse)
 async def fetch_pois_analysis(payload: PoiRequest):
     # payload.polygon assumed GCJ02
-    source = (payload.source or "gaode").strip().lower()
+    source = (payload.source or "local").strip().lower()
     try:
         if source == "local":
             results = await fetch_local_pois_by_polygon(
@@ -460,7 +1143,7 @@ async def fetch_pois_analysis(payload: PoiRequest):
             
         s_poly = []
         if payload.polygon:
-            s_poly = [list(gcj02_to_wgs84(p[0], p[1])) for p in payload.polygon]
+            s_poly = _transform_polygon_payload_coords(payload.polygon, gcj02_to_wgs84)
             
         s_pois = []
         for p in results:
@@ -495,9 +1178,11 @@ async def save_history_manually(payload: HistorySaveRequest):
         
     s_poly = []
     if payload.polygon:
-        # Handle simple Polygon vs MultiPolygon structure if needed, 
-        # but usually frontend sends simple list of points for the isochrone
-        s_poly = [list(gcj02_to_wgs84(p[0], p[1])) for p in payload.polygon]
+        s_poly = _transform_polygon_payload_coords(payload.polygon, gcj02_to_wgs84)
+
+    s_drawn_poly = []
+    if payload.drawn_polygon:
+        s_drawn_poly = [list(gcj02_to_wgs84(p[0], p[1])) for p in payload.drawn_polygon]
         
     s_pois = []
     for p in payload.pois:
@@ -518,8 +1203,20 @@ async def save_history_manually(payload: HistorySaveRequest):
         desc = f"{payload.time_min}min - {desc}"
     
     try:
+        source = (payload.source or "local").strip().lower()
+        if source not in ("gaode", "local"):
+            source = "local"
+        params_payload = {
+            "center": s_center,
+            "time_min": payload.time_min,
+            "keywords": payload.keywords,
+            "mode": payload.mode,
+            "source": source,
+        }
+        if s_drawn_poly:
+            params_payload["drawn_polygon"] = s_drawn_poly
         history_id = history_repo.create_record(
-            {"center": s_center, "time_min": payload.time_min, "keywords": payload.keywords, "mode": payload.mode},
+            params_payload,
             s_poly, s_pois, desc
         )
     except Exception as e:
@@ -532,37 +1229,64 @@ async def save_history_manually(payload: HistorySaveRequest):
 async def get_history_list(limit: int = 20):
     return history_repo.get_list(limit)
 
-@router.get("/api/v1/analysis/history/{id}")
-async def get_history_detail(id: int):
-    res = history_repo.get_detail(id)
-    if not res: raise HTTPException(404, "Record not found")
-    
-    # Convert WGS84 storage -> GCJ02 display
-    params = res.get("params") or {}
+def _convert_history_detail_to_gcj02(res: Dict[str, Any], *, include_pois: bool) -> Dict[str, Any]:
+    payload = dict(res or {})
+
+    params = payload.get("params") or {}
     if params.get("center"):
-         cx, cy = params["center"]
-         nx, ny = wgs84_to_gcj02(cx, cy)
-         params["center"] = [nx, ny]
-         
-    if res.get("polygon"):
-        poly = res["polygon"]
-        # Helper to convert ring
-        def cr(r): return [list(wgs84_to_gcj02(p[0], p[1])) for p in r]
-        
+        cx, cy = params["center"]
+        nx, ny = wgs84_to_gcj02(cx, cy)
+        params["center"] = [nx, ny]
+
+    if params.get("drawn_polygon"):
+        try:
+            params["drawn_polygon"] = [list(wgs84_to_gcj02(p[0], p[1])) for p in params["drawn_polygon"]]
+        except Exception:
+            params["drawn_polygon"] = []
+
+    if payload.get("polygon"):
+        poly = payload["polygon"]
+
+        def cr(r):
+            return [list(wgs84_to_gcj02(p[0], p[1])) for p in r]
+
         if poly and len(poly) > 0:
-            if isinstance(poly[0][0], list): # Multi/Hole
-                res["polygon"] = [cr(ring) for ring in poly]
+            if isinstance(poly[0][0], list):
+                payload["polygon"] = [cr(ring) for ring in poly]
             else:
-                res["polygon"] = cr(poly)
-                
-    if res.get("pois"):
-         for p in res["pois"]:
-             if p.get("location"):
-                 lx, ly = p["location"]
-                 nlx, nly = wgs84_to_gcj02(lx, ly)
-                 p["location"] = [nlx, nly]
-                 
+                payload["polygon"] = cr(poly)
+
+    if include_pois and payload.get("pois"):
+        for p in payload["pois"]:
+            if p.get("location"):
+                lx, ly = p["location"]
+                nlx, nly = wgs84_to_gcj02(lx, ly)
+                p["location"] = [nlx, nly]
+
+    return payload
+
+
+@router.get("/api/v1/analysis/history/{id}/pois")
+async def get_history_pois(id: int):
+    res = history_repo.get_pois(id)
+    if not res:
+        raise HTTPException(404, "Record not found")
+
+    pois = res.get("pois") or []
+    for poi in pois:
+        if poi.get("location"):
+            lx, ly = poi["location"]
+            nlx, nly = wgs84_to_gcj02(lx, ly)
+            poi["location"] = [nlx, nly]
     return res
+
+
+@router.get("/api/v1/analysis/history/{id}")
+async def get_history_detail(id: int, include_pois: bool = Query(True)):
+    res = history_repo.get_detail(id, include_pois=include_pois)
+    if not res:
+        raise HTTPException(404, "Record not found")
+    return _convert_history_detail_to_gcj02(res, include_pois=include_pois)
 
 @router.delete("/api/v1/analysis/history/{id}")
 async def delete_history(id: int):

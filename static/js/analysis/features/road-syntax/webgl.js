@@ -322,6 +322,105 @@
                 });
                 return out;
             },
+            roadSyntaxResolveRadiusCenter() {
+                const center = this.selectedPoint && typeof this.selectedPoint === 'object'
+                    ? this.selectedPoint
+                    : null;
+                if (!center) return null;
+                const lng = Number(center.lng);
+                const lat = Number(center.lat);
+                if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
+                return { lng, lat };
+            },
+            roadSyntaxDistancePointToSegmentMeters(center, a, b) {
+                if (!center || !Array.isArray(a) || !Array.isArray(b) || a.length < 2 || b.length < 2) return Number.POSITIVE_INFINITY;
+                const clng = Number(center.lng);
+                const clat = Number(center.lat);
+                const ax = Number(a[0]);
+                const ay = Number(a[1]);
+                const bx = Number(b[0]);
+                const by = Number(b[1]);
+                if (!Number.isFinite(clng) || !Number.isFinite(clat) || !Number.isFinite(ax) || !Number.isFinite(ay) || !Number.isFinite(bx) || !Number.isFinite(by)) {
+                    return Number.POSITIVE_INFINITY;
+                }
+                const R = 6371000.0;
+                const latRad = clat * Math.PI / 180.0;
+                const cosLat = Math.max(1e-9, Math.cos(latRad));
+                const toX = (lng) => ((lng - clng) * Math.PI / 180.0) * R * cosLat;
+                const toY = (lat) => ((lat - clat) * Math.PI / 180.0) * R;
+                const x1 = toX(ax);
+                const y1 = toY(ay);
+                const x2 = toX(bx);
+                const y2 = toY(by);
+                const dx = x2 - x1;
+                const dy = y2 - y1;
+                const len2 = dx * dx + dy * dy;
+                if (len2 <= 1e-12) {
+                    return Math.hypot(x1, y1);
+                }
+                const t = Math.max(0, Math.min(1, -((x1 * dx) + (y1 * dy)) / len2));
+                const px = x1 + t * dx;
+                const py = y1 + t * dy;
+                return Math.hypot(px, py);
+            },
+            roadSyntaxGeometryIntersectsRadius(geometry, center, radiusMeters) {
+                const geom = (geometry && typeof geometry === 'object') ? geometry : {};
+                const geomType = String(geom.type || '').toLowerCase();
+                const radius = Number(radiusMeters);
+                if (!center || !Number.isFinite(radius) || radius <= 0) return true;
+                const lineIntersects = (coords) => {
+                    const list = Array.isArray(coords) ? coords : [];
+                    if (list.length < 2) return false;
+                    for (let i = 0; i < list.length - 1; i += 1) {
+                        const d = this.roadSyntaxDistancePointToSegmentMeters(center, list[i], list[i + 1]);
+                        if (Number.isFinite(d) && d <= radius) {
+                            return true;
+                        }
+                    }
+                    return false;
+                };
+                if (geomType === 'linestring') {
+                    return lineIntersects(geom.coordinates);
+                }
+                if (geomType === 'multilinestring') {
+                    const parts = Array.isArray(geom.coordinates) ? geom.coordinates : [];
+                    for (let i = 0; i < parts.length; i += 1) {
+                        if (lineIntersects(parts[i])) return true;
+                    }
+                }
+                return false;
+            },
+            roadSyntaxFilterWebglFeaturesByRadius(features, radiusLabel, radiusMeters) {
+                const source = Array.isArray(features) ? features : [];
+                const radius = Number(radiusMeters);
+                if (!Number.isFinite(radius) || radius <= 0) return source.slice();
+                const center = this.roadSyntaxResolveRadiusCenter();
+                if (!center) return source.slice();
+                const firstFeature = source.length ? source[0] : null;
+                const firstGeom = firstFeature && firstFeature.geometry ? firstFeature.geometry : {};
+                const firstCoords = Array.isArray(firstGeom.coordinates) ? firstGeom.coordinates : [];
+                const seed = firstCoords.length ? JSON.stringify(firstCoords[0]).slice(0, 80) : 'none';
+                const cacheKey = [
+                    String(radiusLabel || ''),
+                    radius,
+                    center.lng.toFixed(6),
+                    center.lat.toFixed(6),
+                    source.length,
+                    seed,
+                ].join('|');
+                const cache = (this.roadSyntaxWebglRadiusFilterCache && typeof this.roadSyntaxWebglRadiusFilterCache === 'object')
+                    ? this.roadSyntaxWebglRadiusFilterCache
+                    : null;
+                if (cache && cache.key === cacheKey && Array.isArray(cache.features)) {
+                    return cache.features.slice();
+                }
+                const filtered = source.filter((feature) => this.roadSyntaxGeometryIntersectsRadius((feature || {}).geometry, center, radius));
+                this.roadSyntaxWebglRadiusFilterCache = {
+                    key: cacheKey,
+                    features: filtered.slice(),
+                };
+                return filtered;
+            },
             roadSyntaxMarkRaw(value) {
                 if (window.Vue && typeof window.Vue.markRaw === 'function') {
                     return window.Vue.markRaw(value);
@@ -386,12 +485,26 @@
                     features: plainFeatures,
                 };
                 const metric = this.resolveRoadSyntaxActiveMetric();
+                const radiusLabel = this.roadSyntaxMetricUsesRadius(metric)
+                    ? this.roadSyntaxNormalizeRadiusLabel(this.roadSyntaxRadiusLabel, metric)
+                    : 'global';
+                const radiusMeters = this.roadSyntaxMetricUsesRadius(metric)
+                    ? this.roadSyntaxRadiusMeters(radiusLabel, metric)
+                    : 0;
+                const renderFeatures = (this.roadSyntaxMetricUsesRadius(metric) && radiusMeters > 0)
+                    ? this.roadSyntaxFilterWebglFeaturesByRadius(plainFeatures, radiusLabel, radiusMeters)
+                    : plainFeatures;
+                if (!renderFeatures.length) {
+                    this.roadSyntaxWebglStatus = 'webgl_features_filtered_empty';
+                    return false;
+                }
                 if (typeof this.resolveRoadSyntaxLayerKey === 'function') {
-                    this.roadSyntaxActiveLayerKey = this.resolveRoadSyntaxLayerKey(metric);
+                    this.roadSyntaxActiveLayerKey = this.resolveRoadSyntaxLayerKey(metric, { radiusLabel });
                     this.roadSyntaxActiveLayerVariant = 'full';
                 }
-                const metricField = this.resolveRoadSyntaxMetricField(metric);
+                const metricField = this.resolveRoadSyntaxMetricField(metric, radiusLabel);
                 const fallbackField = this.resolveRoadSyntaxFallbackField(metric);
+                sourceData.features = renderFeatures;
                 const stats = this.roadSyntaxWebglMetricStats(sourceData.features, metricField, fallbackField);
                 const rangeMin = Number(stats.min);
                 const rangeMax = Number(stats.max);

@@ -1,5 +1,6 @@
 import csv
 import bisect
+import json
 import logging
 import math
 import re
@@ -7,19 +8,25 @@ import shutil
 import subprocess
 import tempfile
 import time
+import threading
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 
 import requests
-from shapely.geometry import LineString, Polygon
+from shapely.geometry import GeometryCollection, LineString, MultiLineString, MultiPolygon, Polygon
 from shapely.prepared import prep
 
 from core.config import settings
 from modules.gaode_service.utils.transform_posi import gcj02_to_wgs84, wgs84_to_gcj02
-from modules.road_syntax.arcgis_bridge import ArcGISRoadSyntaxBridgeError, run_arcgis_road_syntax_webgl
+from modules.road_syntax.arcgis_bridge import (
+    ArcGISRoadSyntaxBridgeError,
+    run_arcgis_road_syntax_webgl,
+)
 
 
 OverpassMode = Literal["walking", "bicycling", "driving"]
+GraphModel = Literal["segment", "axial"]
+HighwayFilter = Literal["mode", "all", "major"]
 logger = logging.getLogger(__name__)
 
 MODE_HIGHWAY_REGEX: Dict[OverpassMode, str] = {
@@ -35,12 +42,40 @@ MODE_HIGHWAY_REGEX: Dict[OverpassMode, str] = {
         "motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service"
     ),
 }
+MAJOR_HIGHWAY_REGEX = (
+    "motorway|motorway_link|trunk|trunk_link|primary|primary_link|"
+    "secondary|secondary_link"
+)
+MAJOR_HIGHWAY_PRIORITY: Dict[str, int] = {
+    "motorway": 0,
+    "motorway_link": 1,
+    "trunk": 2,
+    "trunk_link": 3,
+    "primary": 4,
+    "primary_link": 5,
+    "secondary": 6,
+    "secondary_link": 7,
+}
+_OVERPASS_CACHE_LOCK = threading.Lock()
+_OVERPASS_QUERY_CACHE: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
 
 
 def _safe_round(value: float, digits: int = 6) -> float:
     if not math.isfinite(float(value)):
         return 0.0
     return round(float(value), digits)
+
+
+def _safe_float(value: Any, digits: Optional[int] = None) -> Optional[float]:
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(num):
+        return None
+    if digits is None:
+        return num
+    return round(num, int(digits))
 
 
 def _ensure_closed_ring(coords: List[List[float]]) -> List[List[float]]:
@@ -52,36 +87,67 @@ def _ensure_closed_ring(coords: List[List[float]]) -> List[List[float]]:
 
 
 def _coords_to_wgs84_polygon(
-    polygon: List[List[float]],
+    polygon: list,
     coord_type: Literal["gcj02", "wgs84"],
-) -> Polygon:
-    ring: List[List[float]] = []
-    for pt in polygon or []:
-        if not isinstance(pt, (list, tuple)) or len(pt) < 2:
-            continue
-        try:
-            lng = float(pt[0])
-            lat = float(pt[1])
-        except (TypeError, ValueError):
-            continue
-        if coord_type == "gcj02":
-            lng, lat = gcj02_to_wgs84(lng, lat)
-        ring.append([lng, lat])
+) -> Polygon | MultiPolygon:
+    def _is_coord_pair(value: Any) -> bool:
+        return (
+            isinstance(value, (list, tuple))
+            and len(value) >= 2
+            and isinstance(value[0], (int, float))
+            and isinstance(value[1], (int, float))
+        )
 
-    ring = _ensure_closed_ring(ring)
-    if len(ring) < 4:
+    def _normalize_poly(raw_ring: list) -> Polygon | None:
+        ring: List[List[float]] = []
+        for pt in raw_ring or []:
+            if not isinstance(pt, (list, tuple)) or len(pt) < 2:
+                continue
+            try:
+                lng = float(pt[0])
+                lat = float(pt[1])
+            except (TypeError, ValueError):
+                continue
+            if coord_type == "gcj02":
+                lng, lat = gcj02_to_wgs84(lng, lat)
+            ring.append([lng, lat])
+        ring = _ensure_closed_ring(ring)
+        if len(ring) < 4:
+            return None
+        poly = Polygon(ring)
+        if not poly.is_valid:
+            poly = poly.buffer(0)
+        if isinstance(poly, Polygon) and not poly.is_empty:
+            return poly
+        if isinstance(poly, MultiPolygon):
+            geoms = [g for g in poly.geoms if isinstance(g, Polygon) and not g.is_empty]
+            if geoms:
+                return max(geoms, key=lambda g: g.area)
+        return None
+
+    if not isinstance(polygon, list) or not polygon:
         return Polygon()
 
-    poly = Polygon(ring)
-    if not poly.is_valid:
-        poly = poly.buffer(0)
-    if isinstance(poly, Polygon):
-        return poly
-    if hasattr(poly, "geoms"):
-        geoms = [g for g in poly.geoms if isinstance(g, Polygon)]
-        if geoms:
-            return max(geoms, key=lambda g: g.area)
-    return Polygon()
+    if _is_coord_pair(polygon[0]):
+        return _normalize_poly(polygon) or Polygon()
+
+    polygons: List[Polygon] = []
+    for item in polygon:
+        ring_source = None
+        if isinstance(item, list) and item and _is_coord_pair(item[0]):
+            ring_source = item
+        elif isinstance(item, list) and item and isinstance(item[0], list) and item[0] and _is_coord_pair(item[0][0]):
+            ring_source = item[0]
+        if ring_source is None:
+            continue
+        poly = _normalize_poly(ring_source)
+        if poly is not None:
+            polygons.append(poly)
+    if not polygons:
+        return Polygon()
+    if len(polygons) == 1:
+        return polygons[0]
+    return MultiPolygon(polygons)
 
 
 def _haversine_m(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
@@ -95,14 +161,86 @@ def _haversine_m(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
     return r * c
 
 
+def _collect_linestring_geoms(geom: Any, out: List[LineString]) -> None:
+    if geom is None:
+        return
+    if isinstance(geom, LineString):
+        if len(list(geom.coords)) >= 2:
+            out.append(geom)
+        return
+    if isinstance(geom, MultiLineString):
+        for part in geom.geoms:
+            _collect_linestring_geoms(part, out)
+        return
+    if isinstance(geom, GeometryCollection):
+        for part in geom.geoms:
+            _collect_linestring_geoms(part, out)
+        return
+
+
+def _clip_line_to_polygon_segment(
+    line: LineString,
+    polygon: Polygon | MultiPolygon,
+) -> Optional[Tuple[float, float, float, float]]:
+    if line.is_empty or polygon.is_empty:
+        return None
+    try:
+        clipped = line.intersection(polygon)
+    except Exception:  # noqa: BLE001
+        return None
+    if clipped.is_empty:
+        return None
+    parts: List[LineString] = []
+    _collect_linestring_geoms(clipped, parts)
+    if not parts:
+        return None
+    best = max(parts, key=lambda g: float(g.length))
+    coords = list(best.coords or [])
+    if len(coords) < 2:
+        return None
+    first = coords[0]
+    last = coords[-1]
+    try:
+        x1 = float(first[0])
+        y1 = float(first[1])
+        x2 = float(last[0])
+        y2 = float(last[1])
+    except (TypeError, ValueError):
+        return None
+    if not (math.isfinite(x1) and math.isfinite(y1) and math.isfinite(x2) and math.isfinite(y2)):
+        return None
+    if abs(x1 - x2) <= 1e-12 and abs(y1 - y2) <= 1e-12:
+        return None
+    return (x1, y1, x2, y2)
+
+
 def _build_overpass_query(
     bbox: Tuple[float, float, float, float],
     mode: OverpassMode,
+    highway_filter: HighwayFilter = "mode",
+    query_timeout_s: int = 25,
 ) -> str:
     south, west, north, east = bbox
+    timeout_value = max(10, int(query_timeout_s or 25))
+    if highway_filter == "all":
+        return f"""
+[out:json][timeout:{timeout_value}];
+(
+  way["highway"]({south:.7f},{west:.7f},{north:.7f},{east:.7f});
+);
+out body geom;
+"""
+    if highway_filter == "major":
+        return f"""
+[out:json][timeout:{timeout_value}];
+(
+  way["highway"~"{MAJOR_HIGHWAY_REGEX}"]({south:.7f},{west:.7f},{north:.7f},{east:.7f});
+);
+out body geom;
+"""
     regex = MODE_HIGHWAY_REGEX.get(mode, MODE_HIGHWAY_REGEX["walking"])
     return f"""
-[out:json][timeout:25];
+[out:json][timeout:{timeout_value}];
 (
   way["highway"~"{regex}"]({south:.7f},{west:.7f},{north:.7f},{east:.7f});
 );
@@ -117,29 +255,113 @@ def _resolve_overpass_endpoint() -> str:
     return endpoint
 
 
+def _get_overpass_cache(
+    query: str,
+    ttl_s: int,
+) -> Optional[List[Dict[str, Any]]]:
+    if ttl_s <= 0:
+        return None
+    now = time.time()
+    with _OVERPASS_CACHE_LOCK:
+        item = _OVERPASS_QUERY_CACHE.get(query)
+        if not item:
+            return None
+        ts, cached = item
+        if now - ts > ttl_s:
+            _OVERPASS_QUERY_CACHE.pop(query, None)
+            return None
+        return cached
+
+
+def _set_overpass_cache(
+    query: str,
+    elements: List[Dict[str, Any]],
+    ttl_s: int,
+    max_entries: int,
+) -> None:
+    if ttl_s <= 0:
+        return
+    now = time.time()
+    max_allowed = max(1, int(max_entries or 16))
+    with _OVERPASS_CACHE_LOCK:
+        _OVERPASS_QUERY_CACHE[query] = (now, elements)
+
+        if len(_OVERPASS_QUERY_CACHE) <= max_allowed:
+            return
+
+        # Trim expired first, then oldest entries.
+        expired_keys = [
+            key for key, (ts, _) in _OVERPASS_QUERY_CACHE.items()
+            if now - ts > ttl_s
+        ]
+        for key in expired_keys:
+            _OVERPASS_QUERY_CACHE.pop(key, None)
+
+        if len(_OVERPASS_QUERY_CACHE) <= max_allowed:
+            return
+
+        sorted_items = sorted(
+            _OVERPASS_QUERY_CACHE.items(),
+            key=lambda kv: kv[1][0],
+        )
+        extra = len(_OVERPASS_QUERY_CACHE) - max_allowed
+        for key, _ in sorted_items[:extra]:
+            _OVERPASS_QUERY_CACHE.pop(key, None)
+
+
 def _fetch_overpass_elements(query: str) -> List[Dict[str, Any]]:
     endpoint = _resolve_overpass_endpoint()
-    try:
-        response = requests.post(
-            endpoint,
-            data={"data": query},
-            timeout=(8, 45),
-        )
-        if response.status_code != 200:
-            preview = (response.text or "").strip().replace("\n", " ")[:280]
-            raise RuntimeError(f"HTTP {response.status_code}, body={preview}")
-        raw = (response.text or "").strip()
-        if not raw:
-            raise RuntimeError("empty response body")
-        if raw[:1] != "{":
-            preview = raw.replace("\n", " ")[:320]
-            if "runtime error" in raw.lower() or "timed out" in raw.lower():
-                raise RuntimeError(f"Overpass query timeout/error: {preview}")
-            raise RuntimeError(f"non-JSON response: {preview}")
-        payload = response.json()
-        return payload.get("elements") or []
-    except Exception as exc:  # noqa: BLE001
-        raise RuntimeError(f"Local Overpass request failed ({endpoint}): {exc}") from exc
+    cache_ttl_s = max(0, int(getattr(settings, "overpass_cache_ttl_s", 45) or 0))
+    cache_max_entries = max(1, int(getattr(settings, "overpass_cache_max_entries", 16) or 16))
+    cached = _get_overpass_cache(query, cache_ttl_s)
+    if cached is not None:
+        return cached
+
+    retry_count = max(0, int(getattr(settings, "overpass_retry_count", 1) or 0))
+    read_timeout_s = max(20, int(getattr(settings, "overpass_http_timeout_s", 90) or 90))
+    connect_timeout_s = min(15, max(3, read_timeout_s // 8))
+
+    last_error: Optional[Exception] = None
+    for attempt in range(retry_count + 1):
+        try:
+            response = requests.post(
+                endpoint,
+                data={"data": query},
+                timeout=(connect_timeout_s, read_timeout_s),
+            )
+            if response.status_code != 200:
+                preview = (response.text or "").strip().replace("\n", " ")[:280]
+                raise RuntimeError(f"HTTP {response.status_code}, body={preview}")
+            raw = (response.text or "").strip()
+            if not raw:
+                raise RuntimeError("empty response body")
+            if raw[:1] != "{":
+                preview = raw.replace("\n", " ")[:320]
+                if "runtime error" in raw.lower() or "timed out" in raw.lower():
+                    raise RuntimeError(f"Overpass query timeout/error: {preview}")
+                raise RuntimeError(f"non-JSON response: {preview}")
+            payload = response.json()
+            elements = payload.get("elements") or []
+            _set_overpass_cache(query, elements, cache_ttl_s, cache_max_entries)
+            return elements
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            text = str(exc).lower()
+            can_retry = (
+                attempt < retry_count
+                and (
+                    "timeout" in text
+                    or "timed out" in text
+                    or "runtime error" in text
+                    or isinstance(exc, requests.Timeout)
+                )
+            )
+            if not can_retry:
+                break
+            # Simple backoff to avoid immediate overload when users click repeatedly.
+            time.sleep(0.8 + attempt * 0.7)
+
+    raise RuntimeError(f"Local Overpass request failed ({endpoint}): {last_error}") from last_error
 
 
 def _to_output_coord(
@@ -169,7 +391,8 @@ def _radius_label_from_header(header: str) -> str:
 def _build_radius_arg(radii_m: List[int]) -> str:
     cleaned = sorted({int(r) for r in radii_m if int(r) > 0})
     if not cleaned:
-        cleaned = [800, 2000]
+        # Only compute global Rn when no local radii are requested.
+        return "n"
     return ",".join([str(v) for v in cleaned] + ["n"])
 
 
@@ -202,6 +425,29 @@ def _resolve_depthmap_cli_path(override_path: Optional[str] = None) -> str:
     )
 
 
+def _major_edge_priority(highway: str) -> int:
+    key = str(highway or "").strip().lower()
+    return int(MAJOR_HIGHWAY_PRIORITY.get(key, 99))
+
+
+def _prune_major_edges_for_global(edge_inputs: List[Dict[str, Any]], cap: int) -> List[Dict[str, Any]]:
+    if cap <= 0 or len(edge_inputs) <= cap:
+        return edge_inputs
+    ranked = sorted(
+        edge_inputs,
+        key=lambda e: (
+            _major_edge_priority(str(e.get("highway") or "")),
+            -float(e.get("length_m") or 0.0),
+            int(e.get("ref") or 0),
+        ),
+    )
+    selected = [dict(item) for item in ranked[:cap]]
+    selected.sort(key=lambda e: int(e.get("ref") or 0))
+    for idx, item in enumerate(selected, start=1):
+        item["ref"] = idx
+    return selected
+
+
 def _run_depthmap_cmd(
     cli_path: str,
     args: List[str],
@@ -230,6 +476,112 @@ def _run_depthmap_cmd(
         raise RuntimeError(
             f"depthmapXcli 命令失败（exit={proc.returncode}）：{' '.join(command)}\n{tail}"
         )
+
+
+def _write_depthmap_lines_csv(lines_csv: Path, edge_inputs: List[Dict[str, Any]]) -> None:
+    with lines_csv.open("w", newline="", encoding="utf-8") as f:
+        # depthmapXcli IMPORT is sensitive to CRLF in large CSV inputs.
+        # Force LF line endings to avoid "No lines found in drawing".
+        writer = csv.writer(f, lineterminator="\n")
+        writer.writerow(["Ref", "x1", "y1", "x2", "y2"])
+        for e in edge_inputs:
+            writer.writerow([e["ref"], e["x1"], e["y1"], e["x2"], e["y2"]])
+
+
+def _run_depthmap_segment_pipeline(
+    cli_path: str,
+    tmpdir: Path,
+    graph_imported: Path,
+    graph_analysed: Path,
+    timeout_s: int,
+    tulip_bins_value: int,
+    local_radii: List[int],
+) -> None:
+    graph_segment = tmpdir / "02_segment.graph"
+    _run_depthmap_cmd(
+        cli_path,
+        [
+            "-m",
+            "MAPCONVERT",
+            "-f",
+            str(graph_imported),
+            "-o",
+            str(graph_segment),
+            "-co",
+            "segment",
+            "-con",
+            "road_segments",
+        ],
+        tmpdir,
+        timeout_s,
+    )
+    _run_depthmap_cmd(
+        cli_path,
+        [
+            "-m",
+            "SEGMENT",
+            "-f",
+            str(graph_segment),
+            "-o",
+            str(graph_analysed),
+            "-st",
+            "tulip",
+            "-srt",
+            "metric",
+            "-stb",
+            str(tulip_bins_value),
+            "-sic",
+            "-sr",
+            _build_radius_arg(local_radii),
+        ],
+        tmpdir,
+        timeout_s,
+    )
+
+
+def _run_depthmap_axial_pipeline(
+    cli_path: str,
+    tmpdir: Path,
+    graph_imported: Path,
+    graph_analysed: Path,
+    timeout_s: int,
+    local_radii: List[int],
+) -> None:
+    graph_axial = tmpdir / "02_axial.graph"
+    _run_depthmap_cmd(
+        cli_path,
+        [
+            "-m",
+            "MAPCONVERT",
+            "-f",
+            str(graph_imported),
+            "-o",
+            str(graph_axial),
+            "-co",
+            "axial",
+            "-con",
+            "road_axial",
+        ],
+        tmpdir,
+        timeout_s,
+    )
+    _run_depthmap_cmd(
+        cli_path,
+        [
+            "-m",
+            "AXIAL",
+            "-f",
+            str(graph_axial),
+            "-o",
+            str(graph_analysed),
+            "-xa",
+            _build_radius_arg(local_radii),
+            "-xac",
+            "-xal",
+        ],
+        tmpdir,
+        timeout_s,
+    )
 
 
 def _select_metric_columns(fieldnames: List[str], metric_key: str) -> Dict[str, str]:
@@ -285,7 +637,6 @@ def _select_single_metric_column(
         "route weight",
         "[slw]",
         "segment id",
-        "axial line id",
         "line id",
         "point id",
         "entity id",
@@ -750,6 +1101,8 @@ def _empty_result(
     coord_type: Literal["gcj02", "wgs84"],
     radii_m: Optional[List[int]] = None,
     metric: str = "choice",
+    analysis_engine: str = "depthmapxcli",
+    webgl_status: str = "disabled:empty_result",
 ) -> Dict[str, Any]:
     local_labels = [_normalize_label(r) for r in sorted({int(v) for v in (radii_m or []) if int(v) > 0})]
     default_radius_label = local_labels[0] if local_labels else "global"
@@ -784,7 +1137,7 @@ def _empty_result(
             "coord_type": coord_type,
             "default_metric": metric,
             "default_radius_label": default_radius_label,
-            "analysis_engine": "depthmapxcli",
+            "analysis_engine": str(analysis_engine or "depthmapxcli"),
         },
         "top_nodes": [],
         "roads": {"type": "FeatureCollection", "features": [], "count": 0},
@@ -796,7 +1149,7 @@ def _empty_result(
         "webgl": {
             "enabled": False,
             "backend": "none",
-            "status": "disabled",
+            "status": str(webgl_status or "disabled:empty_result"),
             "metric_field": "",
             "coord_type": coord_type,
             "roads": {"type": "FeatureCollection", "features": [], "count": 0},
@@ -806,33 +1159,99 @@ def _empty_result(
 
 
 def analyze_road_syntax(
-    polygon: List[List[float]],
+    polygon: list,
     coord_type: Literal["gcj02", "wgs84"] = "gcj02",
     mode: OverpassMode = "walking",
+    graph_model: GraphModel = "segment",
+    highway_filter: HighwayFilter = "all",
     include_geojson: bool = True,
     max_edge_features: Optional[int] = None,
     radii_m: Optional[List[int]] = None,
     metric: Literal["choice", "integration"] = "choice",
     depthmap_cli_path: Optional[str] = None,
+    tulip_bins: Optional[int] = None,
     merge_geojson_edges: bool = True,
     merge_bucket_step: float = 0.025,
     use_arcgis_webgl: bool = False,
     arcgis_python_path: Optional[str] = None,
     arcgis_timeout_sec: int = 300,
     arcgis_metric_field: Optional[str] = None,
+    progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> Dict[str, Any]:
-    local_radii = sorted({int(r) for r in (radii_m or [800, 2000]) if int(r) > 0})[:5]
-    local_labels = [_normalize_label(r) for r in local_radii]
+    started_at = time.perf_counter()
+    graph_model_raw = str(graph_model or "").strip().lower()
+    if graph_model_raw == "axial":
+        normalized_graph_model = "axial"
+    else:
+        normalized_graph_model = "segment"
+    if normalized_graph_model == "axial":
+        analysis_engine_label = "depthmapxcli-axial"
+    else:
+        analysis_engine_label = "depthmapxcli"
+    total_steps = 9
+
+    def _report_progress(
+        stage: str,
+        message: str,
+        step: Optional[int] = None,
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if progress_callback is None:
+            return
+        payload: Dict[str, Any] = {
+            "stage": str(stage or ""),
+            "message": str(message or ""),
+            "step": int(step) if step is not None else None,
+            "total": total_steps,
+            "elapsed_ms": _safe_round((time.perf_counter() - started_at) * 1000.0, 2),
+            "extra": dict(extra or {}),
+        }
+        try:
+            progress_callback(payload)
+        except Exception:  # noqa: BLE001
+            pass
+
+    _report_progress("init", "准备路网句法计算", step=1)
+    if radii_m is None:
+        base_radii = [600, 800]
+    else:
+        base_radii = list(radii_m)
+    local_radii = sorted({int(r) for r in base_radii if int(r) > 0})[:5]
+    requested_local_labels = [_normalize_label(r) for r in local_radii]
     render_metric = "integration" if metric == "integration" else "choice"
-    default_radius_label = local_labels[0] if local_labels else "global"
+    default_radius_label = requested_local_labels[0] if requested_local_labels else "global"
 
-    wgs_poly = _coords_to_wgs84_polygon(polygon, coord_type=coord_type)
-    if wgs_poly.is_empty:
-        return _empty_result(mode, coord_type="gcj02", radii_m=local_radii, metric=render_metric)
+    output_wgs_poly = _coords_to_wgs84_polygon(polygon, coord_type=coord_type)
+    if output_wgs_poly.is_empty:
+        return _empty_result(
+            mode,
+            coord_type="gcj02",
+            radii_m=local_radii,
+            metric=render_metric,
+            analysis_engine=analysis_engine_label,
+            webgl_status="disabled:invalid_output_polygon",
+        )
+    context_wgs_poly = _coords_to_wgs84_polygon(polygon, coord_type=coord_type)
+    if context_wgs_poly.is_empty:
+        context_wgs_poly = output_wgs_poly
 
-    minx, miny, maxx, maxy = wgs_poly.bounds
-    query = _build_overpass_query((miny, minx, maxy, maxx), mode=mode)
+    edge_inputs: List[Dict[str, Any]] = []
+    minx, miny, maxx, maxy = context_wgs_poly.bounds
+    overpass_query_timeout_s = int(getattr(settings, "overpass_query_timeout_s", 60) or 60)
+    query = _build_overpass_query(
+        (miny, minx, maxy, maxx),
+        mode=mode,
+        highway_filter=highway_filter,
+        query_timeout_s=overpass_query_timeout_s,
+    )
+    _report_progress("overpass_request", "正在抓取等时圈范围路网", step=2)
     elements = _fetch_overpass_elements(query)
+    _report_progress(
+        "overpass_received",
+        "路网数据已返回，正在解析",
+        step=2,
+        extra={"element_count": len(elements)},
+    )
 
     node_coords: Dict[int, Tuple[float, float]] = {}
     ways: List[Dict[str, Any]] = []
@@ -856,11 +1275,19 @@ def analyze_road_syntax(
             ways.append(elem)
 
     if not ways:
-        return _empty_result(mode, coord_type="gcj02", radii_m=local_radii, metric=render_metric)
+        return _empty_result(
+            mode,
+            coord_type="gcj02",
+            radii_m=local_radii,
+            metric=render_metric,
+            analysis_engine=analysis_engine_label,
+            webgl_status="disabled:no_ways_in_context",
+        )
 
-    prepared = prep(wgs_poly)
-    edge_inputs: List[Dict[str, Any]] = []
+    _report_progress("build_edges", "正在构建线段拓扑", step=3)
+    prepared_context = prep(context_wgs_poly)
     seen_edges = set()
+
     def _edge_key_by_coord(lon1: float, lat1: float, lon2: float, lat2: float) -> Tuple[Tuple[float, float], Tuple[float, float]]:
         a = (_safe_round(lon1, 7), _safe_round(lat1, 7))
         b = (_safe_round(lon2, 7), _safe_round(lat2, 7))
@@ -884,7 +1311,7 @@ def analyze_road_syntax(
                 lon1, lat1 = node_coords[u]
                 lon2, lat2 = node_coords[v]
                 line = LineString([(lon1, lat1), (lon2, lat2)])
-                if line.is_empty or not prepared.intersects(line):
+                if line.is_empty or not prepared_context.intersects(line):
                     continue
 
                 edge_key = _edge_key_by_coord(lon1, lat1, lon2, lat2)
@@ -928,7 +1355,7 @@ def analyze_road_syntax(
             if lon1 == lon2 and lat1 == lat2:
                 continue
             line = LineString([(lon1, lat1), (lon2, lat2)])
-            if line.is_empty or not prepared.intersects(line):
+            if line.is_empty or not prepared_context.intersects(line):
                 continue
             edge_key = _edge_key_by_coord(lon1, lat1, lon2, lat2)
             if edge_key in seen_edges:
@@ -950,73 +1377,98 @@ def analyze_road_syntax(
             )
 
     if not edge_inputs:
-        return _empty_result(mode, coord_type="gcj02", radii_m=local_radii, metric=render_metric)
+        return _empty_result(
+            mode,
+            coord_type="gcj02",
+            radii_m=local_radii,
+            metric=render_metric,
+            analysis_engine=analysis_engine_label,
+            webgl_status="disabled:no_edge_inputs",
+        )
+    _report_progress(
+        "edges_ready",
+        "输入线段构建完成，正在准备分析",
+        step=4,
+        extra={"context_edge_count": len(edge_inputs)},
+    )
 
+    if normalized_graph_model != "axial" and highway_filter == "major":
+        raw_count = len(edge_inputs)
+        global_edge_cap = int(getattr(settings, "road_syntax_global_edge_cap", 22000) or 22000)
+        global_edge_cap = max(1000, global_edge_cap)
+        if raw_count > global_edge_cap:
+            edge_inputs = _prune_major_edges_for_global(edge_inputs, global_edge_cap)
+            logger.info(
+                "[road-syntax] major global edge prune applied raw=%d pruned=%d cap=%d",
+                raw_count,
+                len(edge_inputs),
+                global_edge_cap,
+            )
+    _report_progress(
+        "edges_filtered",
+        "路网筛选完成，准备运行分析引擎",
+        step=4,
+        extra={"context_edge_count": len(edge_inputs)},
+    )
+
+    pipeline_name = ""
+    fieldnames: List[str] = []
+    rows: List[Dict[str, Any]] = []
+    if normalized_graph_model == "axial":
+        pipeline_name = "depthmapx-axial"
+    else:
+        pipeline_name = "depthmapx-segment"
     cli_path = _resolve_depthmap_cli_path(depthmap_cli_path)
     timeout_s = int(getattr(settings, "depthmapx_timeout_s", 300) or 300)
-    tulip_bins = int(getattr(settings, "depthmapx_tulip_bins", 1024) or 1024)
-
+    if tulip_bins is None:
+        tulip_bins_value = int(getattr(settings, "depthmapx_tulip_bins", 1024) or 1024)
+    else:
+        tulip_bins_value = int(tulip_bins)
+    tulip_bins_value = max(4, min(1024, tulip_bins_value))
     with tempfile.TemporaryDirectory(prefix="road_syntax_depthmapx_") as tmpdir_str:
         tmpdir = Path(tmpdir_str)
         lines_csv = tmpdir / "input_lines.csv"
         graph_imported = tmpdir / "01_import.graph"
-        graph_segment = tmpdir / "02_segment.graph"
-        graph_analysed = tmpdir / "03_segment_analysed.graph"
+        graph_analysed = tmpdir / "03_analysed.graph"
         result_csv = tmpdir / "04_shapegraph_map.csv"
 
-        with lines_csv.open("w", newline="", encoding="utf-8") as f:
-            # depthmapXcli IMPORT is sensitive to CRLF in large CSV inputs.
-            # Force LF line endings to avoid "No lines found in drawing".
-            writer = csv.writer(f, lineterminator="\n")
-            writer.writerow(["Ref", "x1", "y1", "x2", "y2"])
-            for e in edge_inputs:
-                writer.writerow([e["ref"], e["x1"], e["y1"], e["x2"], e["y2"]])
+        _write_depthmap_lines_csv(lines_csv, edge_inputs)
 
+        _report_progress("depthmap_import", "正在导入 depthmapX 图", step=5)
         _run_depthmap_cmd(
             cli_path,
             ["-m", "IMPORT", "-f", str(lines_csv), "-o", str(graph_imported), "-it", "drawing"],
             tmpdir,
             timeout_s,
         )
-        _run_depthmap_cmd(
-            cli_path,
-            [
-                "-m",
-                "MAPCONVERT",
-                "-f",
-                str(graph_imported),
-                "-o",
-                str(graph_segment),
-                "-co",
-                "segment",
-                "-con",
-                "road_segments",
-            ],
-            tmpdir,
-            timeout_s,
-        )
-        _run_depthmap_cmd(
-            cli_path,
-            [
-                "-m",
-                "SEGMENT",
-                "-f",
-                str(graph_segment),
-                "-o",
-                str(graph_analysed),
-                "-st",
-                "tulip",
-                "-srt",
-                "metric",
-                "-stb",
-                str(max(4, min(1024, tulip_bins))),
-                "-sic",
-                "-sr",
-                _build_radius_arg(local_radii),
-            ],
-            tmpdir,
-            timeout_s,
-        )
+        if normalized_graph_model == "axial":
+            _report_progress("axial_compute", "正在执行轴线计算", step=6)
+            try:
+                _run_depthmap_axial_pipeline(
+                    cli_path=cli_path,
+                    tmpdir=tmpdir,
+                    graph_imported=graph_imported,
+                    graph_analysed=graph_analysed,
+                    timeout_s=timeout_s,
+                    local_radii=local_radii,
+                )
+            except RuntimeError as exc:
+                logger.exception("[road-syntax] axial pipeline failed")
+                raise RuntimeError(
+                    "轴线图计算失败：当前数据在轴线流程中未能完成，请改用线段图或缩小范围后重试。"
+                ) from exc
+        else:
+            _report_progress("segment_compute", "正在执行线段计算", step=6)
+            _run_depthmap_segment_pipeline(
+                cli_path=cli_path,
+                tmpdir=tmpdir,
+                graph_imported=graph_imported,
+                graph_analysed=graph_analysed,
+                timeout_s=timeout_s,
+                tulip_bins_value=tulip_bins_value,
+                local_radii=local_radii,
+            )
+        _report_progress("depthmap_export", "正在导出分析结果", step=7)
         _run_depthmap_cmd(
             cli_path,
             ["-m", "EXPORT", "-f", str(graph_analysed), "-o", str(result_csv), "-em", "shapegraph-map-csv"],
@@ -1030,7 +1482,20 @@ def analyze_road_syntax(
             rows = list(reader)
 
     if not rows:
-        return _empty_result(mode, coord_type="gcj02", radii_m=local_radii, metric=render_metric)
+        return _empty_result(
+            mode,
+            coord_type="gcj02",
+            radii_m=local_radii,
+            metric=render_metric,
+            analysis_engine=analysis_engine_label,
+            webgl_status="disabled:no_analysis_rows",
+        )
+    _report_progress(
+        "metrics_parse",
+        "结果已导出，正在计算整合度/选择度",
+        step=8,
+        extra={"result_row_count": len(rows)},
+    )
 
     choice_columns = _select_metric_columns(fieldnames, "choice")
     integration_columns = _select_metric_columns(fieldnames, "integration")
@@ -1064,11 +1529,28 @@ def analyze_road_syntax(
     )
 
     # Keep only requested local radii and global metric columns.
-    allow_labels = set(local_labels)
+    allow_labels = set(requested_local_labels)
     allow_labels.add("global")
     choice_columns = {k: v for k, v in choice_columns.items() if k in allow_labels}
     integration_columns = {k: v for k, v in integration_columns.items() if k in allow_labels}
     connectivity_columns = {k: v for k, v in connectivity_columns.items() if k in allow_labels}
+    # Expose only local radii that are simultaneously available for choice+integration,
+    # otherwise UI radius switching can point to non-existent metric fields.
+    local_labels = [
+        label
+        for label in requested_local_labels
+        if label in choice_columns and label in integration_columns
+    ]
+    default_radius_label = local_labels[0] if local_labels else "global"
+    allow_labels = set(local_labels)
+    allow_labels.add("global")
+    if requested_local_labels and not local_labels:
+        logger.warning(
+            "[road-syntax] requested local radii unavailable in depthmap output requested=%s choice=%s integration=%s",
+            ",".join(requested_local_labels),
+            ",".join(sorted(choice_columns.keys())),
+            ",".join(sorted(integration_columns.keys())),
+        )
     if not connectivity_col:
         connectivity_col = connectivity_columns.get("global")
     if not connectivity_col and connectivity_columns:
@@ -1107,16 +1589,15 @@ def analyze_road_syntax(
     default_choice_has_local = default_radius_label != "global" and default_radius_label in choice_columns
     default_integration_has_local = default_radius_label != "global" and default_radius_label in integration_columns
 
-    prepared_poly = prep(wgs_poly)
+    prepared_context_poly = prep(context_wgs_poly)
+    prepared_output_poly = prep(output_wgs_poly)
     metric_values_choice: Dict[str, List[float]] = {k: [] for k in choice_columns}
     metric_values_integ: Dict[str, List[float]] = {k: [] for k in integration_columns}
     metric_values_conn_raw: List[float] = []
     metric_values_control_raw: List[float] = []
     metric_values_depth_raw: List[float] = []
 
-    parsed_edges: List[Dict[str, Any]] = []
-    neighbor_sets: Dict[Tuple[float, float], set] = {}
-    total_length_m = 0.0
+    parsed_edges_context: List[Dict[str, Any]] = []
 
     for row in rows:
         try:
@@ -1128,7 +1609,7 @@ def analyze_road_syntax(
             continue
 
         line = LineString([(x1, y1), (x2, y2)])
-        if line.is_empty or not prepared_poly.intersects(line):
+        if line.is_empty or not prepared_context_poly.intersects(line):
             continue
 
         raw_choice: Dict[str, Optional[float]] = {}
@@ -1184,14 +1665,8 @@ def analyze_road_syntax(
 
         key1 = (_safe_round(x1, 7), _safe_round(y1, 7))
         key2 = (_safe_round(x2, 7), _safe_round(y2, 7))
-        if key1 != key2:
-            neighbor_sets.setdefault(key1, set()).add(key2)
-            neighbor_sets.setdefault(key2, set()).add(key1)
-
         length_m = _haversine_m(x1, y1, x2, y2)
-        total_length_m += max(0.0, length_m)
-
-        parsed_edges.append(
+        parsed_edges_context.append(
             {
                 "x1": x1,
                 "y1": y1,
@@ -1208,8 +1683,42 @@ def analyze_road_syntax(
             }
         )
 
+    parsed_edges: List[Dict[str, Any]] = []
+    neighbor_sets: Dict[Tuple[float, float], set] = {}
+    total_length_m = 0.0
+    for item in parsed_edges_context:
+        line = LineString([(item["x1"], item["y1"]), (item["x2"], item["y2"])])
+        if line.is_empty or not prepared_output_poly.intersects(line):
+            continue
+        clipped_seg = _clip_line_to_polygon_segment(line, output_wgs_poly)
+        if not clipped_seg:
+            continue
+        x1c, y1c, x2c, y2c = clipped_seg
+        edge = dict(item)
+        edge["x1"] = x1c
+        edge["y1"] = y1c
+        edge["x2"] = x2c
+        edge["y2"] = y2c
+        edge["key1"] = (_safe_round(x1c, 7), _safe_round(y1c, 7))
+        edge["key2"] = (_safe_round(x2c, 7), _safe_round(y2c, 7))
+        edge["length_m"] = _haversine_m(x1c, y1c, x2c, y2c)
+        parsed_edges.append(edge)
+        key1 = edge["key1"]
+        key2 = edge["key2"]
+        if key1 != key2:
+            neighbor_sets.setdefault(key1, set()).add(key2)
+            neighbor_sets.setdefault(key2, set()).add(key1)
+        total_length_m += max(0.0, float(edge.get("length_m", 0.0)))
+
     if not parsed_edges:
-        return _empty_result(mode, coord_type="gcj02", radii_m=local_radii, metric=render_metric)
+        return _empty_result(
+            mode,
+            coord_type="gcj02",
+            radii_m=local_radii,
+            metric=render_metric,
+            analysis_engine=analysis_engine_label,
+            webgl_status="disabled:no_edges_in_output_polygon",
+        )
 
     # Control can be missing or mapped to an almost-constant column in some depthmap exports.
     # In that case we fall back to a topology-derived control proxy so rendering does not collapse.
@@ -1541,10 +2050,18 @@ def analyze_road_syntax(
     default_webgl_metric_field = str(arcgis_metric_field or "").strip()
     if not default_webgl_metric_field:
         default_webgl_metric_field = "integration_score" if render_metric == "integration" else "accessibility_score"
+    if not use_arcgis_webgl:
+        webgl_disabled_reason = "disabled:not_requested"
+    elif not include_geojson:
+        webgl_disabled_reason = "disabled:geojson_disabled"
+    elif not features_out:
+        webgl_disabled_reason = "disabled:no_renderable_features"
+    else:
+        webgl_disabled_reason = "disabled:unknown"
     webgl_payload: Dict[str, Any] = {
         "enabled": False,
         "backend": "none",
-        "status": "disabled",
+        "status": webgl_disabled_reason,
         "metric_field": default_webgl_metric_field,
         "coord_type": "gcj02",
         "roads": {
@@ -1593,6 +2110,33 @@ def analyze_road_syntax(
                 "elapsed_ms": _safe_round((time.perf_counter() - bridge_started) * 1000.0, 2),
             }
 
+    webgl_roads = webgl_payload.get("roads") if isinstance(webgl_payload.get("roads"), dict) else {}
+    webgl_features = webgl_roads.get("features") if isinstance(webgl_roads.get("features"), list) else []
+    webgl_count_raw = webgl_roads.get("count")
+    webgl_count = int(webgl_count_raw) if isinstance(webgl_count_raw, int) else len(webgl_features)
+    elapsed_ms = _safe_round((time.perf_counter() - started_at) * 1000.0, 2)
+    _report_progress(
+        "completed",
+        "路网句法计算完成，正在返回结果",
+        step=9,
+        extra={
+            "context_edge_count": len(parsed_edges_context),
+            "output_edge_count": len(parsed_edges),
+            "elapsed_ms": elapsed_ms,
+        },
+    )
+    logger.info(
+        "[road-syntax] completed graph_model=%s context_edge_count=%d output_edge_count=%d pipeline_name=%s webgl_enabled=%s webgl_status=%s webgl_count=%d elapsed_ms=%.2f",
+        normalized_graph_model,
+        len(parsed_edges_context),
+        len(parsed_edges),
+        pipeline_name,
+        bool(webgl_payload.get("enabled")),
+        str(webgl_payload.get("status") or ""),
+        webgl_count,
+        elapsed_ms,
+    )
+
     return {
         "summary": {
             "node_count": int(node_count),
@@ -1630,7 +2174,7 @@ def analyze_road_syntax(
             "coord_type": "gcj02",
             "default_metric": render_metric,
             "default_radius_label": default_radius_label,
-            "analysis_engine": "depthmapxcli",
+            "analysis_engine": analysis_engine_label,
         },
         "top_nodes": [],
         "roads": {

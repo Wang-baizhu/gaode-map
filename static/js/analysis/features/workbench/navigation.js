@@ -17,7 +17,16 @@
             },
             shouldShowPoiOnCurrentPanel() {
                 const panel = String(this.activeStep3Panel || '');
-                return panel === STEP3_PANEL_IDS.POI && !this.poiSystemSuspendedForSyntax;
+                return panel === STEP3_PANEL_IDS.POI
+                    && !this.poiSystemSuspendedForSyntax
+                    && String(this.poiSubTab || 'category') !== 'analysis';
+            },
+            shouldShowPoiKdeOnCurrentPanel() {
+                const panel = String(this.activeStep3Panel || '');
+                return panel === STEP3_PANEL_IDS.POI
+                    && !this.poiSystemSuspendedForSyntax
+                    && String(this.poiSubTab || '') === 'analysis'
+                    && !!this.poiKdeEnabled;
             },
             applyPoiFilterPanel(reason = '') {
                 const panel = this.filterPanel;
@@ -111,8 +120,12 @@
                 if (nextPanelId === STEP3_PANEL_IDS.POI) {
                     this.applySimplifyPointVisibility();
                     this.$nextTick(() => {
-                        this.updatePoiCharts();
-                        setTimeout(() => this.resizePoiChart(), 0);
+                        if (String(this.poiSubTab || 'category') === 'analysis') {
+                            this.refreshPoiKdeOverlay();
+                        } else {
+                            this.updatePoiCharts();
+                            setTimeout(() => this.resizePoiChart(), 0);
+                        }
                     });
                     return;
                 }
@@ -198,6 +211,9 @@
             goToStep(targetStep) {
                 this.confirmNavigation(() => {
                     if (targetStep < this.step) {
+                        if (typeof this.cancelHistoryDetailLoading === 'function') {
+                            this.cancelHistoryDetailLoading();
+                        }
                         if (this.step === 3 && targetStep <= 2) {
                             this.clearPoiOverlayLayers({
                                 reason: 'go_to_step_back_to_step2',

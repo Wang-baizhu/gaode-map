@@ -7,6 +7,28 @@ from .database import SessionLocal
 from .models import AnalysisHistory, PoiResult
 
 class HistoryRepo:
+    def _build_detail_payload(
+        self,
+        history: AnalysisHistory,
+        *,
+        pois: Optional[List[Dict]] = None,
+        poi_summary: Optional[Dict] = None,
+        poi_count: Optional[int] = None,
+    ) -> Dict:
+        payload = {
+            "id": history.id,
+            "description": history.description,
+            "created_at": history.created_at.isoformat(),
+            "params": history.params,
+            "polygon": history.result_polygon,
+            "poi_summary": poi_summary or {},
+        }
+        if poi_count is not None:
+            payload["poi_count"] = int(max(0, poi_count))
+        if pois is not None:
+            payload["pois"] = pois
+        return payload
+
     def create_record(self, 
                       params: Dict, 
                       polygon: List, 
@@ -71,7 +93,7 @@ class HistoryRepo:
         finally:
             session.close()
 
-    def get_detail(self, history_id: int) -> Optional[Dict]:
+    def get_detail(self, history_id: int, include_pois: bool = True) -> Optional[Dict]:
         """
         Get full details including POIs.
         """
@@ -80,17 +102,45 @@ class HistoryRepo:
             history = session.query(AnalysisHistory).filter_by(id=history_id).first()
             if not history:
                 return None
-            
+
+            if include_pois:
+                poi_res = session.query(PoiResult).filter_by(history_id=history_id).first()
+                pois = poi_res.poi_data if poi_res else []
+                poi_summary = poi_res.summary if poi_res else {}
+                poi_count = len(pois) if isinstance(pois, list) else 0
+                return self._build_detail_payload(
+                    history,
+                    pois=pois if isinstance(pois, list) else [],
+                    poi_summary=poi_summary if isinstance(poi_summary, dict) else {},
+                    poi_count=poi_count,
+                )
+
+            poi_row = session.query(PoiResult.summary).filter_by(history_id=history_id).first()
+            poi_summary = poi_row[0] if poi_row and isinstance(poi_row[0], dict) else {}
+            poi_count = int(poi_summary.get("total") or 0) if isinstance(poi_summary, dict) else 0
+            return self._build_detail_payload(
+                history,
+                poi_summary=poi_summary if isinstance(poi_summary, dict) else {},
+                poi_count=poi_count,
+            )
+        finally:
+            session.close()
+
+    def get_pois(self, history_id: int) -> Optional[Dict]:
+        session: Session = SessionLocal()
+        try:
+            history_exists = session.query(AnalysisHistory.id).filter_by(id=history_id).first()
+            if not history_exists:
+                return None
+
             poi_res = session.query(PoiResult).filter_by(history_id=history_id).first()
-            
+            pois = poi_res.poi_data if poi_res and isinstance(poi_res.poi_data, list) else []
+            poi_summary = poi_res.summary if poi_res and isinstance(poi_res.summary, dict) else {}
             return {
-                "id": history.id,
-                "description": history.description,
-                "created_at": history.created_at.isoformat(),
-                "params": history.params,
-                "polygon": history.result_polygon,
-                "pois": poi_res.poi_data if poi_res else [],
-                "poi_summary": poi_res.summary if poi_res else {}
+                "history_id": history_id,
+                "pois": pois,
+                "poi_summary": poi_summary,
+                "count": len(pois),
             }
         finally:
             session.close()

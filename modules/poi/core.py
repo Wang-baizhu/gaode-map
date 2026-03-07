@@ -97,42 +97,53 @@ class RateLimiter:
 # Global rate limiter to stay within AMap QPS limits across parallel requests
 global_limiter = RateLimiter(calls_per_second=20)
 
-async def fetch_pois_by_polygon(
+
+def _is_coord_pair(value) -> bool:
+    return (
+        isinstance(value, (list, tuple))
+        and len(value) >= 2
+        and isinstance(value[0], (int, float))
+        and isinstance(value[1], (int, float))
+    )
+
+
+def _normalize_polygon_rings_input(polygon: list) -> List[List[List[float]]]:
+    if not isinstance(polygon, list) or not polygon:
+        return []
+    if _is_coord_pair(polygon[0]):
+        ring = _ensure_polygon_closed(_normalize_polygon_points(polygon))
+        return [ring] if len(ring) >= AMAP_POLYGON_MIN_VERTEX_COUNT + 1 else []
+
+    rings: List[List[List[float]]] = []
+    for item in polygon:
+        ring_source = None
+        if isinstance(item, list) and item and _is_coord_pair(item[0]):
+            ring_source = item
+        elif isinstance(item, list) and item and isinstance(item[0], list) and item[0] and _is_coord_pair(item[0][0]):
+            ring_source = item[0]
+        if ring_source is None:
+            continue
+        ring = _ensure_polygon_closed(_normalize_polygon_points(ring_source))
+        if len(ring) >= AMAP_POLYGON_MIN_VERTEX_COUNT + 1:
+            rings.append(ring)
+    return rings
+
+
+async def _fetch_pois_by_single_polygon(
     polygon: List[List[float]],
     keywords: str,
     types: str = "",
-    max_count: int = 1000
 ) -> List[Dict]:
-    """
-    Fetch POIs using Single Polygon Search (Simplified).
-    
-    Strategy:
-    1. Direct Polygon Search (No H3 Grid).
-    2. Support Key Rotation.
-    3. Pagination up to ~900 results (AMap limit).
-    """
-    
-    # Api Key Check
-    # Support multiple keys
     raw_keys = settings.amap_web_service_key
     if not raw_keys:
         raise ValueError("AMap Web Service Key is missing in settings")
-    
-    key_manager = KeyManager(raw_keys)
 
-    # 1. Geometry - Validate only
+    key_manager = KeyManager(raw_keys)
     normalized_polygon = _normalize_polygon_points(polygon)
     if len(normalized_polygon) < AMAP_POLYGON_MIN_VERTEX_COUNT:
         logger.error("Invalid polygon input")
         return []
     normalized_polygon = _ensure_polygon_closed(normalized_polygon)
-
-    logger.info(
-        "POI polygon input: points=%s first=%s last=%s",
-        len(normalized_polygon),
-        normalized_polygon[0] if normalized_polygon else None,
-        normalized_polygon[-1] if normalized_polygon else None,
-    )
 
     sample_key = key_manager.keys[0] if key_manager.keys else ""
     split_base_polygon = _fit_polygon_to_query_limit(
@@ -148,7 +159,6 @@ async def fetch_pois_by_polygon(
         sample_key,
     )
 
-    # 2. Execution
     all_pois: List[Dict] = []
     async with aiohttp.ClientSession() as session:
         for batch_index, batch_types in enumerate(type_batches, start=1):
@@ -158,21 +168,6 @@ async def fetch_pois_by_polygon(
                 batch_types,
                 sample_key,
             )
-            query_len = _estimate_amap_polygon_query_len(
-                request_polygon,
-                keywords,
-                batch_types,
-                sample_key,
-            )
-            logger.info(
-                "POI polygon batch request: batch=%s/%s polygon_points=%s type_codes=%s query_len=%s",
-                batch_index,
-                len(type_batches),
-                len(request_polygon),
-                len(_split_type_codes(batch_types)),
-                query_len,
-            )
-
             count, first_page_pois = await _fetch_amap_page_one(
                 request_polygon,
                 keywords,
@@ -181,17 +176,7 @@ async def fetch_pois_by_polygon(
                 global_limiter,
                 session,
             )
-            logger.info(
-                "Polygon Search batch %s/%s: Found %s results total (Page 1 fetched %s).",
-                batch_index,
-                len(type_batches),
-                count,
-                len(first_page_pois),
-            )
-
             all_pois.extend(first_page_pois)
-
-            # Fetch remaining pages if needed
             if count > len(first_page_pois):
                 remaining = await _fetch_remaining_pages(
                     request_polygon,
@@ -203,30 +188,14 @@ async def fetch_pois_by_polygon(
                     session,
                 )
                 all_pois.extend(remaining)
-        
-    before_dedup = len(all_pois)
-    all_pois = _dedupe_polygon_pois(all_pois)
-    if max_count > 0:
-        all_pois = all_pois[:max_count]
-    after_dedup = len(all_pois)
-    logger.info(
-        "Fetch Complete. Total POIs: %s (dedup removed=%s)",
-        after_dedup,
-        max(0, before_dedup - after_dedup),
-    )
     return all_pois
 
 
-async def fetch_local_pois_by_polygon(
+async def _fetch_local_pois_by_single_polygon(
     polygon: List[List[float]],
     types: str = "",
     year: Optional[int] = None,
-    max_count: int = 1000,
 ) -> List[Dict]:
-    """
-    Fetch POIs from local search service via polygon query.
-    Input polygon is GCJ02 from frontend.
-    """
     normalized_polygon = _normalize_polygon_points(polygon)
     if len(normalized_polygon) < 3:
         logger.error("Invalid local polygon input")
@@ -248,23 +217,13 @@ async def fetch_local_pois_by_polygon(
         payload["year"] = int(year)
 
     url = f"{base_url}{LOCAL_POLYGON_ENDPOINT}"
-    logger.info(
-        "Local polygon query: url=%s points=%s year=%s types=%s",
-        url,
-        len(request_polygon),
-        year,
-        str(types or ""),
-    )
-
     timeout = aiohttp.ClientTimeout(total=60)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         try:
             async with session.post(url, json=payload) as resp:
                 body = await resp.text()
                 if resp.status != 200:
-                    raise RuntimeError(
-                        f"Local query HTTP {resp.status}: {body[:200]}"
-                    )
+                    raise RuntimeError(f"Local query HTTP {resp.status}: {body[:200]}")
         except aiohttp.ClientError as exc:
             raise RuntimeError(f"Local query request failed: {exc}") from exc
 
@@ -288,6 +247,43 @@ async def fetch_local_pois_by_polygon(
                 continue
             gx, gy = wgs84_to_gcj02(coords[0], coords[1])
             poi["location"] = [gx, gy]
+    return normalized
+
+async def fetch_pois_by_polygon(
+    polygon: list,
+    keywords: str,
+    types: str = "",
+    max_count: int = 1000
+) -> List[Dict]:
+    all_pois: List[Dict] = []
+    polygon_rings = _normalize_polygon_rings_input(polygon)
+    for ring in polygon_rings:
+        ring_pois = await _fetch_pois_by_single_polygon(ring, keywords, types)
+        all_pois.extend(ring_pois)
+    before_dedup = len(all_pois)
+    all_pois = _dedupe_polygon_pois(all_pois)
+    if max_count > 0:
+        all_pois = all_pois[:max_count]
+    after_dedup = len(all_pois)
+    logger.info(
+        "Fetch Complete. Total POIs: %s (dedup removed=%s)",
+        after_dedup,
+        max(0, before_dedup - after_dedup),
+    )
+    return all_pois
+
+
+async def fetch_local_pois_by_polygon(
+    polygon: list,
+    types: str = "",
+    year: Optional[int] = None,
+    max_count: int = 1000,
+) -> List[Dict]:
+    normalized: List[Dict] = []
+    polygon_rings = _normalize_polygon_rings_input(polygon)
+    for ring in polygon_rings:
+        ring_pois = await _fetch_local_pois_by_single_polygon(ring, types=types, year=year)
+        normalized.extend(ring_pois)
 
     before_dedup = len(normalized)
     normalized = _dedupe_polygon_pois(normalized)

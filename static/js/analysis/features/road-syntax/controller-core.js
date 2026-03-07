@@ -490,10 +490,6 @@
                 return Date.now();
             },
             resolveRoadSyntaxPerformanceProfile() {
-                const hc = Number((window.navigator && window.navigator.hardwareConcurrency) || 0);
-                const dm = Number((window.navigator && window.navigator.deviceMemory) || 0);
-                if ((hc > 0 && hc <= 4) || (dm > 0 && dm <= 4)) return 'low';
-                if ((hc > 0 && hc <= 8) || (dm > 0 && dm <= 8)) return 'mid';
                 return 'high';
             },
             resolveRoadSyntaxEdgeCap() {

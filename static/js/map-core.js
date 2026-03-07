@@ -53,6 +53,8 @@
         this.clusterPluginReady = false;
         this.heatmapPluginReady = false;
         this._pluginPromise = null;
+        this.poiHeatmap = null;
+        this.poiHeatmapConfig = null;
         this._amapTileLayer = null;
         this._osmTileLayer = null;
         this._tdtVecLayer = null;
@@ -98,6 +100,133 @@
         });
 
         return this._pluginPromise;
+    };
+
+    MapCore.prototype.clearPoiHeatmap = function () {
+        if (!this.poiHeatmap) {
+            this.poiHeatmapConfig = null;
+            return;
+        }
+        try {
+            if (typeof this.poiHeatmap.hide === 'function') {
+                this.poiHeatmap.hide();
+            }
+        } catch (err) {
+            console.warn('[MapCore] hide poi heatmap failed:', err);
+        }
+        try {
+            if (typeof this.poiHeatmap.setDataSet === 'function') {
+                this.poiHeatmap.setDataSet({ data: [], max: 1 });
+            }
+        } catch (err2) {
+            console.warn('[MapCore] clear poi heatmap dataset failed:', err2);
+        }
+        try {
+            if (typeof this.poiHeatmap.setMap === 'function') {
+                this.poiHeatmap.setMap(null);
+            }
+        } catch (err3) {
+            console.warn('[MapCore] detach poi heatmap failed:', err3);
+        }
+        this.poiHeatmap = null;
+        this.poiHeatmapConfig = null;
+    };
+
+    MapCore.prototype.renderPoiHeatmap = function (points, options) {
+        var self = this;
+        if (!this.map) {
+            return Promise.resolve({ ok: false, reason: 'map_unavailable' });
+        }
+
+        var normalizedPoints = (Array.isArray(points) ? points : []).map(function (item) {
+            var pair = self._normalizeLngLatPoint(item);
+            if (!pair) return null;
+            var count = Number(item && item.count);
+            return {
+                lng: pair[0],
+                lat: pair[1],
+                count: Number.isFinite(count) && count > 0 ? count : 1
+            };
+        }).filter(function (item) { return !!item; });
+
+        if (!normalizedPoints.length) {
+            this.clearPoiHeatmap();
+            return Promise.resolve({ ok: true, reason: 'no_points', count: 0 });
+        }
+
+        var safeOptions = options && typeof options === 'object' ? options : {};
+        var radius = Math.max(8, Math.min(80, Number(safeOptions.radius) || 28));
+        var max = Math.max(1, Number(safeOptions.max) || Math.max(8, Math.ceil(normalizedPoints.length / 30)));
+        var opacity = Math.max(0.05, Math.min(1, Number(safeOptions.opacity) || 0.7));
+        var gradient = safeOptions.gradient && typeof safeOptions.gradient === 'object'
+            ? safeOptions.gradient
+            : {
+                0.2: '#60a5fa',
+                0.4: '#22c55e',
+                0.65: '#f59e0b',
+                0.9: '#ef4444'
+            };
+        var nextConfig = {
+            radius: radius,
+            max: max,
+            opacity: opacity,
+            gradient: gradient
+        };
+        var prevConfig = this.poiHeatmapConfig ? JSON.stringify(this.poiHeatmapConfig) : '';
+        var currentConfig = JSON.stringify(nextConfig);
+
+        return this.loadPlugins().then(function () {
+            if (!window.AMap || typeof AMap.Heatmap !== 'function') {
+                return { ok: false, reason: 'heatmap_plugin_unavailable' };
+            }
+
+            if (!self.poiHeatmap || prevConfig !== currentConfig) {
+                self.clearPoiHeatmap();
+                self.poiHeatmap = new AMap.Heatmap(self.map, {
+                    radius: radius,
+                    opacity: [0, opacity],
+                    gradient: gradient,
+                    zooms: [3, 20]
+                });
+                self.poiHeatmapConfig = nextConfig;
+            } else if (typeof self.poiHeatmap.setOptions === 'function') {
+                try {
+                    self.poiHeatmap.setOptions({
+                        radius: radius,
+                        opacity: [0, opacity],
+                        gradient: gradient,
+                        zooms: [3, 20]
+                    });
+                    self.poiHeatmapConfig = nextConfig;
+                } catch (err) {
+                    console.warn('[MapCore] update poi heatmap options failed, recreating:', err);
+                    self.clearPoiHeatmap();
+                    self.poiHeatmap = new AMap.Heatmap(self.map, {
+                        radius: radius,
+                        opacity: [0, opacity],
+                        gradient: gradient,
+                        zooms: [3, 20]
+                    });
+                    self.poiHeatmapConfig = nextConfig;
+                }
+            }
+
+            self.poiHeatmap.setDataSet({
+                data: normalizedPoints,
+                max: max
+            });
+            if (typeof self.poiHeatmap.show === 'function') {
+                self.poiHeatmap.show();
+            }
+            return { ok: true, count: normalizedPoints.length };
+        }).catch(function (err) {
+            console.error('[MapCore] render poi heatmap failed:', err);
+            return {
+                ok: false,
+                reason: 'render_poi_heatmap_failed',
+                error: err && err.message ? err.message : String(err)
+            };
+        });
     };
 
     MapCore.prototype.setRadius = function (radius) {
@@ -466,30 +595,26 @@
         this.basemapMuted = !!muted;
         if (!this.map) return;
 
-        if (this.basemapSource === 'tianditu') {
-            var opacity = this.basemapMuted ? 0.75 : 1;
-            if (this._tdtVecLayer && this._tdtVecLayer.setOpacity) {
-                this._tdtVecLayer.setOpacity(opacity);
-            }
-            if (this._tdtCvaLayer && this._tdtCvaLayer.setOpacity) {
-                this._tdtCvaLayer.setOpacity(opacity);
-            }
-            return;
+        var opacity = this.basemapMuted ? 0 : 1;
+        this._toggleTiandituContainer(false);
+
+        // Do not replace map layer stack in simplify mode.
+        // Replacing layers may drop analysis overlays (e.g. road syntax result lines).
+        if (this._amapTileLayer && this._amapTileLayer.setOpacity) {
+            this._amapTileLayer.setOpacity(opacity);
+        }
+        if (this._osmTileLayer && this._osmTileLayer.setOpacity) {
+            this._osmTileLayer.setOpacity(opacity);
+        }
+        if (this._tdtVecLayer && this._tdtVecLayer.setOpacity) {
+            this._tdtVecLayer.setOpacity(opacity);
+        }
+        if (this._tdtCvaLayer && this._tdtCvaLayer.setOpacity) {
+            this._tdtCvaLayer.setOpacity(opacity);
         }
 
-        if (this.basemapSource === 'osm') {
-            if (this._osmTileLayer && this._osmTileLayer.setOpacity) {
-                this._osmTileLayer.setOpacity(this.basemapMuted ? 0.75 : 1);
-            }
-            return;
-        }
-
-        if (this.basemapSource === 'amap') {
-            if (!this.map.setFeatures) return;
-            this.map.setFeatures(this.basemapMuted
-                ? ['road']
-                : ['bg', 'point', 'road', 'building']);
-            return;
+        if (this.basemapSource === 'amap' && this.map.setFeatures) {
+            this.map.setFeatures(this.basemapMuted ? [] : ['bg', 'point', 'road', 'building']);
         }
     };
 

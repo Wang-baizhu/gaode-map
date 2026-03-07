@@ -26,6 +26,7 @@ services:
       - LOCAL_QUERY_COORD_SYSTEM=${LOCAL_QUERY_COORD_SYSTEM:-gcj02}
       - DEPTHMAPX_CLI_PATH=${DEPTHMAPX_CLI_PATH:-/usr/local/bin/depthmapXcli}
       - OVERPASS_ENDPOINT=${OVERPASS_ENDPOINT}
+      - CITY_BOUNDARY_DIR=${CITY_BOUNDARY_DIR:-/mapdata/boundaries}
       - PYTHONUNBUFFERED=1
     depends_on:
       - search
@@ -35,6 +36,7 @@ services:
     volumes:
       - .:/app
       - ./data:/app/data
+      - "${CITY_BOUNDARY_HOST_DIR:-/mnt/d/MapData/boundaries}:/mapdata/boundaries:ro"
       - /app/.venv
       - /app/__pycache__
 
