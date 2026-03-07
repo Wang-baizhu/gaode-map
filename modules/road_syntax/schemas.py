@@ -10,10 +10,9 @@ class RoadSyntaxRequest(BaseModel):
         None,
         description="Optional client run id for progress polling",
     )
-    polygon: List[List[float]] = Field(
+    polygon: list = Field(
         ...,
-        min_length=3,
-        description="Output polygon ring coordinates ([[lng, lat], ...])",
+        description="Output polygon ring or multi-ring polygon coordinates",
     )
     coord_type: Literal["gcj02", "wgs84"] = Field(
         "gcj02",

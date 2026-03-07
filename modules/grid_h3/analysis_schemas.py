@@ -14,10 +14,9 @@ class PoiLike(BaseModel):
 class H3MetricsRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    polygon: List[List[float]] = Field(
+    polygon: list = Field(
         ...,
-        min_length=3,
-        description="Polygon ring coordinates ([[lng, lat], ...])",
+        description="Polygon ring or multi-ring polygon coordinates",
     )
     resolution: int = Field(10, ge=0, le=15, description="H3 resolution")
     coord_type: Literal["gcj02", "wgs84"] = Field(

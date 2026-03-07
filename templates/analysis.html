@@ -369,17 +369,96 @@
 
                             <div class="panel-area panel-area-fill">
                                 <div class="panel poi-panel" v-show="activeStep3Panel === 'poi'">
-                                    <div class="poi-panel-header">
-                                        <h4>POI 分类</h4>
-                                        <div class="poi-panel-actions">
-                                            <span id="poiTotalCount" class="count-badge">总数 0</span>
-                                            <button id="toggleAllPoi" type="button"
-                                                class="btn-outline btn-compact">全部隐藏</button>
-                                            <button id="toggleExpandAll" class="btn-outline btn-compact">全部展开</button>
+                                    <div class="poi-panel-topbar">
+                                        <div class="h3-subtabs h3-stage-tabs poi-stage-tabs">
+                                            <button type="button" class="h3-subtab-pill h3-stage-pill"
+                                                :class="{ active: poiSubTab === 'category' }"
+                                                @click="setPoiSubTab('category')">分类</button>
+                                            <button type="button" class="h3-subtab-pill h3-stage-pill"
+                                                :class="{ active: poiSubTab === 'analysis' }"
+                                                @click="setPoiSubTab('analysis')">分析</button>
+                                        </div>
+                                        <div class="poi-panel-header">
+                                            <div class="poi-panel-actions">
+                                                <span id="poiTotalCount" class="count-badge">总数 0</span>
+                                                <button v-show="poiSubTab === 'category'" id="toggleAllPoi" type="button"
+                                                    class="btn-outline btn-compact">全部隐藏</button>
+                                                <button v-show="poiSubTab === 'category'" id="toggleExpandAll" class="btn-outline btn-compact">全部展开</button>
+                                            </div>
+                                        </div>
+                                        <div v-if="shouldShowPoiPanelStatus()" class="poi-panel-status" :class="{ 'is-loading': isHistoryPoiRestoring() }">
+                                            <span v-if="isHistoryPoiRestoring()" class="poi-panel-status-dot"></span>
+                                            <span>{% raw %}{{ getPoiPanelStatusText() }}{% endraw %}</span>
                                         </div>
                                     </div>
-                                    <div id="filtersContainer" class="legacy-filters-wrapper"></div>
-                                    <div id="poiChart" class="poi-chart"></div>
+                                    <div v-show="poiSubTab === 'category'" class="poi-subpanel">
+                                        <div id="filtersContainer" class="legacy-filters-wrapper"></div>
+                                    </div>
+                                    <div v-show="poiSubTab === 'analysis'" class="poi-subpanel poi-kde-panel">
+                                        <div class="h3-subtabs poi-analysis-tabs">
+                                            <button type="button" class="h3-subtab-pill"
+                                                :class="{ active: poiAnalysisSubTab === 'kde' }"
+                                                @click="setPoiAnalysisSubTab('kde')">核密度</button>
+                                            <button type="button" class="h3-subtab-pill"
+                                                :class="{ active: poiAnalysisSubTab === 'stats' }"
+                                                @click="setPoiAnalysisSubTab('stats')">统计</button>
+                                        </div>
+                                        <div class="poi-kde-intro">
+                                            <div class="poi-kde-title">{% raw %}{{ poiAnalysisSubTab === 'stats' ? '热点统计视图' : '核密度热力图' }}{% endraw %}</div>
+                                        </div>
+                                        <div v-show="poiAnalysisSubTab === 'kde'" class="poi-kde-controls">
+                                            <label class="poi-kde-range-field">
+                                                <span>核密度半径</span>
+                                                <input type="range" min="12" max="60" step="2"
+                                                    v-model.number="poiKdeRadius"
+                                                    @input="refreshPoiKdeOverlay">
+                                                <strong>{% raw %}{{ poiKdeRadius }}{% endraw %}</strong>
+                                            </label>
+                                        </div>
+                                        <div v-show="poiAnalysisSubTab === 'kde'" class="poi-kde-gradient-card">
+                                            <div class="poi-kde-gradient-head">
+                                                <span>热力强度</span>
+                                                <span>低 → 高</span>
+                                            </div>
+                                            <div class="poi-kde-gradient-bar"></div>
+                                        </div>
+                                        <div v-show="poiAnalysisSubTab === 'stats'" class="poi-kde-stat-grid">
+                                            <div class="poi-kde-stat-card">
+                                                <span class="poi-kde-stat-label">可见 POI</span>
+                                                <strong>{% raw %}{{ poiKdeStats.visiblePointCount }}{% endraw %}</strong>
+                                            </div>
+                                            <div class="poi-kde-stat-card">
+                                                <span class="poi-kde-stat-label">热力上限</span>
+                                                <strong>{% raw %}{{ poiKdeStats.maxIntensity }}{% endraw %}</strong>
+                                            </div>
+                                            <div class="poi-kde-stat-card">
+                                                <span class="poi-kde-stat-label">热点类别</span>
+                                                <strong>{% raw %}{{ poiKdeStats.topCategoryRows.length }}{% endraw %}</strong>
+                                            </div>
+                                        </div>
+                                        <div v-show="poiAnalysisSubTab === 'stats'" class="poi-kde-chart-card">
+                                            <div class="poi-kde-chart-head">
+                                                <span>热点类别柱状图</span>
+                                                <span>全部类别</span>
+                                            </div>
+                                            <div v-if="poiKdeStats.chartRows.length" class="poi-kde-bar-chart-scroll">
+                                                <div class="poi-kde-bar-chart"
+                                                    :style="{
+                                                        gridTemplateColumns: `repeat(${Math.max(1, poiKdeStats.chartRows.length)}, minmax(34px, 1fr))`,
+                                                        minWidth: `${Math.max(360, poiKdeStats.chartRows.length * 48)}px`
+                                                    }">
+                                                <div v-for="row in poiKdeStats.chartRows" :key="`poi-kde-chart-${row.id}`" class="poi-kde-bar-col">
+                                                    <div class="poi-kde-bar-wrap">
+                                                        <div class="poi-kde-bar" :style="{ height: `${row.height}%`, background: row.color }"></div>
+                                                    </div>
+                                                    <strong class="poi-kde-bar-value">{% raw %}{{ row.value }}{% endraw %}</strong>
+                                                    <div class="poi-kde-bar-label">{% raw %}{{ row.shortLabel }}{% endraw %}</div>
+                                                </div>
+                                                </div>
+                                            </div>
+                                            <div v-else class="panel-placeholder">当前没有可用于统计的 POI。</div>
+                                        </div>
+                                    </div>
                                 </div>
 
                                 <div class="panel" v-show="activeStep3Panel === 'h3'">
@@ -1060,7 +1139,6 @@
                 <div class="h3-export-wrap">
                     <button type="button" class="h3-map-tool-btn h3-map-export-btn"
                         :class="{ active: h3ExportMenuOpen }"
-                        :disabled="activeStep3Panel !== 'h3'"
                         @click="toggleH3ExportMenu"
                         title="导出">
                         <svg class="h3-map-tool-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -1073,30 +1151,68 @@
                             <path d="m6 9 6 6 6-6"></path>
                         </svg>
                     </button>
-                    <div v-if="activeStep3Panel === 'h3' && h3ExportMenuOpen" class="h3-export-menu">
-                        <label class="h3-export-check">
-                            <input type="checkbox" v-model="h3ExportIncludePoi">
-                            包含POI点
-                        </label>
-                        <div class="h3-export-field">
-                            <span class="h3-export-field-label">导出范围</span>
-                            <select class="h3-export-select" v-model="h3ExportScope">
-                                <option value="grid_only">仅网格</option>
-                                <option value="analysis_result" :disabled="!hasH3AnalysisForExport()">分析结果</option>
-                            </select>
+                    <div v-if="h3ExportMenuOpen" class="h3-export-menu">
+                        <div class="h3-export-head">
+                            <div class="h3-export-field-label">导出内容</div>
+                            <button
+                                type="button"
+                                class="h3-export-icon-btn"
+                                :class="{ 'is-active': isAllAvailableExportPartsSelected() }"
+                                :disabled="isExportingBundle || !getSelectableExportParts().length"
+                                :title="isAllAvailableExportPartsSelected() ? '取消全选可导出项' : '一键全选可导出项'"
+                                @click="toggleSelectAllExportParts">
+                                <svg viewBox="0 0 24 24" aria-hidden="true">
+                                    <rect x="4" y="5" width="4" height="4" rx="1.2"></rect>
+                                    <rect x="4" y="10" width="4" height="4" rx="1.2"></rect>
+                                    <rect x="4" y="15" width="4" height="4" rx="1.2"></rect>
+                                    <path d="M11 7h8"></path>
+                                    <path d="M11 12h8"></path>
+                                    <path d="M11 17h8"></path>
+                                    <path d="m5.2 12 1.3 1.3 2.1-2.3"></path>
+                                    <path d="m5.2 17 1.3 1.3 2.1-2.3"></path>
+                                </svg>
+                            </button>
                         </div>
-                        <div v-if="h3ExportScope === 'analysis_result' && !hasH3AnalysisForExport()" class="h3-export-tip">
-                            请先完成计算分析，再导出分析结果。
+                        <div v-for="group in exportBundleGroups" :key="`bundle-group-${group.group_key}`" class="h3-export-group">
+                            <div class="h3-export-group-head">
+                                <input
+                                    type="checkbox"
+                                    class="h3-export-group-checkbox"
+                                    :checked="isExportBundleGroupAllSelected(group.group_key)"
+                                    :indeterminate.prop="isExportBundleGroupPartiallySelected(group.group_key)"
+                                    :disabled="isExportingBundle || !getSelectableExportPartsByGroup(group.group_key).length"
+                                    @change="toggleExportBundleGroupSelection(group.group_key)">
+                                <button
+                                    type="button"
+                                    class="h3-export-group-title"
+                                    @click="toggleExportBundleGroupExpanded(group.group_key)">
+                                    <span>{% raw %}{{ group.group_label }}{% endraw %}</span>
+                                    <svg viewBox="0 0 24 24" aria-hidden="true" :class="{ 'is-open': isExportBundleGroupExpanded(group.group_key) }">
+                                        <path d="m6 9 6 6 6-6"></path>
+                                    </svg>
+                                </button>
+                            </div>
+                            <div v-if="isExportBundleGroupExpanded(group.group_key)" class="h3-export-group-body">
+                                <label v-for="item in group.children" :key="`bundle-item-${group.group_key}-${item.value}`" class="h3-export-check h3-export-check-child">
+                                    <input
+                                        type="checkbox"
+                                        :value="item.value"
+                                        v-model="exportBundleParts"
+                                        :disabled="isExportBundlePartDisabled(item.value)"
+                                        :title="getExportBundlePartDisabledReason(item.value)">
+                                    <span>{% raw %}{{ item.label }}{% endraw %}</span>
+                                </label>
+                            </div>
                         </div>
+
+                        <div v-if="getExportBundleHint()" class="h3-export-tip">
+                            {% raw %}{{ getExportBundleHint() }}{% endraw %}
+                        </div>
+
                         <button type="button" class="h3-export-item"
-                            :disabled="isExportingH3 || !hasH3GridForExport()"
-                            @click="exportH3Analysis('gpkg')">
-                            快速导出（.gpkg）
-                        </button>
-                        <button type="button" class="h3-export-item"
-                            :disabled="isExportingH3 || !hasH3GridForExport()"
-                            @click="exportH3Analysis('arcgis_package')">
-                            高级导出（LPK+MPK）
+                            :disabled="isExportingBundle || !exportBundleParts.length"
+                            @click="exportAnalysisBundle()">
+                            {% raw %}{{ isExportingBundle ? '导出中...' : '导出 ZIP' }}{% endraw %}
                         </button>
                     </div>
                 </div>
@@ -1104,9 +1220,8 @@
                 <div class="h3-task-wrap">
                     <button type="button" class="h3-map-tool-btn h3-map-task-btn"
                         :class="{ active: h3ExportTasksOpen }"
-                        :disabled="activeStep3Panel !== 'h3'"
                         @click="toggleH3ExportTasks"
-                        title="任务">
+                        title="导出任务">
                         <svg class="h3-map-tool-icon" viewBox="0 0 24 24" aria-hidden="true">
                             <rect x="4" y="5" width="16" height="14" rx="2"></rect>
                             <path d="M8 10h8"></path>
@@ -1116,9 +1231,27 @@
                         <span v-if="getH3PendingTaskCount() > 0" class="h3-task-count">{% raw %}{{ getH3PendingTaskCount() }}{% endraw %}</span>
                     </button>
                 </div>
+
+                <button
+                    type="button"
+                    class="h3-map-tool-btn h3-map-debug-btn"
+                    :class="{ active: isochroneDebugOpen }"
+                    :disabled="isLoadingIsochroneDebug || (!isochroneDebugOpen && !isIsochroneDebugAvailable())"
+                    :title="getIsochroneDebugButtonTitle()"
+                    @click="toggleIsochroneDebug">
+                    <svg class="h3-map-tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M12 2.8v4.2"></path>
+                        <path d="M12 17v4.2"></path>
+                        <path d="M2.8 12H7"></path>
+                        <path d="M17 12h4.2"></path>
+                        <circle cx="12" cy="12" r="5.2"></circle>
+                        <circle cx="12" cy="12" r="1.4"></circle>
+                    </svg>
+                    <span class="h3-map-tool-text">{% raw %}{{ isLoadingIsochroneDebug ? '调试中...' : '调试' }}{% endraw %}</span>
+                </button>
             </div>
 
-            <div v-if="sidebarView === 'wizard' && step === 3 && activeStep3Panel === 'h3' && h3ExportTasksOpen" class="h3-export-task-panel">
+            <div v-if="sidebarView === 'wizard' && step === 3 && h3ExportTasksOpen" class="h3-export-task-panel">
                 <div class="h3-export-task-panel-header">
                     <span>导出任务</span>
                     <button type="button" class="h3-export-task-close" @click="closeH3ExportTasks">关闭</button>
@@ -1137,8 +1270,14 @@
                                 {% raw %}{{ task.status_label }}{% endraw %}
                             </span>
                         </div>
+                        <div class="h3-export-task-progress">
+                            <div class="h3-export-task-progress-bar" :style="{ width: `${Math.max(0, Math.min(100, Number(task.progress_pct || 0)))}%` }"></div>
+                        </div>
                         <div class="h3-export-task-meta">
                             {% raw %}{{ task.scope_label }} · {{ task.created_at_text }}{% endraw %}
+                        </div>
+                        <div v-if="task.progress_label" class="h3-export-task-meta">
+                            {% raw %}{{ task.progress_label }}{% endraw %}
                         </div>
                         <div v-if="task.filename" class="h3-export-task-meta">
                             文件：{% raw %}{{ task.filename }}{% endraw %}
@@ -1325,6 +1464,16 @@
                     allPoisDetails: [], // Store full fetched data for client-side filtering
                     poiChart: null,
                     poiChartResizeHandler: null,
+                    poiSubTab: 'category',
+                    poiAnalysisSubTab: 'kde',
+                    poiKdeEnabled: false,
+                    poiKdeRadius: 28,
+                    poiKdeStats: {
+                        visiblePointCount: 0,
+                        maxIntensity: 6,
+                        topCategoryRows: [],
+                        chartRows: [],
+                    },
 
                     // Instances
                     placeSearch: null,
@@ -1347,6 +1496,8 @@
                     historyRenderSessionId: 0,
                     historyRenderRafId: null,
                     historyFetchAbortController: null,
+                    historyDetailAbortController: null,
+                    historyDetailLoadToken: 0,
                     isSelectionMode: false,
                     selectedHistoryIds: [],
 
@@ -1430,13 +1581,98 @@
                     h3ChartsRetryTimer: null,
                     h3ChartsRetryCount: 0,
                     h3ExportMenuOpen: false,
-                    h3ExportTasksOpen: false,
-                    h3ExportIncludePoi: true,
-                    h3ExportScope: 'grid_only',
+                    isochroneDebugOpen: false,
+                    isLoadingIsochroneDebug: false,
+                    isochroneDebugSamplePoints: [],
+                    isochroneDebugFeatures: [],
+                    isochroneDebugErrors: [],
+                    isochroneDebugSelectedSampleId: '',
+                    isochroneDebugMarkers: [],
+                    isochroneDebugPolygons: [],
+                    isochroneDebugInfoWindow: null,
+                    exportBundleGroups: [
+                        {
+                            group_key: 'overview',
+                            group_label: '概览与范围',
+                            default_expanded: true,
+                            children: [
+                                { value: 'overview_json', label: '结果概览(JSON)' },
+                                { value: 'isochrone_geojson', label: '等时圈(GEOJSON)' },
+                                { value: 'map_snapshot_png', label: '地图快照(PNG)' },
+                            ],
+                        },
+                        {
+                            group_key: 'poi',
+                            group_label: 'POI',
+                            default_expanded: true,
+                            children: [
+                                { value: 'poi_csv', label: 'POI 表格(CSV)' },
+                                { value: 'poi_geojson', label: 'POI 点位(GEOJSON)' },
+                                { value: 'poi_panel_png', label: 'POI 子面板(PNG)' },
+                            ],
+                        },
+                        {
+                            group_key: 'h3',
+                            group_label: 'H3 分析',
+                            default_expanded: true,
+                            children: [
+                                { value: 'h3_grid_geojson', label: 'H3 网格(GEOJSON)' },
+                                { value: 'h3_summary_csv', label: 'H3 汇总(CSV)' },
+                                { value: 'h3_metrics_json', label: 'H3 指标(JSON)' },
+                                { value: 'h3_metric_panel_png', label: '密度场子面板(PNG)' },
+                                { value: 'h3_structure_panel_png', label: '结构图子面板(PNG)' },
+                                { value: 'h3_typing_panel_png', label: '功能混合度子面板(PNG)' },
+                                { value: 'h3_lq_panel_png', label: '区位商优势子面板(PNG)' },
+                                { value: 'h3_gap_panel_png', label: '缺口评估子面板(PNG)' },
+                            ],
+                        },
+                        {
+                            group_key: 'road',
+                            group_label: '路网分析',
+                            default_expanded: true,
+                            children: [
+                                { value: 'road_syntax_geojson', label: '路网线(GEOJSON)' },
+                                { value: 'road_syntax_summary_csv', label: '路网汇总(CSV)' },
+                                { value: 'road_connectivity_panel_png', label: '连接度子面板(PNG)' },
+                                { value: 'road_control_panel_png', label: '控制值子面板(PNG)' },
+                                { value: 'road_depth_panel_png', label: '深度值子面板(PNG)' },
+                                { value: 'road_choice_panel_png', label: '选择度子面板(PNG)' },
+                                { value: 'road_integration_panel_png', label: '整合度子面板(PNG)' },
+                                { value: 'road_intelligibility_panel_png', label: '可理解度子面板(PNG)' },
+                            ],
+                        },
+                        {
+                            group_key: 'advanced',
+                            group_label: '高级 GIS',
+                            default_expanded: false,
+                            children: [
+                                { value: 'h3_gpkg', label: 'H3 GPKG' },
+                                { value: 'h3_arcgis_package', label: 'H3 ArcGIS 包' },
+                            ],
+                        },
+                    ],
+                    exportBundleOpenGroups: {
+                        overview: false,
+                        poi: false,
+                        h3: false,
+                        road: false,
+                        advanced: false,
+                    },
+                    exportBundleParts: [
+                        'overview_json',
+                        'isochrone_geojson',
+                        'poi_csv',
+                        'poi_panel_png',
+                        'h3_grid_geojson',
+                        'h3_summary_csv',
+                        'h3_metric_panel_png',
+                        'map_snapshot_png',
+                    ],
                     h3PoiFilterCategoryIds: [],
-                    isExportingH3: false,
+                    h3ExportTasksOpen: false,
                     h3ExportTasks: [],
                     h3ExportTaskSeq: 0,
+                    isExportingBundle: false,
                     h3Toast: { message: '', type: 'info' },
                     h3ToastTimer: null,
 
@@ -1496,6 +1732,7 @@
                     resetFilterPanel: true,
                     immediate: true
                 });
+                this.clearPoiKdeOverlay();
                 this.roadSyntaxDetachMapListeners();
                 if (typeof this.cancelRoadSyntaxRequest === 'function') {
                     this.cancelRoadSyntaxRequest('before_unmount');
@@ -1506,6 +1743,7 @@
                     this.h3ToastTimer = null;
                 }
                 this.cancelHistoryLoading();
+                this.cancelHistoryDetailLoading();
                 this.disposePoiChart();
                 this.disposeH3Charts();
             },
@@ -1537,6 +1775,9 @@
                     if (newPanel === 'h3') {
                         this.restoreH3GridDisplayOnEnter();
                     }
+                    this.$nextTick(() => {
+                        this.refreshPoiKdeOverlay();
+                    });
                 },
                 roadSyntaxGraphModel(newModel, oldModel) {
                     const nextModel = String(newModel || '').trim().toLowerCase();
@@ -1628,6 +1869,17 @@
                         this.historyRenderRafId = null;
                     }
                     this.historyRenderSessionId += 1;
+                },
+                cancelHistoryDetailLoading() {
+                    if (this.historyDetailAbortController) {
+                        try {
+                            this.historyDetailAbortController.abort();
+                        } catch (e) {
+                            console.warn('history detail abort failed', e);
+                        }
+                        this.historyDetailAbortController = null;
+                    }
+                    this.historyDetailLoadToken += 1;
                 },
                 normalizeHistoryRecord(item) {
                     const record = Object.assign({}, item || {});
@@ -2083,7 +2335,7 @@
                     })).filter((p) => Array.isArray(p.location) && p.location.length === 2);
                     const payload = {
                         center: [this.selectedPoint.lng, this.selectedPoint.lat],
-                        polygon: polygon,
+                        polygon: this.getIsochronePolygonPayload(),
                         drawn_polygon: Array.isArray(drawnPolygonForSave) && drawnPolygonForSave.length >= 4
                             ? drawnPolygonForSave
                             : null,
@@ -2324,12 +2576,17 @@
                         this.abortController.abort();
                         this.abortController = null;
                     }
+                    this.cancelHistoryDetailLoading();
                     this.isFetchingPois = false;
                     this.fetchProgress = 0;
                     this.poiStatus = '';
                     this.roadSyntaxStatus = '';
                     this.resetFetchSubtypeProgress();
                     this.allPoisDetails = [];
+                    this.poiSubTab = 'category';
+                    this.poiAnalysisSubTab = 'kde';
+                    this.poiKdeEnabled = false;
+                    this.poiKdeStats = { visiblePointCount: 0, maxIntensity: 6, topCategoryRows: [], chartRows: [] };
                     this.scopeSource = '';
                     this.drawnScopePolygon = [];
                     this.lastIsochroneGeoJSON = null;
@@ -2338,6 +2595,7 @@
                     this.h3GridFeatures = [];
                     this.isGeneratingGrid = false;
                     this.resetH3AnalysisState();
+                    this.clearIsochroneDebugState();
 
                     this.clearPoiOverlayLayers({
                         reason: 'clear_analysis_layers',
@@ -2345,6 +2603,7 @@
                         clearSimpleMarkers: true,
                         resetFilterPanel: true
                     });
+                    this.clearPoiKdeOverlay();
                     this.resetRoadSyntaxState();
 
                     if (this.mapCore) {
@@ -2382,24 +2641,328 @@
                     };
                     this.disposeH3Charts();
                 },
-                getIsochronePolygonRing() {
-                    if (!this.lastIsochroneGeoJSON || !this.lastIsochroneGeoJSON.geometry) return null;
+                _isScopeCoordPair(point) {
+                    return Array.isArray(point)
+                        && point.length >= 2
+                        && Number.isFinite(Number(point[0]))
+                        && Number.isFinite(Number(point[1]));
+                },
+                _normalizePolygonPayloadRings(raw, traceLabel = 'scope.payload') {
+                    const rings = [];
+                    const appendRing = (candidate, label) => {
+                        const ring = this._closePolygonRing(this.normalizePath(candidate, 3, label));
+                        if (Array.isArray(ring) && ring.length >= 4) {
+                            rings.push(ring.map((pt) => [Number(pt[0]), Number(pt[1])]));
+                        }
+                    };
+                    if (!Array.isArray(raw) || !raw.length) return rings;
+                    if (this._isScopeCoordPair(raw[0])) {
+                        appendRing(raw, `${traceLabel}.ring`);
+                        return rings;
+                    }
+                    raw.forEach((item, idx) => {
+                        if (Array.isArray(item) && item.length && this._isScopeCoordPair(item[0])) {
+                            appendRing(item, `${traceLabel}.ring_${idx}`);
+                            return;
+                        }
+                        if (Array.isArray(item) && item.length && Array.isArray(item[0]) && item[0].length && this._isScopeCoordPair(item[0][0])) {
+                            appendRing(item[0], `${traceLabel}.poly_${idx}`);
+                        }
+                    });
+                    return rings;
+                },
+                _measureScopeRingArea(ring) {
+                    if (!Array.isArray(ring) || ring.length < 4) return 0;
+                    let sum = 0;
+                    for (let i = 0; i < ring.length - 1; i += 1) {
+                        const a = ring[i];
+                        const b = ring[i + 1];
+                        if (!this._isScopeCoordPair(a) || !this._isScopeCoordPair(b)) continue;
+                        sum += (Number(a[0]) * Number(b[1])) - (Number(b[0]) * Number(a[1]));
+                    }
+                    return Math.abs(sum / 2);
+                },
+                getIsochronePolygonRings() {
+                    if (!this.lastIsochroneGeoJSON || !this.lastIsochroneGeoJSON.geometry) return [];
                     const geometry = this.lastIsochroneGeoJSON.geometry;
                     if (geometry.type === 'Polygon') {
-                        return geometry.coordinates[0] || null;
+                        return this._normalizePolygonPayloadRings(geometry.coordinates && geometry.coordinates[0], 'scope.iso.polygon');
                     }
                     if (geometry.type === 'MultiPolygon') {
-                        return geometry.coordinates[0] ? geometry.coordinates[0][0] : null;
+                        return this._normalizePolygonPayloadRings(geometry.coordinates || [], 'scope.iso.multipolygon');
                     }
-                    return null;
+                    return [];
+                },
+                getIsochronePolygonRing() {
+                    const rings = this.getIsochronePolygonRings();
+                    if (!rings.length) return null;
+                    let best = rings[0];
+                    let bestArea = this._measureScopeRingArea(best);
+                    rings.slice(1).forEach((ring) => {
+                        const area = this._measureScopeRingArea(ring);
+                        if (area > bestArea) {
+                            best = ring;
+                            bestArea = area;
+                        }
+                    });
+                    return best;
+                },
+                getIsochronePolygonPayload() {
+                    const rings = this.getIsochronePolygonRings();
+                    if (!rings.length) return [];
+                    return rings.length === 1 ? rings[0] : rings;
+                },
+                _extractGeometryOuterRings(geometry, traceLabel = 'geometry') {
+                    if (!geometry || !geometry.type) return [];
+                    if (geometry.type === 'Polygon') {
+                        return this._normalizePolygonPayloadRings(
+                            geometry.coordinates && geometry.coordinates[0],
+                            `${traceLabel}.polygon`
+                        );
+                    }
+                    if (geometry.type === 'MultiPolygon') {
+                        return this._normalizePolygonPayloadRings(
+                            geometry.coordinates || [],
+                            `${traceLabel}.multipolygon`
+                        );
+                    }
+                    return [];
+                },
+                isIsochroneDebugAvailable() {
+                    const hasAreaScope = this.isochroneScopeMode === 'area'
+                        && this.hasDrawnScopePolygon()
+                        && !!this.lastIsochroneGeoJSON;
+                    if (!hasAreaScope) return false;
+                    if (!this.hasIsochroneForExport()) return false;
+                    return this.scopeSource === 'drawn_isochrone' || this.scopeSource === 'history';
+                },
+                getIsochroneDebugButtonTitle() {
+                    if (this.isLoadingIsochroneDebug) return '正在加载采样点调试结果';
+                    if (this.isochroneDebugOpen) return '关闭采样点调试图层';
+                    if (this.isIsochroneDebugAvailable()) return '显示边界采样点及单点等时圈';
+                    return '请先生成面等时圈';
+                },
+                _buildIsochroneDebugPayload() {
+                    const clipPolygon = this.getDrawnScopePolygonPoints();
+                    if (!Array.isArray(clipPolygon) || clipPolygon.length < 4) return null;
+                    const center = this.selectedPoint
+                        ? [Number(this.selectedPoint.lng), Number(this.selectedPoint.lat)]
+                        : this._estimatePolygonCenter(clipPolygon);
+                    if (!Array.isArray(center) || center.length < 2) return null;
+                    return {
+                        lat: Number(center[1]),
+                        lon: Number(center[0]),
+                        time_min: parseInt(this.timeHorizon, 10) || 15,
+                        mode: this.transportMode || 'walking',
+                        coord_type: 'gcj02',
+                        clip_polygon: clipPolygon,
+                        sample_boundary_step_m: 120,
+                        sample_max_points: null,
+                    };
+                },
+                async toggleIsochroneDebug() {
+                    if (this.isLoadingIsochroneDebug) return;
+                    if (this.isochroneDebugOpen) {
+                        this.clearIsochroneDebugState();
+                        return;
+                    }
+                    if (!this.isIsochroneDebugAvailable()) {
+                        this._showH3ExportToast('请先生成面等时圈结果', 'warning');
+                        return;
+                    }
+                    await this.loadIsochroneDebugSamples();
+                },
+                clearIsochroneDebugState(options = {}) {
+                    const preserveData = !!(options && options.preserveData);
+                    const markers = Array.isArray(this.isochroneDebugMarkers) ? this.isochroneDebugMarkers : [];
+                    markers.forEach((item) => this.safeMapSet(item && item.overlay, null));
+                    this.isochroneDebugMarkers = [];
+
+                    const polygons = Array.isArray(this.isochroneDebugPolygons) ? this.isochroneDebugPolygons : [];
+                    polygons.forEach((item) => this.safeMapSet(item && item.overlay, null));
+                    this.isochroneDebugPolygons = [];
+
+                    if (this.isochroneDebugInfoWindow && typeof this.isochroneDebugInfoWindow.close === 'function') {
+                        this.isochroneDebugInfoWindow.close();
+                    }
+
+                    if (!preserveData) {
+                        this.isochroneDebugSelectedSampleId = '';
+                        this.isochroneDebugOpen = false;
+                        this.isLoadingIsochroneDebug = false;
+                        this.isochroneDebugSamplePoints = [];
+                        this.isochroneDebugFeatures = [];
+                        this.isochroneDebugErrors = [];
+                    }
+                },
+                async loadIsochroneDebugSamples() {
+                    const payload = this._buildIsochroneDebugPayload();
+                    if (!payload) {
+                        this._showH3ExportToast('当前面等时圈参数不完整，无法加载调试图层', 'warning');
+                        return;
+                    }
+                    this.clearIsochroneDebugState();
+                    this.isLoadingIsochroneDebug = true;
+                    try {
+                        const res = await fetch('/api/v1/analysis/isochrone/debug-samples', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload),
+                        });
+                        if (!res.ok) {
+                            let detail = '';
+                            try {
+                                const errJson = await res.json();
+                                detail = errJson && (errJson.detail || errJson.error || JSON.stringify(errJson));
+                            } catch (_) {
+                                try { detail = await res.text(); } catch (_) { detail = ''; }
+                            }
+                            throw new Error(detail || `HTTP ${res.status}`);
+                        }
+                        const data = await res.json();
+                        this.isochroneDebugSamplePoints = Array.isArray(data && data.sample_points) ? data.sample_points : [];
+                        this.isochroneDebugFeatures = Array.isArray(data && data.isochrone_features) ? data.isochrone_features : [];
+                        this.isochroneDebugErrors = Array.isArray(data && data.meta && data.meta.errors) ? data.meta.errors : [];
+                        this.isochroneDebugOpen = true;
+                        this.renderIsochroneDebugOverlays();
+                        const okCount = this.isochroneDebugFeatures.length;
+                        const failCount = this.isochroneDebugErrors.length;
+                        this._showH3ExportToast(`调试图层已加载：成功 ${okCount} 个，失败 ${failCount} 个`, 'info', 2400);
+                    } catch (e) {
+                        console.error(e);
+                        this.clearIsochroneDebugState();
+                        this._showH3ExportToast(`调试加载失败：${(e && e.message) || e}`, 'error', 3200);
+                    } finally {
+                        this.isLoadingIsochroneDebug = false;
+                    }
+                },
+                renderIsochroneDebugOverlays() {
+                    this.clearIsochroneDebugState({ preserveData: true });
+                    if (!this.isochroneDebugOpen) return;
+                    const map = this.mapCore && this.mapCore.map ? this.mapCore.map : null;
+                    if (!map || typeof AMap === 'undefined') return;
+
+                    const polygonItems = [];
+                    (this.isochroneDebugFeatures || []).forEach((feature, featureIdx) => {
+                        const sampleId = String((((feature || {}).properties || {}).sample_id) || '').trim();
+                        if (!sampleId) return;
+                        const rings = this._extractGeometryOuterRings(
+                            (feature && feature.geometry) || null,
+                            `isochrone.debug.feature_${featureIdx}`
+                        );
+                        rings.forEach((ring, ringIdx) => {
+                            const overlay = new AMap.Polygon(Object.assign({
+                                path: ring,
+                                bubble: true,
+                                clickable: false,
+                                zIndex: 106,
+                            }, this._getIsochroneDebugPolygonStyle(sampleId)));
+                            this.safeMapSet(overlay, map);
+                            polygonItems.push({
+                                sampleId: sampleId,
+                                ringIndex: ringIdx,
+                                overlay: overlay,
+                            });
+                        });
+                    });
+                    this.isochroneDebugPolygons = polygonItems;
+
+                    const markerItems = [];
+                    (this.isochroneDebugSamplePoints || []).forEach((point, idx) => {
+                        const sampleId = String((point && point.id) || '').trim();
+                        const loc = this.normalizeLngLat(point && point.location, `isochrone.debug.sample_${idx}`);
+                        if (!sampleId || !loc) return;
+                        const marker = new AMap.CircleMarker(Object.assign({
+                            center: loc,
+                            bubble: true,
+                            clickable: true,
+                            cursor: 'pointer',
+                            zIndex: 118,
+                        }, this._getIsochroneDebugMarkerStyle(sampleId)));
+                        marker.on('mouseover', () => this.focusIsochroneDebugSample(sampleId, { openInfoWindow: false }));
+                        marker.on('click', () => this.focusIsochroneDebugSample(sampleId, { openInfoWindow: true }));
+                        this.safeMapSet(marker, map);
+                        markerItems.push({
+                            sampleId: sampleId,
+                            overlay: marker,
+                        });
+                    });
+                    this.isochroneDebugMarkers = markerItems;
+                    this.updateIsochroneDebugOverlayStyles();
+                },
+                _getIsochroneDebugPolygonStyle(sampleId) {
+                    const active = !!sampleId && sampleId === this.isochroneDebugSelectedSampleId;
+                    return {
+                        strokeColor: active ? '#0f172a' : '#0284c7',
+                        strokeWeight: active ? 2.6 : 1.1,
+                        strokeOpacity: active ? 0.92 : 0.58,
+                        fillColor: active ? '#38bdf8' : '#7dd3fc',
+                        fillOpacity: active ? 0.16 : 0.06,
+                    };
+                },
+                _getIsochroneDebugMarkerStyle(sampleId) {
+                    const active = !!sampleId && sampleId === this.isochroneDebugSelectedSampleId;
+                    return {
+                        radius: active ? 7.5 : 4.5,
+                        strokeColor: active ? '#082f49' : '#ffffff',
+                        strokeWeight: active ? 2 : 1.2,
+                        fillColor: active ? '#0ea5e9' : '#f97316',
+                        fillOpacity: active ? 0.96 : 0.9,
+                    };
+                },
+                updateIsochroneDebugOverlayStyles() {
+                    (this.isochroneDebugPolygons || []).forEach((item) => {
+                        if (!item || !item.overlay || typeof item.overlay.setOptions !== 'function') return;
+                        item.overlay.setOptions(this._getIsochroneDebugPolygonStyle(item.sampleId));
+                    });
+                    (this.isochroneDebugMarkers || []).forEach((item) => {
+                        if (!item || !item.overlay || typeof item.overlay.setOptions !== 'function') return;
+                        item.overlay.setOptions(this._getIsochroneDebugMarkerStyle(item.sampleId));
+                    });
+                },
+                focusIsochroneDebugSample(sampleId, options = {}) {
+                    const nextId = String(sampleId || '').trim();
+                    if (!nextId) return;
+                    this.isochroneDebugSelectedSampleId = nextId;
+                    this.updateIsochroneDebugOverlayStyles();
+                    if (options && options.openInfoWindow) {
+                        this.openIsochroneDebugInfoWindow(nextId);
+                    }
+                },
+                openIsochroneDebugInfoWindow(sampleId) {
+                    const nextId = String(sampleId || '').trim();
+                    if (!nextId || typeof AMap === 'undefined') return;
+                    const markerItem = (this.isochroneDebugMarkers || []).find((item) => item.sampleId === nextId);
+                    const point = (this.isochroneDebugSamplePoints || []).find((item) => String(item && item.id) === nextId);
+                    if (!markerItem || !markerItem.overlay || !point) return;
+                    const errorRow = (this.isochroneDebugErrors || []).find((item) => String(item && item.sample_id) === nextId);
+                    const seq = Number(point.seq || 0) || 0;
+                    const loc = this.normalizeLngLat(point.location, `isochrone.debug.info.${nextId}`);
+                    if (!loc) return;
+                    if (!this.isochroneDebugInfoWindow) {
+                        this.isochroneDebugInfoWindow = new AMap.InfoWindow({
+                            offset: new AMap.Pixel(0, -12),
+                            closeWhenClickMap: true,
+                        });
+                    }
+                    const statusText = errorRow ? '失败' : '成功';
+                    const messageText = errorRow && errorRow.message ? ` / ${String(errorRow.message)}` : '';
+                    const html = `
+                        <div style="min-width:180px; line-height:1.5; font-size:12px; color:#0f172a;">
+                            <div style="font-weight:700; margin-bottom:4px;">采样点 #${seq}</div>
+                            <div>坐标：${Number(loc[0]).toFixed(6)}, ${Number(loc[1]).toFixed(6)}</div>
+                            <div>状态：${statusText}${messageText}</div>
+                        </div>
+                    `;
+                    this.isochroneDebugInfoWindow.setContent(html);
+                    this.isochroneDebugInfoWindow.open(this.mapCore && this.mapCore.map ? this.mapCore.map : null, loc);
                 },
                 clearH3Grid() {
                     this.h3GridFeatures = [];
                     this.h3GridCount = 0;
                     this.h3GridStatus = '';
                     this.h3ExportMenuOpen = false;
-                    this.h3ExportTasksOpen = false;
-                    this.h3ExportScope = 'grid_only';
+                    this._normalizeExportBundleParts();
                     this.resetH3AnalysisState();
                     if (this.mapCore && this.mapCore.clearGridPolygons) {
                         this.mapCore.clearGridPolygons();
@@ -2506,7 +3069,6 @@
                     }
                     this.normalizeSimplifyTargets();
                     this.h3ExportMenuOpen = false;
-                    this.h3ExportTasksOpen = false;
                     this.h3SimplifyMenuOpen = true;
                 },
                 onSimplifyTargetToggle(target, checked) {
@@ -2635,11 +3197,7 @@
                     this.resetH3AnalysisState();
                     this.h3GridStatus = '正在生成网络...';
                     try {
-                        const polygon = rawRing.map(pt => {
-                            if (Array.isArray(pt)) return [pt[0], pt[1]];
-                            if (pt && typeof pt.lng === 'number') return [pt.lng, pt.lat];
-                            return pt;
-                        }).filter(pt => Array.isArray(pt) && pt.length >= 2);
+                        const polygon = this.getIsochronePolygonPayload();
 
                         const res = await fetch('/api/v1/analysis/h3-grid', {
                             method: 'POST',
@@ -4132,12 +4690,16 @@
                     this.updateDecisionCards();
                 },
                 toggleH3ExportMenu() {
-                    if (this.h3ExportScope === 'analysis_result' && !this.hasH3AnalysisForExport()) {
-                        this.h3ExportScope = 'grid_only';
-                    }
                     this.h3SimplifyMenuOpen = false;
                     this.h3ExportTasksOpen = false;
-                    this.h3ExportMenuOpen = !this.h3ExportMenuOpen;
+                    this._normalizeExportBundleParts();
+                    const nextOpen = !this.h3ExportMenuOpen;
+                    if (nextOpen) {
+                        this.exportBundleOpenGroups = Object.fromEntries(
+                            (this.exportBundleGroups || []).map((group) => [String(group.group_key || ''), false])
+                        );
+                    }
+                    this.h3ExportMenuOpen = nextOpen;
                 },
                 closeH3ExportMenu() {
                     this.h3ExportMenuOpen = false;
@@ -4170,30 +4732,33 @@
                 getH3PendingTaskCount() {
                     return (this.h3ExportTasks || []).filter((task) => task.status === 'running').length;
                 },
-                _buildH3ExportTaskTitle(exportFormat) {
-                    return exportFormat === 'arcgis_package' ? '高级导出（LPK+MPK）' : '快速导出（.gpkg）';
+                _buildExportBundleTaskTitle() {
+                    return '统一导出 ZIP';
                 },
-                _buildH3ExportScopeLabel() {
-                    return this.h3ExportScope === 'analysis_result' ? '分析结果' : '仅网格';
+                _buildExportBundleScopeLabel(selectedParts) {
+                    const items = Array.isArray(selectedParts) ? selectedParts : [];
+                    return `已选 ${items.length} 项`;
                 },
-                _createH3ExportTask(exportFormat) {
+                _createExportBundleTask(selectedParts) {
                     this.h3ExportTaskSeq = Number(this.h3ExportTaskSeq || 0) + 1;
                     const now = new Date();
                     const task = {
-                        id: `h3-export-${Date.now()}-${this.h3ExportTaskSeq}`,
-                        title: this._buildH3ExportTaskTitle(exportFormat),
-                        scope_label: this._buildH3ExportScopeLabel(),
+                        id: `bundle-export-${Date.now()}-${this.h3ExportTaskSeq}`,
+                        title: this._buildExportBundleTaskTitle(),
+                        scope_label: this._buildExportBundleScopeLabel(selectedParts),
                         status: 'running',
                         status_label: '导出中',
                         created_at: now.toISOString(),
                         created_at_text: now.toLocaleTimeString([], { hour12: false }),
                         filename: '',
                         error: '',
+                        progress_pct: 2,
+                        progress_label: '准备导出参数',
                     };
                     this.h3ExportTasks = [task].concat(this.h3ExportTasks || []).slice(0, 20);
                     return task.id;
                 },
-                _updateH3ExportTask(taskId, patch) {
+                _updateExportBundleTask(taskId, patch) {
                     this.h3ExportTasks = (this.h3ExportTasks || []).map((task) => {
                         if (task.id !== taskId) return task;
                         return Object.assign({}, task, patch || {});
@@ -4201,6 +4766,78 @@
                 },
                 clearH3CompletedTasks() {
                     this.h3ExportTasks = (this.h3ExportTasks || []).filter((task) => task.status === 'running');
+                },
+                _setExportBundleTaskProgress(taskId, progressPct, label) {
+                    const pct = Math.max(0, Math.min(100, Number(progressPct) || 0));
+                    const patch = { progress_pct: pct };
+                    if (typeof label === 'string' && label.trim()) {
+                        patch.progress_label = label.trim();
+                    }
+                    this._updateExportBundleTask(taskId, patch);
+                },
+                _postExportBundleWithProgress(payload, taskId) {
+                    return new Promise((resolve, reject) => {
+                        const xhr = new XMLHttpRequest();
+                        xhr.open('POST', '/api/v1/analysis/export/bundle', true);
+                        xhr.responseType = 'blob';
+                        xhr.setRequestHeader('Content-Type', 'application/json');
+
+                        const requestBody = JSON.stringify(payload);
+                        const requestBytes = new TextEncoder().encode(requestBody).length;
+
+                        xhr.upload.onprogress = (event) => {
+                            if (event && event.lengthComputable && event.total > 0) {
+                                const ratio = event.loaded / event.total;
+                                const pct = 55 + ratio * 20;
+                                this._setExportBundleTaskProgress(taskId, pct, `上传请求体 ${Math.round(ratio * 100)}%`);
+                            } else {
+                                this._setExportBundleTaskProgress(taskId, 60, `上传请求体 ${this._formatBytes(requestBytes)}`);
+                            }
+                        };
+
+                        xhr.onprogress = (event) => {
+                            if (event && event.lengthComputable && event.total > 0) {
+                                const ratio = event.loaded / event.total;
+                                const pct = 80 + ratio * 18;
+                                this._setExportBundleTaskProgress(taskId, pct, `接收导出文件 ${Math.round(ratio * 100)}%`);
+                            } else {
+                                this._setExportBundleTaskProgress(taskId, 84, '服务器正在打包 ZIP');
+                            }
+                        };
+
+                        xhr.onerror = () => {
+                            reject(new Error('导出请求失败'));
+                        };
+                        xhr.onabort = () => {
+                            reject(new Error('导出请求已取消'));
+                        };
+                        xhr.onload = () => {
+                            const disposition = xhr.getResponseHeader('content-disposition') || '';
+                            const contentType = xhr.getResponseHeader('content-type') || '';
+                            if (xhr.status < 200 || xhr.status >= 300) {
+                                if (xhr.response instanceof Blob) {
+                                    xhr.response.text().then((text) => reject(new Error(text || `HTTP ${xhr.status}`))).catch(() => reject(new Error(`HTTP ${xhr.status}`)));
+                                    return;
+                                }
+                                reject(new Error(`HTTP ${xhr.status}`));
+                                return;
+                            }
+                            resolve({
+                                blob: xhr.response,
+                                disposition,
+                                contentType,
+                            });
+                        };
+
+                        xhr.send(requestBody);
+                    });
+                },
+                _formatBytes(bytes) {
+                    const value = Number(bytes);
+                    if (!Number.isFinite(value) || value <= 0) return '0 B';
+                    if (value < 1024) return `${Math.round(value)} B`;
+                    if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+                    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
                 },
                 _showH3ExportToast(message, type = 'info', durationMs = 2200) {
                     if (this.h3ToastTimer) {
@@ -4216,15 +4853,170 @@
                         this.h3ToastTimer = null;
                     }, Math.max(800, Number(durationMs) || 2200));
                 },
-                _resolveH3ExportStyleMode() {
-                    if (this.h3ExportScope === 'grid_only') return 'density';
-                    if (this.h3MainStage === 'analysis' && this.h3SubTab === 'structure_map') {
-                        return this.h3StructureFillMode === 'lisa_i' ? 'lisa_i' : 'gi_z';
+                _getNormalizedExportBundleParts() {
+                    const allowed = new Set(this.getAllExportBundlePartValues());
+                    const normalized = [];
+                    (this.exportBundleParts || []).forEach((item) => {
+                        const key = String(item || '').trim();
+                        if (!key || !allowed.has(key) || normalized.includes(key)) return;
+                        if (this.isExportBundlePartDisabled(key)) return;
+                        normalized.push(key);
+                    });
+                    return normalized;
+                },
+                _normalizeExportBundleParts() {
+                    const normalized = this._getNormalizedExportBundleParts();
+                    this.exportBundleParts = normalized;
+                    return normalized;
+                },
+                getAllExportBundlePartValues() {
+                    return (this.exportBundleGroups || [])
+                        .flatMap((group) => Array.isArray(group.children) ? group.children : [])
+                        .map((item) => String((item && item.value) || '').trim())
+                        .filter((item) => !!item);
+                },
+                getSelectableExportPartsByGroup(groupKey) {
+                    const key = String(groupKey || '').trim();
+                    const group = (this.exportBundleGroups || []).find((item) => String(item.group_key || '').trim() === key);
+                    if (!group || !Array.isArray(group.children)) return [];
+                    return group.children
+                        .map((item) => String((item && item.value) || '').trim())
+                        .filter((part) => !!part && !this.isExportBundlePartDisabled(part));
+                },
+                isPanelExportPart(part) {
+                    const key = String(part || '').trim();
+                    return key === 'poi_panel_png'
+                        || key === 'h3_metric_panel_png'
+                        || key === 'h3_structure_panel_png'
+                        || key === 'h3_typing_panel_png'
+                        || key === 'h3_lq_panel_png'
+                        || key === 'h3_gap_panel_png'
+                        || key === 'road_connectivity_panel_png'
+                        || key === 'road_control_panel_png'
+                        || key === 'road_depth_panel_png'
+                        || key === 'road_choice_panel_png'
+                        || key === 'road_integration_panel_png'
+                        || key === 'road_intelligibility_panel_png';
+                },
+                getSelectableExportParts() {
+                    const selectable = [];
+                    const all = this.getAllExportBundlePartValues();
+                    all.forEach((part) => {
+                        if (selectable.includes(part)) return;
+                        if (this.isExportBundlePartDisabled(part)) return;
+                        selectable.push(part);
+                    });
+                    return selectable;
+                },
+                isExportBundleGroupExpanded(groupKey) {
+                    const key = String(groupKey || '').trim();
+                    return !!(this.exportBundleOpenGroups && this.exportBundleOpenGroups[key]);
+                },
+                toggleExportBundleGroupExpanded(groupKey) {
+                    const key = String(groupKey || '').trim();
+                    if (!key) return;
+                    this.exportBundleOpenGroups = Object.assign({}, this.exportBundleOpenGroups || {}, {
+                        [key]: !this.isExportBundleGroupExpanded(key),
+                    });
+                },
+                isExportBundleGroupAllSelected(groupKey) {
+                    const selectable = this.getSelectableExportPartsByGroup(groupKey);
+                    if (!selectable.length) return false;
+                    const selected = new Set(this._getNormalizedExportBundleParts());
+                    return selectable.every((part) => selected.has(part));
+                },
+                isExportBundleGroupPartiallySelected(groupKey) {
+                    const selectable = this.getSelectableExportPartsByGroup(groupKey);
+                    if (!selectable.length) return false;
+                    const selected = new Set(this._getNormalizedExportBundleParts());
+                    const selectedCount = selectable.filter((part) => selected.has(part)).length;
+                    return selectedCount > 0 && selectedCount < selectable.length;
+                },
+                toggleExportBundleGroupSelection(groupKey) {
+                    const selectable = this.getSelectableExportPartsByGroup(groupKey);
+                    if (!selectable.length) {
+                        this._showH3ExportToast('该分组当前没有可导出项', 'warning', 1800);
+                        return;
                     }
-                    return 'density';
+                    const current = new Set(this._getNormalizedExportBundleParts());
+                    const allSelected = selectable.every((part) => current.has(part));
+                    if (allSelected) {
+                        selectable.forEach((part) => current.delete(part));
+                        this.exportBundleParts = Array.from(current);
+                        this._showH3ExportToast('已清空该分组勾选', 'info', 1600);
+                        return;
+                    }
+                    selectable.forEach((part) => current.add(part));
+                    this.exportBundleParts = Array.from(current);
+                    this._showH3ExportToast(`已勾选该分组可导出项（${selectable.length}项）`, 'info', 1800);
+                },
+                isAllAvailableExportPartsSelected() {
+                    const selectable = this.getSelectableExportParts();
+                    if (!selectable.length) return false;
+                    const selected = new Set(this._getNormalizedExportBundleParts());
+                    return selectable.every((part) => selected.has(part));
+                },
+                toggleSelectAllExportParts() {
+                    const selectable = this.getSelectableExportParts();
+                    if (!selectable.length) {
+                        this.exportBundleParts = [];
+                        this._showH3ExportToast('暂无可全选的导出项', 'warning');
+                        return;
+                    }
+                    const selected = new Set(this._getNormalizedExportBundleParts());
+                    const allSelected = selectable.every((part) => selected.has(part));
+                    if (allSelected) {
+                        this.exportBundleParts = [];
+                        this._showH3ExportToast('已清空导出勾选', 'info', 1600);
+                        return;
+                    }
+                    this.exportBundleParts = selectable.slice();
+                    this._showH3ExportToast(`已全选可导出项（${selectable.length}项）`, 'info', 1800);
+                },
+                getExportBundlePartDisabledReason(part) {
+                    const key = String(part || '').trim();
+                    if (!key) return '不可用导出项';
+                    if (key === 'overview_json') return '';
+                    if (key === 'map_snapshot_png') return '';
+                    if (key === 'isochrone_geojson') return this.hasIsochroneForExport() ? '' : '请先生成等时圈结果';
+                    if (key === 'poi_csv' || key === 'poi_geojson') return this.hasPoisForExport() ? '' : '请先完成 POI 抓取';
+                    if (key === 'poi_panel_png') return this.hasPoisForExport() ? '' : '请先完成 POI 抓取';
+                    if (key === 'h3_grid_geojson' || key === 'h3_summary_csv') return this.hasH3GridForExport() ? '' : '请先生成 H3 网格';
+                    if (key === 'h3_metrics_json') return this.hasH3AnalysisForExport() ? '' : '请先完成 H3 指标计算';
+                    if (key === 'h3_metric_panel_png' || key === 'h3_structure_panel_png' || key === 'h3_typing_panel_png' || key === 'h3_lq_panel_png' || key === 'h3_gap_panel_png') {
+                        return this.hasH3AnalysisForExport() ? '' : '请先完成 H3 指标计算';
+                    }
+                    if (key === 'h3_gpkg' || key === 'h3_arcgis_package') return this.hasH3GridForExport() ? '' : '请先生成 H3 网格';
+                    if (key === 'road_syntax_geojson') return this.hasRoadSyntaxForExport() ? '' : '请先完成路网分析';
+                    if (key === 'road_syntax_summary_csv') return this.hasRoadSyntaxSummaryForExport() ? '' : '请先完成路网分析';
+                    if (
+                        key === 'road_connectivity_panel_png'
+                        || key === 'road_control_panel_png'
+                        || key === 'road_depth_panel_png'
+                        || key === 'road_choice_panel_png'
+                        || key === 'road_integration_panel_png'
+                        || key === 'road_intelligibility_panel_png'
+                    ) {
+                        return this.hasRoadSyntaxSummaryForExport() ? '' : '请先完成路网分析';
+                    }
+                    return '';
+                },
+                isExportBundlePartDisabled(part) {
+                    return !!this.getExportBundlePartDisabledReason(part);
+                },
+                getExportBundleHint() {
+                    const disabledLabels = (this.exportBundleGroups || [])
+                        .flatMap((group) => Array.isArray(group.children) ? group.children : [])
+                        .filter((item) => this.isExportBundlePartDisabled(item.value))
+                        .map((item) => item.label);
+                    if (!disabledLabels.length) return '';
+                    return '灰色项当前不可导出，请先完成对应计算。';
                 },
                 hasH3GridForExport() {
-                    return Array.isArray(this.h3GridFeatures) && this.h3GridFeatures.length > 0;
+                    return this._resolveH3ExportSourceFeatures().length > 0;
+                },
+                hasIsochroneForExport() {
+                    return !!this._normalizeIsochroneFeatureForExport();
                 },
                 hasH3AnalysisForDisplay() {
                     return Array.isArray(this.h3AnalysisGridFeatures)
@@ -4234,6 +5026,15 @@
                     return Array.isArray(this.h3AnalysisGridFeatures)
                         && this.h3AnalysisGridFeatures.length > 0
                         && !!this.h3AnalysisSummary;
+                },
+                hasRoadSyntaxForExport() {
+                    return Array.isArray(this.roadSyntaxRoadFeatures) && this.roadSyntaxRoadFeatures.length > 0;
+                },
+                hasRoadSyntaxSummaryForExport() {
+                    return !!(this.roadSyntaxSummary && Object.keys(this.roadSyntaxSummary).length > 0);
+                },
+                hasPoisForExport() {
+                    return Array.isArray(this.allPoisDetails) && this.allPoisDetails.length > 0;
                 },
                 ensureH3PanelEntryState() {
                     const hasAnalysis = this.hasH3AnalysisForDisplay();
@@ -4255,14 +5056,11 @@
                     }
                 },
                 _resolveH3ExportSourceFeatures() {
-                    if (this.h3ExportScope === 'analysis_result') {
-                        return this.hasH3AnalysisForExport() ? this.h3AnalysisGridFeatures : [];
-                    }
-                    if (this.hasH3GridForExport()) {
-                        return this.h3GridFeatures;
-                    }
                     if (this.hasH3AnalysisForExport()) {
                         return this.h3AnalysisGridFeatures;
+                    }
+                    if (Array.isArray(this.h3GridFeatures) && this.h3GridFeatures.length > 0) {
+                        return this.h3GridFeatures;
                     }
                     return [];
                 },
@@ -4333,34 +5131,6 @@
                     }
                     return null;
                 },
-                _buildH3ExportPoiFeatures() {
-                    if (!this.h3ExportIncludePoi) return [];
-                    const source = this._buildH3AnalysisPois();
-                    if (!source.length) return [];
-                    return source
-                        .map((poi) => {
-                            const location = Array.isArray(poi && poi.location) ? poi.location : [];
-                            const lng = Number(location[0]);
-                            const lat = Number(location[1]);
-                            if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
-                            const category = this.resolvePoiCategory(poi && poi.type);
-                            return {
-                                type: 'Feature',
-                                geometry: {
-                                    type: 'Point',
-                                    coordinates: [lng, lat],
-                                },
-                                properties: {
-                                    id: String((poi && poi.id) || ''),
-                                    name: String((poi && poi.name) || ''),
-                                    type: String((poi && poi.type) || ''),
-                                    category_id: String((category && category.id) || ''),
-                                    category: String((category && category.name) || ''),
-                                }
-                            };
-                        })
-                        .filter(Boolean);
-                },
                 _getFilenameFromContentDisposition(disposition) {
                     const raw = String(disposition || '');
                     if (!raw) return '';
@@ -4381,80 +5151,1127 @@
                     link.remove();
                     URL.revokeObjectURL(url);
                 },
-                async exportH3Analysis(format) {
-                    if (this.isExportingH3) {
+                async _captureMapSnapshotBase64() {
+                    if (typeof html2canvas !== 'function') return null;
+                    const mapContainer = document.getElementById('container');
+                    if (!mapContainer) return null;
+                    try {
+                        const canvas = await html2canvas(mapContainer, { useCORS: true, backgroundColor: null });
+                        if (!canvas || typeof canvas.toDataURL !== 'function') return null;
+                        const dataUrl = canvas.toDataURL('image/png');
+                        return (typeof dataUrl === 'string' && dataUrl.startsWith('data:image/png;base64,'))
+                            ? dataUrl
+                            : null;
+                    } catch (err) {
+                        console.warn('capture map snapshot failed', err);
+                        return null;
+                    }
+                },
+                _getChartDataUrl(chart, backgroundColor = '#ffffff') {
+                    if (!chart || typeof chart.getDataURL !== 'function') return null;
+                    try {
+                        return chart.getDataURL({
+                            type: 'png',
+                            pixelRatio: 2,
+                            backgroundColor: backgroundColor,
+                        });
+                    } catch (err) {
+                        console.warn('chart getDataURL failed', err);
+                        return null;
+                    }
+                },
+                async _renderExportChartDataUrl(option, width = 960, height = 540) {
+                    if (!window.echarts || !option) return null;
+                    const host = document.createElement('div');
+                    host.style.cssText = [
+                        'position:fixed',
+                        'left:-10000px',
+                        'top:-10000px',
+                        `width:${Math.max(320, Number(width) || 960)}px`,
+                        `height:${Math.max(220, Number(height) || 540)}px`,
+                        'pointer-events:none',
+                        'opacity:0',
+                        'background:#ffffff',
+                        'z-index:-1'
+                    ].join(';');
+                    document.body.appendChild(host);
+                    let chart = null;
+                    try {
+                        chart = echarts.init(host, null, { renderer: 'canvas' });
+                        chart.setOption(option, true);
+                        await this._waitForUiPaint();
+                        return this._getChartDataUrl(chart, '#ffffff');
+                    } catch (err) {
+                        console.warn('render export chart failed', err);
+                        return null;
+                    } finally {
+                        if (chart && typeof chart.dispose === 'function') {
+                            chart.dispose();
+                        }
+                        if (host && host.parentNode) {
+                            host.parentNode.removeChild(host);
+                        }
+                    }
+                },
+                _buildPoiChartExportOption() {
+                    const points = (this.markerManager && typeof this.markerManager.getVisiblePoints === 'function')
+                        ? this.markerManager.getVisiblePoints()
+                        : (Array.isArray(this.allPoisDetails) ? this.allPoisDetails : []);
+                    const stats = this.computePoiStats(points);
+                    const safeValues = (stats.values || []).map((value) => (Number.isFinite(value) ? value : 0));
+                    if (!safeValues.length || !safeValues.some((value) => value > 0)) return null;
+                    return {
+                        backgroundColor: '#ffffff',
+                        animation: false,
+                        title: {
+                            text: 'POI 分类分布',
+                            left: 'center',
+                            top: 10,
+                            textStyle: { fontSize: 16, fontWeight: 600, color: '#374151' }
+                        },
+                        grid: { left: 72, right: 32, top: 52, bottom: 26, containLabel: true },
+                        xAxis: {
+                            type: 'value',
+                            axisLine: { show: false },
+                            axisTick: { show: false },
+                            splitLine: { lineStyle: { color: '#e5e7eb' } },
+                            minInterval: 1
+                        },
+                        yAxis: {
+                            type: 'category',
+                            inverse: true,
+                            data: stats.labels || [],
+                            axisLine: { show: false },
+                            axisTick: { show: false },
+                            axisLabel: { color: '#4b5563', fontSize: 11 }
+                        },
+                        series: [{
+                            type: 'bar',
+                            data: safeValues,
+                            barWidth: 14,
+                            itemStyle: {
+                                color: (params) => (stats.colors || [])[params.dataIndex] || '#888'
+                            },
+                            label: {
+                                show: true,
+                                position: 'right',
+                                color: '#4b5563',
+                                fontSize: 11,
+                                formatter: '{c}'
+                            }
+                        }]
+                    };
+                },
+                _buildH3CategoryChartExportOption() {
+                    const categoryData = (this.h3AnalysisCharts && this.h3AnalysisCharts.category_distribution) || {};
+                    const labels = Array.isArray(categoryData.labels) ? categoryData.labels : [];
+                    const values = (categoryData.values || []).map((v) => this._toNumber(v, 0));
+                    if (!labels.length || !values.length) return null;
+                    const colors = this._resolveCategoryColors(labels);
+                    return {
+                        backgroundColor: '#ffffff',
+                        animation: false,
+                        title: {
+                            text: 'H3 分类分布',
+                            left: 'center',
+                            top: 10,
+                            textStyle: { fontSize: 16, fontWeight: 600, color: '#374151' }
+                        },
+                        grid: { left: 72, right: 24, top: 52, bottom: 26, containLabel: true },
+                        xAxis: {
+                            type: 'value',
+                            axisLine: { show: false },
+                            axisTick: { show: false },
+                            splitLine: { lineStyle: { color: '#eceff3' } },
+                            minInterval: 1
+                        },
+                        yAxis: {
+                            type: 'category',
+                            inverse: true,
+                            data: labels,
+                            axisLine: { show: false },
+                            axisTick: { show: false },
+                            axisLabel: { color: '#4b5563', fontSize: 11 }
+                        },
+                        series: [{
+                            type: 'bar',
+                            data: values,
+                            barWidth: 14,
+                            itemStyle: { color: (params) => colors[params.dataIndex] || '#5b8ff9' },
+                            label: {
+                                show: true,
+                                position: 'right',
+                                color: '#4b5563',
+                                fontSize: 11,
+                                formatter: '{c}'
+                            }
+                        }]
+                    };
+                },
+                _buildH3DensityChartExportOption() {
+                    const metricHist = this._resolveMetricHistogram(this.h3MetricView || 'density');
+                    const bins = metricHist && Array.isArray(metricHist.bins) ? metricHist.bins : [];
+                    const counts = metricHist && Array.isArray(metricHist.counts)
+                        ? metricHist.counts.map((v) => this._toNumber(v, 0))
+                        : [];
+                    if (!bins.length || !counts.length) return null;
+                    const densitySubtext = metricHist.subtext || '';
+                    return {
+                        backgroundColor: '#ffffff',
+                        animation: false,
+                        title: {
+                            text: metricHist.title || '指标分布',
+                            subtext: densitySubtext,
+                            left: 'center',
+                            top: 10,
+                            textStyle: { fontSize: 16, fontWeight: 600, color: '#374151' },
+                            subtextStyle: { fontSize: 11, color: '#6b7280' }
+                        },
+                        grid: { left: 54, right: 24, top: densitySubtext ? 78 : 62, bottom: 52, containLabel: true },
+                        xAxis: {
+                            type: 'category',
+                            data: bins,
+                            name: metricHist.xAxisName || '区间',
+                            nameLocation: 'middle',
+                            nameGap: 36,
+                            nameTextStyle: { color: '#6b7280', fontSize: 11 },
+                            axisLabel: {
+                                color: '#6b7280',
+                                fontSize: 11,
+                                interval: 0,
+                                rotate: bins.length > 6 ? 35 : 0,
+                            },
+                            axisLine: { lineStyle: { color: '#d7dce3' } }
+                        },
+                        yAxis: {
+                            type: 'value',
+                            minInterval: 1,
+                            name: '网格数',
+                            nameLocation: 'middle',
+                            nameGap: 42,
+                            nameTextStyle: { color: '#6b7280', fontSize: 11 },
+                            axisLine: { show: false },
+                            axisTick: { show: false },
+                            splitLine: { lineStyle: { color: '#eceff3' } }
+                        },
+                        series: [{
+                            type: 'bar',
+                            data: counts,
+                            barMaxWidth: 24,
+                            itemStyle: { color: metricHist.color || '#4c8bf5' }
+                        }]
+                    };
+                },
+                _buildH3StructureChartExportOption() {
+                    const summary = (this.h3DerivedStats && this.h3DerivedStats.structureSummary) || null;
+                    if (!summary) return null;
+                    const structureMode = this.h3StructureFillMode === 'lisa_i' ? 'lisa_i' : 'gi_z';
+                    const giStats = summary.giZStats || {};
+                    const lisaStats = summary.lisaIStats || {};
+                    const labels = ['均值', '中位数', 'P90', 'P10', '最小', '最大'];
+                    const activeStats = structureMode === 'lisa_i' ? lisaStats : giStats;
+                    const activeSeriesName = structureMode === 'lisa_i' ? 'LISA I' : 'Gi* Z';
+                    const activeSeriesColor = structureMode === 'lisa_i' ? '#0f766e' : '#b91c1c';
+                    const values = [
+                        this._toNumber(activeStats.mean, 0),
+                        this._toNumber(activeStats.p50, 0),
+                        this._toNumber(activeStats.p90, 0),
+                        this._toNumber(activeStats.p10, 0),
+                        this._toNumber(activeStats.min, 0),
+                        this._toNumber(activeStats.max, 0),
+                    ];
+                    return {
+                        backgroundColor: '#ffffff',
+                        animation: false,
+                        title: {
+                            text: `结构连续指标概览（${activeSeriesName}）`,
+                            left: 'center',
+                            top: 10,
+                            textStyle: { fontSize: 16, fontWeight: 600, color: '#374151' }
+                        },
+                        grid: { left: 58, right: 24, top: 58, bottom: 28, containLabel: true },
+                        xAxis: { type: 'value', splitLine: { lineStyle: { color: '#eceff3' } } },
+                        yAxis: {
+                            type: 'category',
+                            data: labels,
+                            axisTick: { show: false },
+                            axisLine: { show: false },
+                            axisLabel: { color: '#4b5563', fontSize: 11 }
+                        },
+                        series: [{
+                            name: activeSeriesName,
+                            type: 'bar',
+                            data: values,
+                            barWidth: 14,
+                            itemStyle: { color: activeSeriesColor },
+                            label: { show: true, position: 'right', color: '#4b5563', fontSize: 11 }
+                        }]
+                    };
+                },
+                _buildH3LqChartExportOption() {
+                    const summary = (this.h3DerivedStats && this.h3DerivedStats.lqSummary) || null;
+                    if (!summary) return null;
+                    const labels = (this.h3CategoryMeta || []).map((item) => item.label);
+                    const values = (this.h3CategoryMeta || []).map((item) => this._toNumber((summary.dominantCounts || {})[item.key], 0));
+                    if (!labels.length || !values.length) return null;
+                    return {
+                        backgroundColor: '#ffffff',
+                        animation: false,
+                        title: {
+                            text: '主导优势类别分布',
+                            left: 'center',
+                            top: 10,
+                            textStyle: { fontSize: 16, fontWeight: 600, color: '#374151' }
+                        },
+                        grid: { left: 72, right: 24, top: 58, bottom: 28, containLabel: true },
+                        xAxis: { type: 'value', minInterval: 1, splitLine: { lineStyle: { color: '#eceff3' } } },
+                        yAxis: {
+                            type: 'category',
+                            data: labels,
+                            axisTick: { show: false },
+                            axisLine: { show: false },
+                            axisLabel: { color: '#4b5563', fontSize: 11 }
+                        },
+                        series: [{
+                            type: 'bar',
+                            data: values,
+                            barWidth: 14,
+                            itemStyle: { color: '#4f8ad9' },
+                            label: { show: true, position: 'right', color: '#4b5563', fontSize: 11 }
+                        }]
+                    };
+                },
+                _buildH3GapChartExportOption() {
+                    const rows = (((this.h3DerivedStats || {}).gapSummary || {}).rows || []);
+                    if (!rows.length) return null;
+                    const data = rows.map((row) => {
+                        const demandPct = Math.max(0, Math.min(1, this._toNumber(row.demand_pct, 0)));
+                        const supplyPct = Math.max(0, Math.min(1, this._toNumber(row.supply_pct, 0)));
+                        const gapScore = this._toNumber(row.gap_score, 0);
+                        const poiCount = Math.max(0, this._toNumber(row.poi_count, 0));
+                        const symbolSize = Math.max(8, Math.min(26, 8 + Math.sqrt(poiCount) * 2));
+                        return {
+                            h3_id: row.h3_id,
+                            gap_zone_label: row.gap_zone_label || '',
+                            confidence_label: (row.confidence && row.confidence.label) || '低',
+                            demand_pct: demandPct,
+                            supply_pct: supplyPct,
+                            gap_score: gapScore,
+                            poi_count: poiCount,
+                            symbolSize: symbolSize,
+                            value: [Math.round(supplyPct * 100), Math.round(demandPct * 100), gapScore]
+                        };
+                    });
+                    return {
+                        backgroundColor: '#ffffff',
+                        animation: false,
+                        title: {
+                            text: '需求-供给散点（每点=网格）',
+                            left: 'center',
+                            top: 10,
+                            textStyle: { fontSize: 16, fontWeight: 600, color: '#374151' }
+                        },
+                        grid: { left: 68, right: 24, top: 58, bottom: 56, containLabel: true },
+                        xAxis: {
+                            type: 'value',
+                            name: '供给百分位',
+                            min: 0,
+                            max: 100,
+                            splitLine: { lineStyle: { color: '#eceff3' } }
+                        },
+                        yAxis: {
+                            type: 'value',
+                            name: '需求百分位',
+                            min: 0,
+                            max: 100,
+                            splitLine: { lineStyle: { color: '#eceff3' } }
+                        },
+                        series: [{
+                            type: 'scatter',
+                            data: data,
+                            symbolSize: (item) => item.symbolSize || 10,
+                            itemStyle: {
+                                color: (params) => {
+                                    const gap = this._toNumber(params && params.data && params.data.gap_score, 0);
+                                    if (gap >= 0.25) return '#d8573f';
+                                    if (gap <= -0.25) return '#3f7fd8';
+                                    return '#93a5bf';
+                                },
+                                opacity: 0.85
+                            },
+                            markLine: {
+                                silent: true,
+                                symbol: ['none', 'none'],
+                                lineStyle: { type: 'dashed', color: '#cbd5e1' },
+                                data: [{ xAxis: 50 }, { yAxis: 50 }]
+                            }
+                        }]
+                    };
+                },
+                _buildRoadSyntaxScatterChartExportOption() {
+                    const diagnostics = this.roadSyntaxDiagnostics || {};
+                    let points = this.normalizeRoadSyntaxScatterPoints(diagnostics.intelligibility_scatter);
+                    if (!points.length && Array.isArray(this.roadSyntaxScatterPointsCache) && this.roadSyntaxScatterPointsCache.length) {
+                        points = this.normalizeRoadSyntaxScatterPoints(this.roadSyntaxScatterPointsCache);
+                    }
+                    if (!points.length) {
+                        points = this.buildRoadSyntaxScatterFallbackPoints();
+                    }
+                    if (!points.length) return null;
+                    const rv = this.roadSyntaxRegressionView();
+                    const slope = Number(rv && rv.slope);
+                    const intercept = Number(rv && rv.intercept);
+                    const xMin = Math.min(...points.map((p) => p[0]));
+                    const xMax = Math.max(...points.map((p) => p[0]));
+                    const lineData = Number.isFinite(slope) && Number.isFinite(intercept)
+                        ? [[xMin, slope * xMin + intercept], [xMax, slope * xMax + intercept]]
+                        : [];
+                    return {
+                        backgroundColor: '#ffffff',
+                        animation: false,
+                        title: {
+                            text: '路网可理解度散点回归',
+                            subtext: `R ${rv.r} / R² ${rv.r2} / n ${rv.n}`,
+                            left: 'center',
+                            top: 10,
+                            textStyle: { fontSize: 16, fontWeight: 600, color: '#374151' },
+                            subtextStyle: { fontSize: 11, color: '#6b7280' }
+                        },
+                        grid: { left: 56, right: 24, top: 74, bottom: 54, containLabel: true },
+                        xAxis: {
+                            type: 'value',
+                            name: '连接度',
+                            nameLocation: 'middle',
+                            nameGap: 32,
+                            splitLine: { lineStyle: { color: '#eef2f7' } }
+                        },
+                        yAxis: {
+                            type: 'value',
+                            name: '整合度',
+                            nameGap: 16,
+                            splitLine: { lineStyle: { color: '#eef2f7' } }
+                        },
+                        series: [
+                            {
+                                type: 'scatter',
+                                data: points,
+                                symbolSize: 8,
+                                z: 3,
+                                itemStyle: {
+                                    color: '#2563eb',
+                                    opacity: 0.82,
+                                    borderColor: '#ffffff',
+                                    borderWidth: 0.8,
+                                },
+                            },
+                            {
+                                type: 'line',
+                                data: lineData,
+                                showSymbol: false,
+                                z: 2,
+                                lineStyle: { width: 2, color: '#dc2626', opacity: lineData.length ? 0.9 : 0 },
+                            }
+                        ]
+                    };
+                },
+                _escapeExportHtml(value) {
+                    return String(value == null ? '' : value)
+                        .replace(/&/g, '&amp;')
+                        .replace(/</g, '&lt;')
+                        .replace(/>/g, '&gt;')
+                        .replace(/"/g, '&quot;')
+                        .replace(/'/g, '&#39;');
+                },
+                _formatExportNumber(value, digits = 2) {
+                    const num = Number(value);
+                    if (!Number.isFinite(num)) return '-';
+                    return num.toFixed(Math.max(0, Number(digits) || 0));
+                },
+                _formatExportPercent(value, digits = 1) {
+                    const num = Number(value);
+                    if (!Number.isFinite(num)) return '-';
+                    return `${(num * 100).toFixed(Math.max(0, Number(digits) || 0))}%`;
+                },
+                _appendExportHtml(target, html) {
+                    if (!target || !html) return;
+                    const wrapper = document.createElement('div');
+                    wrapper.innerHTML = String(html || '');
+                    while (wrapper.firstChild) {
+                        target.appendChild(wrapper.firstChild);
+                    }
+                },
+                _createExportPanelHost(title) {
+                    const panel = document.createElement('div');
+                    panel.className = 'panel export-render-panel';
+                    panel.style.cssText = 'display:block;width:960px;box-sizing:border-box;padding:18px 20px;background:#ffffff;border:1px solid #e5e7eb;border-radius:16px;box-shadow:0 10px 30px rgba(15,23,42,0.06);';
+
+                    const heading = document.createElement('div');
+                    heading.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;';
+                    heading.innerHTML = `<h4 style="margin:0;font-size:18px;font-weight:700;color:#1f2937;">${this._escapeExportHtml(title)}</h4>`;
+                    panel.appendChild(heading);
+
+                    const body = document.createElement('div');
+                    body.style.cssText = 'display:flex;flex-direction:column;gap:10px;';
+                    panel.appendChild(body);
+                    return { panel, body };
+                },
+                _buildExportLegendHtml(legend) {
+                    const model = legend && typeof legend === 'object' ? legend : null;
+                    const items = model && Array.isArray(model.items) ? model.items : [];
+                    if (!items.length) return '';
+                    const noDataHtml = model.noDataLabel
+                        ? `
+                            <div style="margin-top:6px;font-size:11px;color:#6b7280;display:flex;align-items:center;gap:6px;">
+                                <span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:${this._escapeExportHtml(model.noDataColor || '#d1d5db')};border:1px solid #d1d5db;"></span>
+                                <span>${this._escapeExportHtml(model.noDataLabel)}</span>
+                            </div>
+                        `
+                        : '';
+                    return `
+                        <div style="border:1px solid #eef1f4;border-radius:8px;padding:8px 10px;background:#fafbfc;">
+                            <div style="font-size:12px;color:#374151;font-weight:600;margin-bottom:6px;">
+                                ${this._escapeExportHtml(model.title || '')}
+                                <span style="color:#6b7280;font-weight:400;">${model.unit ? `（${this._escapeExportHtml(model.unit)}）` : ''}</span>
+                            </div>
+                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 10px;">
+                                ${items.map((item) => `
+                                    <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#4b5563;">
+                                        <span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:${this._escapeExportHtml(item.color || '#d1d5db')};border:1px solid #d1d5db;"></span>
+                                        <span>${this._escapeExportHtml(item.label || '')}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                            ${noDataHtml}
+                        </div>
+                    `;
+                },
+                _buildExportCountBadgeGridHtml(items, columns = 2) {
+                    const validItems = (items || []).filter((item) => item && item.label);
+                    if (!validItems.length) return '';
+                    const cols = Math.max(1, Number(columns) || 2);
+                    return `
+                        <div style="display:grid;grid-template-columns:repeat(${cols}, minmax(0, 1fr));gap:8px;">
+                            ${validItems.map((item) => `
+                                <div class="count-badge">${this._escapeExportHtml(item.label)} ${this._escapeExportHtml(item.value == null ? '-' : item.value)}</div>
+                            `).join('')}
+                        </div>
+                    `;
+                },
+                _buildExportDecisionCardsHtml(cards) {
+                    const validCards = (cards || []).filter((item) => item && item.label);
+                    if (!validCards.length) return '';
+                    return `
+                        <div class="h3-decision-cards">
+                            ${validCards.map((item) => `
+                                <div class="h3-decision-card">
+                                    <div class="label">${this._escapeExportHtml(item.label)}</div>
+                                    <div class="value${item.small ? ' small' : ''}">${this._escapeExportHtml(item.value == null ? '-' : item.value)}</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                },
+                _buildExportTableHtml(headers, rows, options = {}) {
+                    const headerList = Array.isArray(headers) ? headers : [];
+                    const rowList = Array.isArray(rows) ? rows : [];
+                    if (!headerList.length || !rowList.length) return '';
+                    const marginTop = options.marginTop || '8px';
+                    return `
+                        <table class="h3-mini-table" style="margin-top:${this._escapeExportHtml(marginTop)};">
+                            <thead>
+                                <tr>${headerList.map((label) => `<th>${this._escapeExportHtml(label)}</th>`).join('')}</tr>
+                            </thead>
+                            <tbody>
+                                ${rowList.map((row) => `<tr>${row.map((cell) => `<td>${this._escapeExportHtml(cell)}</td>`).join('')}</tr>`).join('')}
+                            </tbody>
+                        </table>
+                    `;
+                },
+                _buildH3TypingLegendHtml() {
+                    const items = [
+                        { label: '高密-高混合', color: '#0f766e' },
+                        { label: '高密-低混合', color: '#b45309' },
+                        { label: '低密-高混合', color: '#2563eb' },
+                        { label: '低密-低混合', color: '#64748b' },
+                        { label: `无数据（样本<${this._toNumber(this.h3EntropyMinPoi, 3)}）`, color: '#d1d5db' },
+                    ];
+                    return this._buildExportLegendHtml({
+                        title: '功能混合度（分类）',
+                        unit: '',
+                        items: items,
+                    });
+                },
+                _buildH3MetricLegendForExport() {
+                    const source = Array.isArray(this.h3AnalysisGridFeatures) ? this.h3AnalysisGridFeatures : [];
+                    if (!source.length) return null;
+                    const metricKey = this.h3MetricView || 'density';
+                    const metricSpec = this._getMetricSpec(metricKey);
+                    const measured = source.map((feature) => {
+                        const datum = this._getH3MetricValue((feature && feature.properties) || {}, metricKey);
+                        return {
+                            value: datum.value,
+                            noData: datum.noData,
+                        };
+                    });
+                    const validValues = measured
+                        .filter((item) => !item.noData && Number.isFinite(item.value))
+                        .map((item) => item.value);
+                    const breaks = metricSpec.diverging
+                        ? this._buildDivergingBreaks(validValues)
+                        : this._buildQuantileBreaks(validValues, 5);
+                    return this._buildLegend(metricSpec, breaks, validValues);
+                },
+                _buildH3StructureLegendForExport() {
+                    const summary = this.h3AnalysisSummary || {};
+                    if (this.h3StructureFillMode === 'lisa_i') {
+                        return this._buildLisaLegend(summary.lisa_render_meta);
+                    }
+                    return this._buildGiLegend(summary.gi_render_meta);
+                },
+                async _waitForExportImages(root) {
+                    const images = Array.from((root && root.querySelectorAll) ? root.querySelectorAll('img') : []);
+                    if (!images.length) return;
+                    await Promise.all(images.map((img) => {
+                        if (img.complete && img.naturalWidth > 0) return Promise.resolve();
+                        return new Promise((resolve) => {
+                            const done = () => {
+                                img.removeEventListener('load', done);
+                                img.removeEventListener('error', done);
+                                resolve();
+                            };
+                            img.addEventListener('load', done, { once: true });
+                            img.addEventListener('error', done, { once: true });
+                        });
+                    }));
+                },
+                async _captureExportPanelNode(node) {
+                    if (typeof html2canvas !== 'function' || !node) return null;
+                    const wrapper = document.createElement('div');
+                    wrapper.style.cssText = 'position:fixed;left:-20000px;top:0;padding:16px;background:#ffffff;z-index:-1;pointer-events:none;';
+                    wrapper.appendChild(node);
+                    document.body.appendChild(wrapper);
+                    try {
+                        await this.$nextTick();
+                        await this._waitForUiPaint();
+                        await this._waitForExportImages(wrapper);
+                        const canvas = await html2canvas(node, {
+                            useCORS: true,
+                            backgroundColor: '#ffffff',
+                            scale: 2,
+                            logging: false,
+                        });
+                        if (!canvas || typeof canvas.toDataURL !== 'function') return null;
+                        const dataUrl = canvas.toDataURL('image/png');
+                        return (typeof dataUrl === 'string' && dataUrl.startsWith('data:image/png;base64,')) ? dataUrl : null;
+                    } catch (err) {
+                        console.warn('capture export panel failed', err);
+                        return null;
+                    } finally {
+                        if (wrapper && wrapper.parentNode) wrapper.parentNode.removeChild(wrapper);
+                    }
+                },
+                async _buildPoiPanelExportNode() {
+                    const chartOption = this._buildPoiChartExportOption();
+                    if (!chartOption) return null;
+                    const chartDataUrl = await this._renderExportChartDataUrl(chartOption, 980, 520);
+                    if (!chartDataUrl) return null;
+                    const { panel, body } = this._createExportPanelHost('POI 分类');
+                    const totalCount = Array.isArray(this.allPoisDetails) ? this.allPoisDetails.length : 0;
+                    this._appendExportHtml(body, this._buildExportCountBadgeGridHtml([
+                        { label: '总数', value: totalCount },
+                    ], 1));
+                    const filtersContainer = document.getElementById('filtersContainer');
+                    if (filtersContainer) {
+                        const filtersClone = filtersContainer.cloneNode(true);
+                        body.appendChild(filtersClone);
+                    }
+                    this._appendExportHtml(body, `<div style="margin-top:8px;"><img src="${chartDataUrl}" alt="POI 分类图" style="display:block;width:100%;border-radius:10px;border:1px solid #e5e7eb;background:#fff;" /></div>`);
+                    return panel;
+                },
+                async _buildH3MetricPanelExportNode() {
+                    const summary = this.h3AnalysisSummary || null;
+                    if (!summary) return null;
+                    const categoryDataUrl = await this._renderExportChartDataUrl(this._buildH3CategoryChartExportOption(), 980, 520);
+                    const densityDataUrl = await this._renderExportChartDataUrl(this._buildH3DensityChartExportOption(), 980, 560);
+                    const { panel, body } = this._createExportPanelHost('H3 分析 · 密度场');
+                    this._appendExportHtml(body, this._buildExportCountBadgeGridHtml([
+                        { label: 'POI总数', value: summary.poi_count },
+                        { label: '平均密度', value: this._formatExportNumber(summary.avg_density_poi_per_km2, 2) },
+                        { label: '平均熵', value: this._formatExportNumber(summary.avg_local_entropy, 3) },
+                        { label: '网格数', value: summary.grid_count ?? this.h3GridCount },
+                        { label: 'Gi*有效格', value: (summary.gi_z_stats && summary.gi_z_stats.count) ?? 0 },
+                        { label: 'LISA有效格', value: (summary.lisa_i_stats && summary.lisa_i_stats.count) ?? 0 },
+                    ], 2));
+                    this._appendExportHtml(body, `<div class="h3-analysis-hint">看密度、混合度和邻域差值，优先找“高密且邻域为正”的连续片区。</div>`);
+                    this._appendExportHtml(body, this._buildExportLegendHtml(this._buildH3MetricLegendForExport()));
+                    if (categoryDataUrl) {
+                        this._appendExportHtml(body, `<div style="margin-top:8px;"><img src="${categoryDataUrl}" alt="H3 分类分布图" style="display:block;width:100%;border-radius:10px;border:1px solid #e5e7eb;background:#fff;" /></div>`);
+                    }
+                    if (densityDataUrl) {
+                        this._appendExportHtml(body, `<div><img src="${densityDataUrl}" alt="H3 密度分布图" style="display:block;width:100%;border-radius:10px;border:1px solid #e5e7eb;background:#fff;" /></div>`);
+                    }
+                    return panel;
+                },
+                async _buildH3StructurePanelExportNode() {
+                    const summary = this.h3AnalysisSummary || null;
+                    const derived = this.h3DerivedStats && this.h3DerivedStats.structureSummary;
+                    if (!summary || !derived) return null;
+                    const chartDataUrl = await this._renderExportChartDataUrl(this._buildH3StructureChartExportOption(), 980, 520);
+                    const rows = (derived.rows || []).slice(0, Math.max(1, this.h3DecisionTopN)).map((row) => ([
+                        this.shortH3Id(row.h3_id),
+                        row.gi_star_z_score === null ? '-' : this._formatExportNumber(row.gi_star_z_score, 2),
+                        row.lisa_i === null ? '-' : this._formatExportNumber(row.lisa_i, 2),
+                        Number.isFinite(row.structure_signal) ? this._formatExportNumber(row.structure_signal, 2) : '-',
+                        row.density === null ? '-' : this._formatExportNumber(row.density, 2),
+                    ]));
+                    const snapshotUrl = (typeof this.getArcgisSnapshotUrl === 'function') ? this.getArcgisSnapshotUrl() : '';
+                    const snapshotSrc = snapshotUrl && typeof this.getArcgisSnapshotSrc === 'function' ? this.getArcgisSnapshotSrc() : '';
+                    const snapshotTitle = snapshotUrl && typeof this.getArcgisSnapshotTitle === 'function' ? this.getArcgisSnapshotTitle() : 'ArcGIS 结构快照';
+                    const { panel, body } = this._createExportPanelHost('H3 分析 · 结构图');
+                    this._appendExportHtml(body, `<div class="h3-analysis-hint">结构图口径：仅使用 ArcGIS 连续字段。Gi* 使用 GiZScore；LISA 使用 LMiIndex；网格边框统一蓝色。</div>`);
+                    this._appendExportHtml(body, this._buildExportCountBadgeGridHtml([
+                        { label: '莫兰指数', value: summary.global_moran_i_density ?? 'N/A' },
+                        { label: '莫兰z值', value: summary.global_moran_z_score ?? 'N/A' },
+                        { label: this.h3StructureFillMode === 'gi_z' ? 'Gi*有效格' : 'LISA有效格', value: this.h3StructureFillMode === 'gi_z' ? ((summary.gi_z_stats && summary.gi_z_stats.count) ?? 0) : ((summary.lisa_i_stats && summary.lisa_i_stats.count) ?? 0) },
+                        { label: '引擎', value: (summary.analysis_engine || 'pysal').toUpperCase() },
+                    ], 2));
+                    if (derived.lisaRenderMeta && derived.lisaRenderMeta.degraded) {
+                        this._appendExportHtml(body, `<div class="h3-analysis-hint">${this._escapeExportHtml(derived.lisaRenderMeta.message || 'LMiIndex方差不足')}</div>`);
+                    }
+                    if (summary.arcgis_status) {
+                        this._appendExportHtml(body, `<div class="h3-analysis-hint">${this._escapeExportHtml(summary.arcgis_status)}</div>`);
+                    }
+                    if (snapshotSrc) {
+                        this._appendExportHtml(body, `
+                            <div style="border:1px solid #eef1f4;border-radius:10px;padding:8px;background:#fafbfc;">
+                                <div style="font-size:12px;color:#374151;font-weight:600;margin-bottom:6px;">${this._escapeExportHtml(snapshotTitle)}</div>
+                                <img src="${snapshotSrc}" alt="ArcGIS结构图" style="width:100%;border-radius:8px;border:1px solid #dbe2ea;" />
+                            </div>
+                        `);
+                    } else {
+                        this._appendExportHtml(body, `<div class="h3-analysis-hint">当前未生成结构快照。</div>`);
+                    }
+                    this._appendExportHtml(body, this._buildExportLegendHtml(this._buildH3StructureLegendForExport()));
+                    this._appendExportHtml(body, this._buildExportDecisionCardsHtml([
+                        { label: 'Gi* 均值', value: derived.giZStats.mean === null ? '-' : this._formatExportNumber(derived.giZStats.mean, 2) },
+                        { label: 'Gi* 中位数', value: derived.giZStats.p50 === null ? '-' : this._formatExportNumber(derived.giZStats.p50, 2) },
+                        { label: 'LISA 正值占比', value: derived.lisaPositivePct === null ? '-' : this._formatExportPercent(derived.lisaPositivePct, 1) },
+                        { label: 'LISA 负值占比', value: derived.lisaNegativePct === null ? '-' : this._formatExportPercent(derived.lisaNegativePct, 1) },
+                    ]));
+                    if (chartDataUrl) {
+                        this._appendExportHtml(body, `<div><img src="${chartDataUrl}" alt="结构连续指标图" style="display:block;width:100%;border-radius:10px;border:1px solid #e5e7eb;background:#fff;" /></div>`);
+                    }
+                    this._appendExportHtml(body, this._buildExportTableHtml(['H3', 'Gi*z', 'LISA I', '结构信号', '密度'], rows));
+                    return panel;
+                },
+                async _buildH3TypingPanelExportNode() {
+                    const typing = this.h3DerivedStats && this.h3DerivedStats.typingSummary;
+                    if (!typing) return null;
+                    const rows = (typing.rows || []).slice(0, Math.max(1, this.h3DecisionTopN)).map((row) => ([
+                        this.shortH3Id(row.h3_id),
+                        row.poi_count,
+                        this._formatExportNumber(row.density, 2),
+                        row.entropy_norm === null ? '-' : this._formatExportNumber(row.entropy_norm, 2),
+                        (row.confidence && row.confidence.label) || '低',
+                        row.type_label || '-',
+                    ]));
+                    const { panel, body } = this._createExportPanelHost('H3 诊断 · 功能混合度');
+                    this._appendExportHtml(body, `<div class="h3-analysis-hint">看四象限结构：高密高混合偏成熟，高密低混合偏单核，低密高混合偏潜力，低密低混合偏薄弱；同时参考可信度。</div>`);
+                    this._appendExportHtml(body, this._buildH3TypingLegendHtml());
+                    this._appendExportHtml(body, this._buildExportDecisionCardsHtml([
+                        { label: '机会网格数', value: typing.opportunityCount },
+                        { label: '最高密度', value: this._formatExportNumber(typing.maxDensity, 2) },
+                        { label: '建议动作', value: typing.recommendation || '-', small: true },
+                    ]));
+                    this._appendExportHtml(body, this._buildExportTableHtml(['H3', 'POI', '密度', '熵', '可信度', '分型'], rows, { marginTop: '0' }));
+                    return panel;
+                },
+                async _buildH3LqPanelExportNode() {
+                    const summary = this.h3DerivedStats && this.h3DerivedStats.lqSummary;
+                    if (!summary) return null;
+                    const chartDataUrl = await this._renderExportChartDataUrl(this._buildH3LqChartExportOption(), 980, 520);
+                    const rows = (summary.rows || []).slice(0, Math.max(1, this.h3DecisionTopN)).map((row) => ([
+                        this.shortH3Id(row.h3_id),
+                        row.poi_count,
+                        this._formatExportNumber(row.density, 2),
+                        row.entropy_norm === null ? '-' : this._formatExportNumber(row.entropy_norm, 2),
+                        (row.confidence && row.confidence.label) || '低',
+                        Number.isFinite(row.structure_signal) ? this._formatExportNumber(row.structure_signal, 2) : '-',
+                        row.lq_target === null ? '-' : this._formatExportNumber(row.lq_target, 2),
+                    ]));
+                    const { panel, body } = this._createExportPanelHost('H3 诊断 · 区位商优势');
+                    this._appendExportHtml(body, `<div class="h3-analysis-hint">看目标业态相对本分析区是否更强：大于1偏强，小于1偏弱；已做小样本平滑。</div>`);
+                    this._appendExportHtml(body, this._buildExportDecisionCardsHtml([
+                        { label: '优势网格数', value: summary.opportunityCount },
+                        { label: '最高优势值', value: this._formatExportNumber(summary.maxLq, 2) },
+                        { label: '建议业态', value: summary.recommendation || '-', small: true },
+                    ]));
+                    if (chartDataUrl) {
+                        this._appendExportHtml(body, `<div><img src="${chartDataUrl}" alt="LQ 图表" style="display:block;width:100%;border-radius:10px;border:1px solid #e5e7eb;background:#fff;" /></div>`);
+                    }
+                    this._appendExportHtml(body, this._buildExportTableHtml(['H3', 'POI', '密度', '熵', '可信度', '结构参考', '优势值'], rows));
+                    return panel;
+                },
+                async _buildH3GapPanelExportNode() {
+                    const summary = this.h3DerivedStats && this.h3DerivedStats.gapSummary;
+                    if (!summary) return null;
+                    const chartDataUrl = await this._renderExportChartDataUrl(this._buildH3GapChartExportOption(), 980, 580);
+                    const rows = (summary.rows || []).slice(0, Math.max(1, this.h3DecisionTopN)).map((row) => ([
+                        this.shortH3Id(row.h3_id),
+                        Math.round((row.demand_pct || 0) * 100),
+                        Math.round((row.supply_pct || 0) * 100),
+                        row.gap_score === null ? '-' : this._formatExportNumber(row.gap_score, 2),
+                        (row.confidence && row.confidence.label) || '低',
+                        row.gap_zone_label || '-',
+                    ]));
+                    const { panel, body } = this._createExportPanelHost('H3 评估 · 缺口评估');
+                    this._appendExportHtml(body, `<div class="h3-analysis-hint">先看“需求分位”和“供给分位”，再看两者差值；需求高且供给低的网格优先补位。</div>`);
+                    if (summary.mappingWarning) {
+                        this._appendExportHtml(body, `<div class="panel-placeholder" style="border-color:#fde68a;background:#fffbeb;color:#92400e;">${this._escapeExportHtml(summary.mappingWarning)}</div>`);
+                    }
+                    this._appendExportHtml(body, this._buildExportDecisionCardsHtml([
+                        { label: '高缺口网格', value: summary.opportunityCount },
+                        { label: '最高缺口分', value: this._formatExportNumber(summary.maxGap, 2) },
+                        { label: '建议优先区', value: summary.recommendation || '-', small: true },
+                    ]));
+                    this._appendExportHtml(body, `<div class="panel-placeholder">${this._escapeExportHtml(summary.insight || '缺口分 = 需求百分位 - 目标业态供给百分位（越高越可能供给偏弱）')}</div>`);
+                    if (chartDataUrl) {
+                        this._appendExportHtml(body, `<div><img src="${chartDataUrl}" alt="缺口散点图" style="display:block;width:100%;border-radius:10px;border:1px solid #e5e7eb;background:#fff;" /></div>`);
+                    }
+                    this._appendExportHtml(body, this._buildExportTableHtml(['H3', '需求分位', '供给分位', '缺口分', '可信度', '结论'], rows));
+                    return panel;
+                },
+                async _buildRoadMetricPanelExportNode(metric) {
+                    const summary = this.roadSyntaxSummary || null;
+                    if (!summary) return null;
+                    const legend = this.buildRoadSyntaxLegendModel(metric);
+                    const radiusOption = (this.roadSyntaxRadiusOptions() || []).find((item) => String(item.value || '') === String(this.roadSyntaxRadiusLabel || ''));
+                    const radiusLabel = radiusOption ? radiusOption.label : '等时圈内';
+                    const footnote = this.roadSyntaxFootnoteByMetric(metric);
+                    const switchText = this.roadSyntaxSwitchStatsText || '';
+                    const statusText = this.roadSyntaxStatus || '';
+                    const metricLabel = this.roadSyntaxLabelByMetric(metric);
+                    const sampleCount = this.roadSyntaxMetricDataCount(metric);
+                    const mainValue = this.formatRoadSyntaxMetricValue(metric);
+                    const chartDataUrl = metric === 'intelligibility'
+                        ? await this._renderExportChartDataUrl(this._buildRoadSyntaxScatterChartExportOption(), 980, 580)
+                        : null;
+                    const { panel, body } = this._createExportPanelHost(`路网分析 · ${metricLabel}`);
+                    this._appendExportHtml(body, this._buildExportCountBadgeGridHtml([
+                        { label: '当前指标', value: metricLabel },
+                        { label: '指标值', value: mainValue },
+                        { label: '样本数', value: sampleCount },
+                        { label: this.roadSyntaxMetricUsesRadius(metric) ? '半径' : '图模型', value: this.roadSyntaxMetricUsesRadius(metric) ? radiusLabel : this.roadSyntaxGraphModel },
+                    ], 2));
+                    this._appendExportHtml(body, this._buildExportLegendHtml(legend));
+                    if (footnote) {
+                        this._appendExportHtml(body, `<div class="h3-analysis-hint">${this._escapeExportHtml(footnote)}</div>`);
+                    }
+                    if (switchText) {
+                        this._appendExportHtml(body, `<div class="status-text">${this._escapeExportHtml(switchText)}</div>`);
+                    }
+                    if (statusText) {
+                        this._appendExportHtml(body, `<div class="status-text">${this._escapeExportHtml(statusText)}</div>`);
+                    }
+                    if (metric === 'intelligibility' && chartDataUrl) {
+                        const rv = this.roadSyntaxRegressionView();
+                        this._appendExportHtml(body, this._buildExportDecisionCardsHtml([
+                            { label: 'R', value: rv.r },
+                            { label: 'R²', value: rv.r2 },
+                            { label: '样本点数', value: rv.n },
+                        ]));
+                        this._appendExportHtml(body, `<div><img src="${chartDataUrl}" alt="可理解度散点图" style="display:block;width:100%;border-radius:10px;border:1px solid #e5e7eb;background:#fff;" /></div>`);
+                    }
+                    return panel;
+                },
+                async _captureFrontendPanelsForExport(selectedParts) {
+                    if (typeof html2canvas !== 'function') return [];
+                    const requestedParts = Array.from(new Set((selectedParts || []).filter((part) => this.isPanelExportPart(part))));
+                    if (!requestedParts.length) return [];
+                    if (requestedParts.some((part) => String(part || '').startsWith('h3_'))) {
+                        this.computeH3DerivedStats();
+                    }
+                    const builders = {
+                        poi_panel_png: () => this._buildPoiPanelExportNode(),
+                        h3_metric_panel_png: () => this._buildH3MetricPanelExportNode(),
+                        h3_structure_panel_png: () => this._buildH3StructurePanelExportNode(),
+                        h3_typing_panel_png: () => this._buildH3TypingPanelExportNode(),
+                        h3_lq_panel_png: () => this._buildH3LqPanelExportNode(),
+                        h3_gap_panel_png: () => this._buildH3GapPanelExportNode(),
+                        road_connectivity_panel_png: () => this._buildRoadMetricPanelExportNode('connectivity'),
+                        road_control_panel_png: () => this._buildRoadMetricPanelExportNode('control'),
+                        road_depth_panel_png: () => this._buildRoadMetricPanelExportNode('depth'),
+                        road_choice_panel_png: () => this._buildRoadMetricPanelExportNode('choice'),
+                        road_integration_panel_png: () => this._buildRoadMetricPanelExportNode('integration'),
+                        road_intelligibility_panel_png: () => this._buildRoadMetricPanelExportNode('intelligibility'),
+                    };
+                    const panelIdByPart = {
+                        poi_panel_png: 'poi_panel',
+                        h3_metric_panel_png: 'h3_metric_panel',
+                        h3_structure_panel_png: 'h3_structure_panel',
+                        h3_typing_panel_png: 'h3_typing_panel',
+                        h3_lq_panel_png: 'h3_lq_panel',
+                        h3_gap_panel_png: 'h3_gap_panel',
+                        road_connectivity_panel_png: 'road_connectivity_panel',
+                        road_control_panel_png: 'road_control_panel',
+                        road_depth_panel_png: 'road_depth_panel',
+                        road_choice_panel_png: 'road_choice_panel',
+                        road_integration_panel_png: 'road_integration_panel',
+                        road_intelligibility_panel_png: 'road_intelligibility_panel',
+                    };
+                    const panels = [];
+                    for (const part of requestedParts) {
+                        const builder = builders[part];
+                        if (typeof builder !== 'function') continue;
+                        const node = await builder();
+                        if (!node) continue;
+                        const pngBase64 = await this._captureExportPanelNode(node);
+                        if (!pngBase64) continue;
+                        panels.push({
+                            panel_id: panelIdByPart[part],
+                            png_base64: pngBase64,
+                        });
+                    }
+                    return panels;
+                },
+                async _captureFrontendChartsForExport() {
+                    if (!window.echarts) return [];
+                    if (this.hasH3AnalysisForExport()) {
+                        this.computeH3DerivedStats();
+                    }
+                    const chartDefs = [
+                        {
+                            chart_id: 'poi_category',
+                            instance: this.poiChart,
+                            canExport: this.hasPoisForExport(),
+                            width: 980,
+                            height: 520,
+                            optionBuilder: () => this._buildPoiChartExportOption(),
+                        },
+                        {
+                            chart_id: 'h3_category_distribution',
+                            instance: this.h3CategoryChart,
+                            canExport: this.hasH3AnalysisForExport(),
+                            width: 980,
+                            height: 520,
+                            optionBuilder: () => this._buildH3CategoryChartExportOption(),
+                        },
+                        {
+                            chart_id: 'h3_density_histogram',
+                            instance: this.h3DensityChart,
+                            canExport: this.hasH3AnalysisForExport(),
+                            width: 980,
+                            height: 560,
+                            optionBuilder: () => this._buildH3DensityChartExportOption(),
+                        },
+                        {
+                            chart_id: 'h3_structure_overview',
+                            instance: this.h3StructureChart,
+                            canExport: this.hasH3AnalysisForExport(),
+                            width: 980,
+                            height: 520,
+                            optionBuilder: () => this._buildH3StructureChartExportOption(),
+                        },
+                        {
+                            chart_id: 'h3_lq_distribution',
+                            instance: this.h3LqChart,
+                            canExport: this.hasH3AnalysisForExport(),
+                            width: 980,
+                            height: 520,
+                            optionBuilder: () => this._buildH3LqChartExportOption(),
+                        },
+                        {
+                            chart_id: 'h3_gap_scatter',
+                            instance: this.h3GapChart,
+                            canExport: this.hasH3AnalysisForExport(),
+                            width: 980,
+                            height: 580,
+                            optionBuilder: () => this._buildH3GapChartExportOption(),
+                        },
+                        {
+                            chart_id: 'road_intelligibility_scatter',
+                            instance: this.roadSyntaxScatterChart,
+                            canExport: this.hasRoadSyntaxSummaryForExport(),
+                            width: 980,
+                            height: 580,
+                            optionBuilder: () => this._buildRoadSyntaxScatterChartExportOption(),
+                        },
+                    ];
+                    const images = [];
+                    for (const def of chartDefs) {
+                        if (!def || !def.canExport) continue;
+                        let dataUrl = this._getChartDataUrl(def.instance, '#ffffff');
+                        if (!dataUrl) {
+                            const option = typeof def.optionBuilder === 'function' ? def.optionBuilder() : null;
+                            if (!option) continue;
+                            dataUrl = await this._renderExportChartDataUrl(option, def.width, def.height);
+                        }
+                        if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/png;base64,')) {
+                            continue;
+                        }
+                        images.push({
+                            chart_id: def.chart_id,
+                            png_base64: dataUrl,
+                        });
+                    }
+                    return images;
+                },
+                _waitForUiPaint() {
+                    return new Promise((resolve) => {
+                        window.requestAnimationFrame(() => resolve());
+                    });
+                },
+                _normalizeIsochroneFeatureForExport() {
+                    const raw = this.lastIsochroneGeoJSON;
+                    if (!raw || typeof raw !== 'object') return null;
+
+                    let geometry = null;
+                    let properties = {};
+
+                    if (raw.type === 'Feature') {
+                        geometry = this._normalizeGeometryForExport(raw.geometry || null);
+                        properties = (raw.properties && typeof raw.properties === 'object') ? raw.properties : {};
+                    } else if (raw.geometry && typeof raw.geometry === 'object') {
+                        geometry = this._normalizeGeometryForExport(raw.geometry);
+                        properties = (raw.properties && typeof raw.properties === 'object') ? raw.properties : {};
+                    } else if (raw.type === 'Polygon' || raw.type === 'MultiPolygon') {
+                        geometry = this._normalizeGeometryForExport(raw);
+                    }
+
+                    if (!geometry) return null;
+
+                    return {
+                        type: 'Feature',
+                        geometry: geometry,
+                        properties: Object.assign({}, properties),
+                    };
+                },
+                _buildExportBundlePayload(selectedParts, mapSnapshotBase64, frontendPanels) {
+                    const gridFeatures = this._buildH3ExportGridFeatures();
+                    const roadFeatures = Array.isArray(this.roadSyntaxRoadFeatures) ? this.roadSyntaxRoadFeatures : [];
+                    const pois = Array.isArray(this.allPoisDetails) ? this.allPoisDetails : [];
+                    const isochroneFeature = this._normalizeIsochroneFeatureForExport();
+                    const styleMode = (this.h3MainStage === 'analysis' && this.h3SubTab === 'structure_map')
+                        ? (this.h3StructureFillMode === 'lisa_i' ? 'lisa_i' : 'gi_z')
+                        : 'density';
+
+                    return {
+                        template: 'business_common',
+                        parts: selectedParts,
+                        coord_type: 'gcj02',
+                        context: {
+                            center: this.selectedPoint ? [Number(this.selectedPoint.lng), Number(this.selectedPoint.lat)] : null,
+                            time_min: Number(this.timeHorizon || 0) || null,
+                            mode: this.transportMode || '',
+                            source: this.resultDataSource || this.poiDataSource || '',
+                            scope_source: this.scopeSource || '',
+                            generated_at: new Date().toISOString(),
+                        },
+                        isochrone_feature: isochroneFeature,
+                        pois: pois,
+                        h3: {
+                            grid_features: gridFeatures,
+                            summary: this.h3AnalysisSummary || {},
+                            charts: this.h3AnalysisCharts || {},
+                            style_meta: {
+                                style_mode: styleMode,
+                                metric_view: this.h3MetricView,
+                                structure_fill_mode: this.h3StructureFillMode,
+                                legend: this.h3Legend || null,
+                                gi_render_meta: (this.h3AnalysisSummary && this.h3AnalysisSummary.gi_render_meta) || null,
+                                lisa_render_meta: (this.h3AnalysisSummary && this.h3AnalysisSummary.lisa_render_meta) || null,
+                            },
+                        },
+                        road_syntax: {
+                            roads: {
+                                type: 'FeatureCollection',
+                                features: roadFeatures,
+                                count: roadFeatures.length,
+                            },
+                            summary: this.roadSyntaxSummary || {},
+                            nodes: {
+                                type: 'FeatureCollection',
+                                features: Array.isArray(this.roadSyntaxNodes) ? this.roadSyntaxNodes : [],
+                                count: Array.isArray(this.roadSyntaxNodes) ? this.roadSyntaxNodes.length : 0,
+                            },
+                            diagnostics: this.roadSyntaxDiagnostics || {},
+                        },
+                        frontend_panels: Array.isArray(frontendPanels) ? frontendPanels : [],
+                        map_snapshot_png_base64: mapSnapshotBase64 || null,
+                    };
+                },
+                async exportAnalysisBundle() {
+                    if (this.isExportingBundle) {
                         this._showH3ExportToast('已有导出任务进行中，请稍候', 'info');
                         this.h3ExportTasksOpen = true;
                         return;
                     }
-                    if (this.h3ExportScope === 'analysis_result' && !this.hasH3AnalysisForExport()) {
-                        this._showH3ExportToast('请先完成计算分析，再导出分析结果', 'warning');
+                    const selectedParts = this._normalizeExportBundleParts();
+                    if (!selectedParts.length) {
+                        this._showH3ExportToast('请至少勾选一个导出项', 'warning');
                         return;
                     }
-                    const gridFeatures = this._buildH3ExportGridFeatures();
-                    if (!gridFeatures.length) {
-                        this._showH3ExportToast('暂无可导出的网格', 'warning');
-                        return;
-                    }
-                    const exportFormat = format === 'arcgis_package' ? 'arcgis_package' : 'gpkg';
-                    const taskId = this._createH3ExportTask(exportFormat);
+
+                    this.isExportingBundle = true;
+                    const taskId = this._createExportBundleTask(selectedParts);
                     this.h3ExportTasksOpen = true;
-                    const styleMode = this._resolveH3ExportStyleMode();
-                    const payload = {
-                        format: exportFormat,
-                        include_poi: !!this.h3ExportIncludePoi,
-                        style_mode: styleMode,
-                        grid_features: gridFeatures,
-                        poi_features: this._buildH3ExportPoiFeatures(),
-                        style_meta: {
-                            legend: this.h3Legend || null,
-                            metric_view: this.h3MetricView,
-                            structure_fill_mode: this.h3StructureFillMode,
-                            gi_render_meta: (this.h3AnalysisSummary && this.h3AnalysisSummary.gi_render_meta) || null,
-                            lisa_render_meta: (this.h3AnalysisSummary && this.h3AnalysisSummary.lisa_render_meta) || null,
-                        },
-                        arcgis_python_path: this.h3ArcgisPythonPath || null,
-                        arcgis_timeout_sec: 300,
-                    };
-                    this.isExportingH3 = true;
                     try {
-                        const res = await fetch('/api/v1/analysis/h3/export', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(payload),
-                        });
-                        if (!res.ok) {
-                            let detail = '';
-                            try {
-                                const errJson = await res.json();
-                                detail = errJson && (errJson.detail || errJson.error || JSON.stringify(errJson));
-                            } catch (_) {
-                                try { detail = await res.text(); } catch (_) { detail = ''; }
+                        this._setExportBundleTaskProgress(taskId, 5, '准备导出环境');
+                        await this.$nextTick();
+                        await this._waitForUiPaint();
+
+                        let mapSnapshotBase64 = null;
+                        let frontendPanels = [];
+                        if (selectedParts.includes('map_snapshot_png')) {
+                            this._setExportBundleTaskProgress(taskId, 12, '生成地图快照');
+                            if (typeof html2canvas !== 'function') {
+                                this._showH3ExportToast('截图组件未加载，地图快照将自动跳过', 'warning', 2600);
+                            } else {
+                                mapSnapshotBase64 = await this._captureMapSnapshotBase64();
+                                if (!mapSnapshotBase64) {
+                                    this._showH3ExportToast('地图快照获取失败，将自动跳过该项', 'warning', 2600);
+                                }
                             }
-                            throw new Error(detail || `HTTP ${res.status}`);
                         }
-                        const blob = await res.blob();
-                        const filename = this._getFilenameFromContentDisposition(res.headers.get('content-disposition'))
-                            || (exportFormat === 'arcgis_package' ? 'h3_analysis.zip' : 'h3_analysis.gpkg');
+                        if (selectedParts.some((part) => this.isPanelExportPart(part))) {
+                            this._setExportBundleTaskProgress(taskId, 28, '生成结果子面板 PNG');
+                            frontendPanels = await this._captureFrontendPanelsForExport(selectedParts);
+                            if (!frontendPanels.length) {
+                                this._showH3ExportToast('当前没有可导出的结果子面板，将自动跳过对应 PNG 项', 'warning', 2600);
+                            }
+                        }
+
+                        this._setExportBundleTaskProgress(taskId, 50, '构建导出请求');
+                        const payload = this._buildExportBundlePayload(selectedParts, mapSnapshotBase64, frontendPanels);
+                        await this._waitForUiPaint();
+                        this._setExportBundleTaskProgress(taskId, 55, '上传导出请求');
+                        const res = await this._postExportBundleWithProgress(payload, taskId);
+                        this._setExportBundleTaskProgress(taskId, 99, '保存导出文件');
+                        const blob = res.blob;
+                        const filename = this._getFilenameFromContentDisposition(res.disposition)
+                            || 'analysis_export.zip';
                         this._downloadBlobFile(blob, filename);
-                        this._updateH3ExportTask(taskId, {
+                        this._updateExportBundleTask(taskId, {
                             status: 'success',
                             status_label: '已完成',
                             filename: filename,
                             error: '',
+                            progress_pct: 100,
+                            progress_label: '导出完成',
                         });
                         this._showH3ExportToast(`导出成功：${filename}`, 'success');
                         this.h3ExportMenuOpen = false;
                     } catch (e) {
                         console.error(e);
-                        this._updateH3ExportTask(taskId, {
+                        this._updateExportBundleTask(taskId, {
                             status: 'failed',
                             status_label: '失败',
-                            error: String((e && e.message) || e || '导出失败'),
+                            error: String((e && e.message) || e || '未知错误'),
+                            progress_label: '导出失败',
                         });
                         this._showH3ExportToast(`导出失败：${(e && e.message) || e}`, 'error', 3200);
                     } finally {
-                        this.isExportingH3 = false;
+                        this.isExportingBundle = false;
                     }
                 },
                 async computeH3Analysis() {
@@ -4480,11 +6297,7 @@
                         this.h3GridStatus = `网格分析进度 ${progressStep}/${progressTotal}：${progressLabel}（${sec}s）`;
                     }, 1000);
                     try {
-                        const polygon = rawRing.map(pt => {
-                            if (Array.isArray(pt)) return [pt[0], pt[1]];
-                            if (pt && typeof pt.lng === 'number') return [pt.lng, pt.lat];
-                            return pt;
-                        }).filter(pt => Array.isArray(pt) && pt.length >= 2);
+                        const polygon = this.getIsochronePolygonPayload();
                         const neighborRing = Math.max(1, Math.min(3, Math.round(this._toNumber(this.h3NeighborRing, 1))));
                         this.h3NeighborRing = neighborRing;
                         const analysisPois = this._buildH3AnalysisPois();
@@ -4585,11 +6398,7 @@
                     const startedAt = Date.now();
                     this.h3GridStatus = '正在生成 ArcGIS 结构快照...';
                     try {
-                        const polygon = rawRing.map(pt => {
-                            if (Array.isArray(pt)) return [pt[0], pt[1]];
-                            if (pt && typeof pt.lng === 'number') return [pt.lng, pt.lat];
-                            return pt;
-                        }).filter(pt => Array.isArray(pt) && pt.length >= 2);
+                        const polygon = this.getIsochronePolygonPayload();
                         const neighborRing = Math.max(1, Math.min(3, Math.round(this._toNumber(this.h3NeighborRing, 1))));
                         const analysisPois = this._buildH3AnalysisPois();
                         if (!analysisPois.length) {
@@ -5059,12 +6868,11 @@
                     });
                 },
                 hasDrawnScopePolygon() {
-                    if (this.scopeSource !== 'drawn_polygon') return false;
-                    const polygon = this.getIsochronePolygonPoints();
-                    return Array.isArray(polygon) && polygon.length >= 3;
+                    const polygon = this.getDrawnScopePolygonPoints();
+                    return Array.isArray(polygon) && polygon.length >= 4;
                 },
                 getDrawnScopePointCount() {
-                    const polygon = this.hasDrawnScopePolygon() ? this.getIsochronePolygonPoints() : [];
+                    const polygon = this.hasDrawnScopePolygon() ? this.getDrawnScopePolygonPoints() : [];
                     if (!polygon.length) return 0;
                     let count = polygon.length;
                     const first = polygon[0];
@@ -5253,6 +7061,7 @@
                     this.isochroneScopeMode = next;
                     this.errorMessage = '';
                     this.stopScopeDrawing();
+                    this.clearIsochroneDebugState();
                     if (next === 'point') {
                         if (this.scopeSource === 'drawn_polygon') {
                             this.scopeSource = '';
@@ -5365,16 +7174,14 @@
                     return this.poiStatus;
                 },
                 getIsochronePolygonPoints() {
-                    if (!this.lastIsochroneGeoJSON || !this.lastIsochroneGeoJSON.geometry) return [];
-                    const geometry = this.lastIsochroneGeoJSON.geometry;
-                    const rawPoly = (geometry.type === 'Polygon')
-                        ? geometry.coordinates[0]
-                        : (geometry.coordinates[0] ? geometry.coordinates[0][0] : []);
-                    return (rawPoly || []).map((pt) => {
-                        if (Array.isArray(pt)) return [pt[0], pt[1]];
-                        if (pt && typeof pt.lng === 'number') return [pt.lng, pt.lat];
-                        return pt;
-                    }).filter((pt) => Array.isArray(pt) && pt.length >= 2);
+                    const ring = this.getIsochronePolygonRing();
+                    return Array.isArray(ring) ? ring.slice() : [];
+                },
+                getDrawnScopePolygonPoints() {
+                    const ring = this._closePolygonRing(
+                        this.normalizePath(this.drawnScopePolygon, 3, 'draw_scope.stored')
+                    );
+                    return Array.isArray(ring) ? ring.slice() : [];
                 },
                 async fetchStep2Data() {
                     await this.fetchPois();
@@ -5392,10 +7199,11 @@
                     this.fetchProgress = 0;
                     this.poiStatus = '';
                     this.resetRoadSyntaxState();
+                    this.clearIsochroneDebugState();
 
                     try {
                         if (useDrawnScope) {
-                            const drawnPolygon = this.getIsochronePolygonPoints();
+                            const drawnPolygon = this.getDrawnScopePolygonPoints();
                             const fallbackCenter = this._estimatePolygonCenter(drawnPolygon);
                             if (!this.selectedPoint && fallbackCenter) {
                                 this.setSelectedPoint({ lng: fallbackCenter[0], lat: fallbackCenter[1] }, { showMarker: false });
@@ -5413,8 +7221,7 @@
                                 clip_polygon: drawnPolygon,
                                 clip_output: false,
                                 sample_boundary_step_m: 120,
-                                sample_inner_step_m: 220,
-                                sample_max_points: 48
+                                sample_inner_step_m: 220
                             };
                             const res = await fetch('/api/v1/analysis/isochrone', {
                                 method: 'POST',
@@ -5481,7 +7288,7 @@
                     this.allPoisDetails = [];
 
                     try {
-                        const polygon = this.getIsochronePolygonPoints();
+                        const polygon = this.getIsochronePolygonPayload();
 
                         // Get selected categories (derived from selected subtypes).
                         const selectedCats = this.buildSelectedCategoryBuckets();
@@ -7137,8 +8944,8 @@
                         ],
                     };
                 },
-                roadSyntaxFootnoteByMetric() {
-                    const metric = this.resolveRoadSyntaxActiveMetric();
+                roadSyntaxFootnoteByMetric(metricValue = null) {
+                    const metric = metricValue || this.resolveRoadSyntaxActiveMetric();
                     const scaleLabel = this.roadSyntaxDepthmapColorScaleLabel();
                     const params = this.roadSyntaxDepthmapDisplayParams();
                     const rangeHint = `(Blue=${params.rawBlue.toFixed(2)}, Red=${params.rawRed.toFixed(2)})`;
@@ -8297,7 +10104,7 @@
                     this.roadSyntaxFetchAbortController = requestAbortController;
 
                     try {
-                        const polygon = this.getIsochronePolygonPoints();
+                        const polygon = this.getIsochronePolygonPayload();
                         if (!polygon.length) {
                             throw new Error('等时圈范围无效');
                         }
@@ -8411,6 +10218,7 @@
                         this.errorMessage = "未获取到有效数据";
                         return;
                     }
+                    this.clearIsochroneDebugState();
                     this.lastIsochroneGeoJSON = geojson;
                     this.applySimplifyConfig();
                 },
@@ -8524,82 +10332,152 @@
                         this.historyLoadedCount = this.historyList.length;
                     } catch (e) { console.error(e); }
                 },
+                _applyHistoryDetailBaseResult(data) {
+                    this.clearH3Grid();
+                    this.clearPoiOverlayLayers({
+                        reason: 'load_history_detail',
+                        clearManager: true,
+                        clearSimpleMarkers: true,
+                        clearCenterMarker: true,
+                        resetFilterPanel: true
+                    });
+                    this.clearScopeOutlineDisplay();
+                    this.drawnScopePolygon = [];
+                    this.resetRoadSyntaxState();
+                    this.allPoisDetails = [];
+
+                    if (data.params && data.params.center) {
+                        this.selectedPoint = { lng: data.params.center[0], lat: data.params.center[1] };
+                        this.mapCore.map.setCenter(data.params.center);
+                        this.mapCore.center = { lng: data.params.center[0], lat: data.params.center[1] };
+                        this.mapCore.setRadius(0);
+                        if (data.params.time_min) this.timeHorizon = data.params.time_min;
+                        if (data.params.mode) this.transportMode = data.params.mode;
+                    }
+                    this.resultDataSource = this.normalizePoiSource(
+                        data && data.params ? data.params.source : '',
+                        'unknown'
+                    );
+                    const historyDrawnPolygon = this._closePolygonRing(this.normalizePath(
+                        data && data.params ? data.params.drawn_polygon : [],
+                        3,
+                        'history.detail.drawn_polygon'
+                    ));
+                    const hasHistoryDrawnPolygon = Array.isArray(historyDrawnPolygon) && historyDrawnPolygon.length >= 4;
+                    this.drawnScopePolygon = hasHistoryDrawnPolygon ? historyDrawnPolygon.slice() : [];
+                    this.isochroneScopeMode = hasHistoryDrawnPolygon ? 'area' : 'point';
+
+                    if (data.polygon) {
+                        const historyRings = this._normalizePolygonPayloadRings(
+                            data.polygon,
+                            'history.detail.polygon'
+                        );
+                        this.scopeSource = historyRings.length ? 'history' : '';
+                        if (historyRings.length === 1) {
+                            this.lastIsochroneGeoJSON = {
+                                type: 'Feature',
+                                properties: { mode: 'history' },
+                                geometry: { type: 'Polygon', coordinates: [historyRings[0]] },
+                            };
+                        } else if (historyRings.length > 1) {
+                            this.lastIsochroneGeoJSON = {
+                                type: 'Feature',
+                                properties: { mode: 'history' },
+                                geometry: { type: 'MultiPolygon', coordinates: historyRings.map((ring) => [ring]) },
+                            };
+                        } else {
+                            this.lastIsochroneGeoJSON = null;
+                        }
+                    } else {
+                        this.scopeSource = '';
+                        this.lastIsochroneGeoJSON = null;
+                    }
+                    this.applySimplifyConfig();
+
+                    this.step = 3;
+                    this.sidebarView = 'wizard';
+                    this.activeStep3Panel = 'poi';
+                },
+                async _restoreHistoryPoisAsync(id, token, signal, poiCountHint = 0) {
+                    const res = await fetch(`/api/v1/analysis/history/${id}/pois`, { signal });
+                    if (!res.ok) {
+                        throw new Error(`历史 POI 请求失败(${res.status})`);
+                    }
+                    const data = await res.json();
+                    if (token !== this.historyDetailLoadToken) return;
+
+                    const pois = Array.isArray(data && data.pois) ? data.pois : [];
+                    this.allPoisDetails = pois;
+
+                    if (!pois.length) {
+                        this.poiStatus = poiCountHint > 0
+                            ? `历史主结果已恢复，但未取到 POI 明细（期望 ${poiCountHint} 条）`
+                            : '该历史无 POI 数据';
+                        return;
+                    }
+
+                    this.updateLegacySystem(pois);
+                    if (token !== this.historyDetailLoadToken) return;
+                    this.recomputePoiKdeStats();
+                    this.poiStatus = '';
+                    this.applySimplifyConfig();
+                    setTimeout(() => this.resizePoiChart(), 0);
+                },
                 async loadHistoryDetail(id) {
+                    const historyId = Number(id || 0);
+                    if (!Number.isFinite(historyId) || historyId <= 0) return;
+                    let controller = null;
+                    let baseRestored = false;
                     try {
                         this.cancelHistoryLoading();
+                        this.cancelHistoryDetailLoading();
                         this.stopScopeDrawing();
+                        this.clearIsochroneDebugState();
+                        this.errorMessage = '';
                         if (!this.mapCore || !this.mapCore.map) {
                             this.errorMessage = '地图尚未初始化，请稍后重试';
                             return;
                         }
 
-                        const res = await fetch(`/api/v1/analysis/history/${id}`);
-                        const data = await res.json();
-                        if (!data) return;
+                        controller = new AbortController();
+                        const token = this.historyDetailLoadToken + 1;
+                        this.historyDetailLoadToken = token;
+                        this.historyDetailAbortController = controller;
 
-                        // Cleanup previous state
-                        this.clearH3Grid();
-                        this.clearPoiOverlayLayers({
-                            reason: 'load_history_detail',
-                            clearManager: true,
-                            clearSimpleMarkers: true,
-                            clearCenterMarker: true,
-                            resetFilterPanel: true
+                        const res = await fetch(`/api/v1/analysis/history/${historyId}?include_pois=false`, {
+                            signal: controller.signal
                         });
-                        this.clearScopeOutlineDisplay();
-                        this.drawnScopePolygon = [];
-                        this.resetRoadSyntaxState();
-
-                        if (data.params && data.params.center) {
-                            this.selectedPoint = { lng: data.params.center[0], lat: data.params.center[1] };
-                            this.mapCore.map.setCenter(data.params.center);
-                            this.mapCore.center = { lng: data.params.center[0], lat: data.params.center[1] }; // Sync MapCore center
-                            this.mapCore.setRadius(0); // Reset radius to avoid ghost circle at old location
-                            // Restore time horizon if available
-                            if (data.params.time_min) this.timeHorizon = data.params.time_min;
+                        if (!res.ok) {
+                            throw new Error(`历史详情请求失败(${res.status})`);
                         }
-                        this.resultDataSource = this.normalizePoiSource(
-                            data && data.params ? data.params.source : '',
-                            'unknown'
+                        const data = await res.json();
+                        if (!data || token !== this.historyDetailLoadToken) return;
+
+                        this._applyHistoryDetailBaseResult(data);
+                        baseRestored = true;
+                        const poiCountHint = Math.max(
+                            0,
+                            Number((data && data.poi_count) || (((data || {}).poi_summary || {}).total) || 0)
                         );
-                        const historyDrawnPolygon = this._closePolygonRing(this.normalizePath(
-                            data && data.params ? data.params.drawn_polygon : [],
-                            3,
-                            'history.detail.drawn_polygon'
-                        ));
-                        const hasHistoryDrawnPolygon = Array.isArray(historyDrawnPolygon) && historyDrawnPolygon.length >= 4;
-                        this.drawnScopePolygon = hasHistoryDrawnPolygon ? historyDrawnPolygon.slice() : [];
-                        this.isochroneScopeMode = hasHistoryDrawnPolygon ? 'area' : 'point';
-
-                        if (data.polygon) {
-                            this.scopeSource = 'history';
-                            this.lastIsochroneGeoJSON = { geometry: { type: 'Polygon', coordinates: [data.polygon] } };
-                        } else {
-                            this.scopeSource = '';
-                            this.lastIsochroneGeoJSON = null;
-                        }
-                        this.applySimplifyConfig();
-
-                        // Switch to Results Step before building panels
-                        this.step = 3;
-                        this.sidebarView = 'wizard'; // Return to wizard
-                        this.activeStep3Panel = 'poi';
-                        this.poiStatus = '正在加载历史点位...';
+                        this.poiStatus = poiCountHint > 0
+                            ? `历史主结果已恢复，正在加载历史 POI（${poiCountHint} 条）...`
+                            : '历史主结果已恢复，正在检查 POI 数据...';
                         await this.$nextTick();
                         await new Promise((resolve) => window.requestAnimationFrame(resolve));
-
-                        if (data.pois) {
-                            this.allPoisDetails = data.pois;
-                            // Integration with Legacy Filter Panel
-                            this.updateLegacySystem(data.pois);
-                            this.poiStatus = `已加载历史: ${data.pois.length} 条`;
-                        }
-                        this.applySimplifyConfig();
-                        setTimeout(() => this.resizePoiChart(), 0);
+                        await this._restoreHistoryPoisAsync(historyId, token, controller.signal, poiCountHint);
 
                     } catch (e) {
+                        if (e && e.name === 'AbortError') return;
                         console.error(e);
-                        alert("加载失败");
+                        if (baseRestored && this.step === 3 && this.lastIsochroneGeoJSON) {
+                            this.poiStatus = '历史主结果已恢复，但 POI 恢复失败，可稍后重试';
+                        } else {
+                            this.errorMessage = `加载历史失败: ${(e && e.message) || e}`;
+                        }
+                    } finally {
+                        if (controller && this.historyDetailAbortController === controller) {
+                            this.historyDetailAbortController = null;
+                        }
                     }
                 },
                 formatHistoryTitle(desc) {
@@ -8613,6 +10491,7 @@
                     this.isochroneScopeMode = 'point';
                     this.h3SimplifyMenuOpen = false;
                     this.h3SimplifyTargets = [];
+                    this.clearIsochroneDebugState();
                     this.sidebarView = 'wizard';
                     this.selectedPoint = null;
                     this.errorMessage = '';
@@ -8677,18 +10556,27 @@
                 saveAndRestart() {
                     this.destroyPlaceSearch();
                     this.stopScopeDrawing();
+                    this.cancelHistoryDetailLoading();
+                    this.clearIsochroneDebugState();
                     this.step = 1;
+                    this.activeStep3Panel = 'poi';
                     this.isochroneScopeMode = 'point';
                     this.h3SimplifyMenuOpen = false;
                     this.h3SimplifyTargets = [];
+                    this.poiSystemSuspendedForSyntax = false;
                     this.selectedPoint = null;
                     this.errorMessage = '';
                     this.poiStatus = '';
+                    this.allPoisDetails = [];
+                    this.poiSubTab = 'category';
+                    this.poiAnalysisSubTab = 'kde';
+                    this.poiKdeEnabled = false;
+                    this.poiKdeStats = { visiblePointCount: 0, maxIntensity: 6, topCategoryRows: [], chartRows: [] };
+                    this.resultDataSource = this.normalizePoiSource(this.poiDataSource, 'local');
                     this.scopeSource = '';
                     this.drawnScopePolygon = [];
                     this.lastIsochroneGeoJSON = null;
                     this.h3ExportMenuOpen = false;
-                    this.h3ExportTasksOpen = false;
                     if (this.h3ToastTimer) {
                         clearTimeout(this.h3ToastTimer);
                         this.h3ToastTimer = null;
@@ -8701,6 +10589,7 @@
                         clearCenterMarker: true,
                         resetFilterPanel: true
                     });
+                    this.clearPoiKdeOverlay();
                     this.clearH3Grid();
                     this.clearScopeOutlineDisplay();
                     this.disposePoiChart();
@@ -8733,6 +10622,143 @@
                         window.removeEventListener('resize', this.poiChartResizeHandler);
                         this.poiChartResizeHandler = null;
                     }
+                },
+                setPoiSubTab(tab) {
+                    const nextTab = String(tab || '').trim().toLowerCase() === 'analysis' ? 'analysis' : 'category';
+                    if (this.poiSubTab === nextTab && this.poiKdeEnabled === (nextTab === 'analysis')) {
+                        return;
+                    }
+                    this.poiSubTab = nextTab;
+                    if (nextTab === 'analysis' && !['kde', 'stats'].includes(String(this.poiAnalysisSubTab || ''))) {
+                        this.poiAnalysisSubTab = 'kde';
+                    }
+                    this.poiKdeEnabled = nextTab === 'analysis';
+                    this.applySimplifyPointVisibility();
+                    this.$nextTick(() => {
+                        if (nextTab === 'category') {
+                            this.updatePoiCharts();
+                            setTimeout(() => this.resizePoiChart(), 0);
+                        } else {
+                            this.recomputePoiKdeStats();
+                        }
+                        this.refreshPoiKdeOverlay();
+                    });
+                },
+                setPoiAnalysisSubTab(tab) {
+                    const nextTab = String(tab || '').trim().toLowerCase() === 'stats' ? 'stats' : 'kde';
+                    if (this.poiAnalysisSubTab === nextTab) {
+                        return;
+                    }
+                    this.poiAnalysisSubTab = nextTab;
+                    if (this.poiSubTab === 'analysis') {
+                        this.$nextTick(() => {
+                            this.recomputePoiKdeStats();
+                            if (nextTab === 'kde') {
+                                this.refreshPoiKdeOverlay();
+                            }
+                        });
+                    }
+                },
+                shouldShowPoiPanelStatus() {
+                    const text = String(this.poiStatus || '').trim();
+                    if (!text) return false;
+                    if (text.indexOf('已加载历史:') === 0) return false;
+                    return true;
+                },
+                getPoiPanelStatusText() {
+                    const text = String(this.poiStatus || '').trim();
+                    if (!text) return '';
+                    if (text.indexOf('已加载历史:') === 0) return '';
+                    return text;
+                },
+                isHistoryPoiRestoring() {
+                    const text = String(this.poiStatus || '');
+                    return !!this.historyDetailAbortController && text.indexOf('正在加载历史 POI') >= 0;
+                },
+                clearPoiKdeOverlay() {
+                    if (!this.mapCore || typeof this.mapCore.clearPoiHeatmap !== 'function') return;
+                    this.mapCore.clearPoiHeatmap();
+                },
+                _getPoiKdeSourcePoints() {
+                    if (this.markerManager && typeof this.markerManager.getVisiblePointsData === 'function') {
+                        return this.markerManager.getVisiblePointsData(1);
+                    }
+                    const source = Array.isArray(this.allPoisDetails) ? this.allPoisDetails : [];
+                    return source.map((poi) => {
+                        const loc = this.normalizeLngLat(poi && poi.location, 'poi.kde.location');
+                        if (!loc) return null;
+                        return { lng: Number(loc[0]), lat: Number(loc[1]), count: 1 };
+                    }).filter((item) => !!item);
+                },
+                _getPoiKdeStatsSourcePois() {
+                    if (Array.isArray(this.allPoisDetails) && this.allPoisDetails.length) {
+                        return this.allPoisDetails;
+                    }
+                    return (this.markerManager && typeof this.markerManager.getVisiblePoints === 'function')
+                        ? this.markerManager.getVisiblePoints()
+                        : [];
+                },
+                _buildPoiKdeTopCategoryRows(limit = 5) {
+                    const stats = this.computePoiStats(this._getPoiKdeStatsSourcePois());
+                    const rows = (stats.labels || []).map((label, index) => ({
+                        id: String((this.poiCategories[index] && this.poiCategories[index].id) || `poi-kde-${index}`),
+                        label: String(label || `分类${index + 1}`),
+                        color: (stats.colors && stats.colors[index]) || '#94a3b8',
+                        value: Number((stats.values && stats.values[index]) || 0),
+                    })).filter((item) => item.value > 0)
+                        .sort((a, b) => b.value - a.value);
+                    const safeLimit = Number(limit);
+                    const limitedRows = Number.isFinite(safeLimit) && safeLimit > 0
+                        ? rows.slice(0, Math.max(1, safeLimit))
+                        : rows;
+                    const maxValue = limitedRows.reduce((max, item) => Math.max(max, Number(item.value) || 0), 0);
+                    return limitedRows.map((item) => Object.assign({}, item, {
+                        ratio: maxValue > 0 ? Math.max(10, Math.round((Number(item.value) || 0) / maxValue * 100)) : 0,
+                    }));
+                },
+                _buildPoiKdeChartRows(rows) {
+                    const sourceRows = Array.isArray(rows) ? rows : [];
+                    const maxValue = sourceRows.reduce((max, item) => Math.max(max, Number(item.value) || 0), 0);
+                    return sourceRows.map((item) => {
+                        const label = String(item.label || '');
+                        return Object.assign({}, item, {
+                            height: maxValue > 0 ? Math.max(16, Math.round((Number(item.value) || 0) / maxValue * 100)) : 0,
+                            shortLabel: label.length > 4 ? `${label.slice(0, 4)}...` : label,
+                        });
+                    });
+                },
+                recomputePoiKdeStats() {
+                    const visiblePointCount = this._getPoiKdeSourcePoints().length;
+                    const maxIntensity = Math.max(6, Math.ceil(visiblePointCount / 40));
+                    const rankedRows = this._buildPoiKdeTopCategoryRows(0);
+                    const topCategoryRows = rankedRows.slice(0, 5);
+                    const chartRows = this._buildPoiKdeChartRows(rankedRows);
+                    this.poiKdeStats = {
+                        visiblePointCount,
+                        maxIntensity,
+                        topCategoryRows,
+                        chartRows,
+                    };
+                    return this.poiKdeStats;
+                },
+                async refreshPoiKdeOverlay() {
+                    if (!this.mapCore || typeof this.mapCore.renderPoiHeatmap !== 'function') return;
+                    if (!this.poiKdeEnabled || (typeof this.shouldShowPoiKdeOnCurrentPanel === 'function' && !this.shouldShowPoiKdeOnCurrentPanel())) {
+                        this.clearPoiKdeOverlay();
+                        return;
+                    }
+                    const points = this._getPoiKdeSourcePoints();
+                    const stats = this.recomputePoiKdeStats();
+                    if (!points.length) {
+                        this.clearPoiKdeOverlay();
+                        return;
+                    }
+                    const max = Math.max(6, Number((stats && stats.maxIntensity) || 0));
+                    await this.mapCore.renderPoiHeatmap(points, {
+                        radius: this.poiKdeRadius,
+                        max: max,
+                        opacity: 0.7
+                    });
                 },
                 disposeH3Charts() {
                     if (this.h3CategoryChart) {
@@ -9021,8 +11047,20 @@
                     });
                     return { labels, colors, values };
                 },
+                getPoiCategoryChartStats() {
+                    const source = Array.isArray(this.allPoisDetails) && this.allPoisDetails.length
+                        ? this.allPoisDetails
+                        : ((this.markerManager && typeof this.markerManager.getVisiblePoints === 'function')
+                            ? this.markerManager.getVisiblePoints()
+                            : []);
+                    return this.computePoiStats(source);
+                },
                 updatePoiCharts() {
-                    if (!this.markerManager || !this.markerManager.getVisiblePoints) return;
+                    if (!Array.isArray(this.allPoisDetails) || !this.allPoisDetails.length) return;
+                    if (this.activeStep3Panel === 'poi' && this.poiSubTab !== 'category') {
+                        this.refreshPoiKdeOverlay();
+                        return;
+                    }
 
                     const el = document.getElementById('poiChart');
                     if (!el || !window.echarts) return;
@@ -9031,8 +11069,7 @@
                     const existingChart = echarts.getInstanceByDom(el);
                     if (existingChart && el.clientWidth > 0) {
                         this.poiChart = existingChart;
-                        const points = this.markerManager.getVisiblePoints();
-                        const stats = this.computePoiStats(points);
+                        const stats = this.getPoiCategoryChartStats();
                         const safeValues = stats.values.map(v => (Number.isFinite(v) ? v : 0));
 
                         const option = {
@@ -9049,6 +11086,7 @@
                             }]
                         };
                         existingChart.setOption(option, false); // Merge for animation
+                        this.refreshPoiKdeOverlay();
                         return;
                     }
 
@@ -9057,8 +11095,7 @@
                         const chart = this.initPoiChart();
                         if (!chart) return;
 
-                        const points = this.markerManager.getVisiblePoints();
-                        const stats = this.computePoiStats(points);
+                        const stats = this.getPoiCategoryChartStats();
                         const safeValues = stats.values.map(v => (Number.isFinite(v) ? v : 0));
 
                         const option = {
@@ -9089,6 +11126,7 @@
                         } catch (err) {
                             console.error("ECharts setOption error:", err);
                         }
+                        this.refreshPoiKdeOverlay();
                     }, 100);
                 },
                 updateLegacySystem(pois) {
@@ -9195,7 +11233,9 @@
                         mapData: { points: points, center: centerObj },
                         mapTypeConfig: mapTypeConfig,
                         enqueueMapWrite: this.enqueuePoiMapWrite.bind(this),
-                        isWriteAllowed: isWriteAllowed
+                        isWriteAllowed: isWriteAllowed,
+                        interactionRawMarkerThreshold: 900,
+                        interactionResumeDelayMs: 120
                     }));
                     this.markerManager = managerRef;
                     this.poiActiveManagerId = managerId;
@@ -9209,7 +11249,9 @@
                         flatMode: false,
                         autoFitView: !!this.poiAutoFitViewEnabled
                     }));
-                    this.filterPanel.onFiltersChange = () => this.updatePoiCharts();
+                    this.filterPanel.onFiltersChange = () => {
+                        this.updatePoiCharts();
+                    };
                     this.filterPanel.init();
                     this.applySimplifyPointVisibility();
                     this.updatePoiCharts();

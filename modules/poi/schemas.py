@@ -2,7 +2,7 @@ from typing import List, Optional, Literal
 from pydantic import BaseModel, Field
 
 class PoiRequest(BaseModel):
-    polygon: List[List[float]] = Field(..., description="Polygon (GCJ02) as [[lng, lat], [lng, lat], ...]")
+    polygon: list = Field(..., description="Polygon or multi-ring polygon payload (GCJ02)")
     keywords: str = Field(..., description="Search keywords, e.g. 'KFC|Starbucks'")
     types: str = Field(default="", description="POI Types code, optional")
     source: Literal["gaode", "local"] = Field(default="local", description="POI source")

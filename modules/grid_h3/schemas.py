@@ -3,10 +3,9 @@ from pydantic import BaseModel, Field
 
 
 class GridRequest(BaseModel):
-    polygon: List[List[float]] = Field(
+    polygon: list = Field(
         ...,
-        min_length=3,
-        description="Polygon ring coordinates ([[lng, lat], ...])",
+        description="Polygon ring or multi-ring polygon coordinates",
     )
     resolution: int = Field(9, ge=0, le=15, description="H3 resolution")
     coord_type: Literal["gcj02", "wgs84"] = Field(

@@ -1,6 +1,8 @@
 import h3
 import logging
-from shapely.geometry import Polygon, mapping
+from shapely.geometry import GeometryCollection, MultiPolygon, Polygon, mapping
+from shapely.geometry.base import BaseGeometry
+from shapely.ops import transform
 from typing import Any, Dict, Iterable, List, Tuple, Literal
 from modules.gaode_service.utils.transform_posi import gcj02_to_wgs84, wgs84_to_gcj02
 
@@ -17,51 +19,118 @@ def _ensure_closed_ring(coords: List[Tuple[float, float]]) -> List[Tuple[float, 
     return coords + [coords[0]]
 
 
-def _normalize_polygon(polygon: Polygon) -> Polygon:
-    if polygon.is_empty:
-        return polygon
-    if polygon.is_valid:
-        return polygon
+def _collect_polygon_geoms(geom: BaseGeometry, out: List[Polygon]) -> None:
+    if geom is None or geom.is_empty:
+        return
+    if isinstance(geom, Polygon):
+        out.append(geom)
+        return
+    if isinstance(geom, MultiPolygon):
+        for part in geom.geoms:
+            _collect_polygon_geoms(part, out)
+        return
+    if isinstance(geom, GeometryCollection):
+        for part in geom.geoms:
+            _collect_polygon_geoms(part, out)
+
+
+def _normalize_area_geometry(geom: BaseGeometry) -> BaseGeometry:
+    if geom is None or geom.is_empty:
+        return Polygon()
+    if geom.is_valid:
+        return geom
     try:
-        repaired = polygon.buffer(0)
-        if isinstance(repaired, Polygon):
-            return repaired
-        if hasattr(repaired, "geoms"):
-            polygons = [g for g in repaired.geoms if isinstance(g, Polygon)]
-            if polygons:
-                return max(polygons, key=lambda g: g.area)
+        repaired = geom.buffer(0)
     except Exception:
-        pass
-    return Polygon()
+        return Polygon()
+    if repaired is None or repaired.is_empty:
+        return Polygon()
+    polygons: List[Polygon] = []
+    _collect_polygon_geoms(repaired, polygons)
+    if not polygons:
+        return Polygon()
+    if len(polygons) == 1:
+        return polygons[0]
+    return MultiPolygon(polygons)
 
 
-def _convert_polygon_coords(
-    polygon: Polygon,
-    converter
-) -> Polygon:
-    ext = [converter(x, y) for x, y in polygon.exterior.coords]
-    holes = [[converter(x, y) for x, y in ring.coords] for ring in polygon.interiors]
-    return Polygon(ext, holes)
+def _convert_area_geometry(
+    geom: BaseGeometry,
+    converter,
+) -> BaseGeometry:
+    def _trans(x, y, z=None):
+        try:
+            iter(x)
+            nx = []
+            ny = []
+            for i in range(len(x)):
+                tx, ty = converter(x[i], y[i])
+                nx.append(tx)
+                ny.append(ty)
+            return tuple(nx), tuple(ny)
+        except Exception:
+            return converter(x, y)
+
+    return _normalize_area_geometry(transform(_trans, geom))
 
 
-def _coords_to_polygon(polygon_coords: List[List[float]]) -> Polygon:
+def _is_coord_pair(value: Any) -> bool:
+    return (
+        isinstance(value, (list, tuple))
+        and len(value) >= 2
+        and isinstance(value[0], (int, float))
+        and isinstance(value[1], (int, float))
+    )
+
+
+def _coords_to_ring(points: List[List[float]]) -> List[Tuple[float, float]]:
     coords: List[Tuple[float, float]] = []
-    for pt in polygon_coords or []:
+    for pt in points or []:
         if not isinstance(pt, (list, tuple)) or len(pt) < 2:
             continue
         try:
             coords.append((float(pt[0]), float(pt[1])))
         except (TypeError, ValueError):
             continue
+    return _ensure_closed_ring(coords)
 
-    coords = _ensure_closed_ring(coords)
-    if len(coords) < 4:
+
+def _coords_to_area_geometry(polygon_coords: list) -> BaseGeometry:
+    if not isinstance(polygon_coords, list) or not polygon_coords:
         return Polygon()
-    return _normalize_polygon(Polygon(coords))
+
+    if _is_coord_pair(polygon_coords[0]):
+        ring = _coords_to_ring(polygon_coords)
+        if len(ring) < 4:
+            return Polygon()
+        return _normalize_area_geometry(Polygon(ring))
+
+    polygons: List[Polygon] = []
+    for item in polygon_coords:
+        ring_source = None
+        if isinstance(item, list) and item and _is_coord_pair(item[0]):
+            ring_source = item
+        elif isinstance(item, list) and item and isinstance(item[0], list) and item[0] and _is_coord_pair(item[0][0]):
+            ring_source = item[0]
+        if ring_source is None:
+            continue
+        ring = _coords_to_ring(ring_source)
+        if len(ring) < 4:
+            continue
+        poly = _normalize_area_geometry(Polygon(ring))
+        if isinstance(poly, Polygon) and not poly.is_empty:
+            polygons.append(poly)
+        elif isinstance(poly, MultiPolygon):
+            polygons.extend([part for part in poly.geoms if isinstance(part, Polygon) and not part.is_empty])
+    if not polygons:
+        return Polygon()
+    if len(polygons) == 1:
+        return polygons[0]
+    return MultiPolygon(polygons)
 
 
 def polygon_to_hexagons(
-    polygon: Polygon,
+    polygon: BaseGeometry,
     resolution: int = 9,
     coord_type: Literal["gcj02", "wgs84"] = "gcj02"
 ) -> List[str]:
@@ -78,7 +147,7 @@ def polygon_to_hexagons(
     Returns:
         List of H3 indices (strings).
     """
-    if not isinstance(polygon, Polygon) or polygon.is_empty:
+    if polygon is None or polygon.is_empty:
         return []
 
     # h3-py v4 API: polygon_to_cells (formerly polyfill)
@@ -90,10 +159,10 @@ def polygon_to_hexagons(
     
     # 1. Ensure polygon is WGS84 for H3
     if coord_type == "gcj02":
-        temp_poly = _convert_polygon_coords(polygon, gcj02_to_wgs84)
+        temp_poly = _convert_area_geometry(polygon, gcj02_to_wgs84)
     else:
         temp_poly = polygon
-    temp_poly = _normalize_polygon(temp_poly)
+    temp_poly = _normalize_area_geometry(temp_poly)
     if temp_poly.is_empty:
         return []
     geo_json = mapping(temp_poly)
@@ -201,7 +270,7 @@ def _expand_hexagons_with_neighbors(hexagons: Iterable[str], ring_size: int = 1)
 def hexagons_to_geojson_features(
     hexagons: Iterable[str],
     resolution: int,
-    source_polygon_wgs84: Polygon,
+    source_polygon_wgs84: BaseGeometry,
     include_mode: IncludeMode = "intersects",
     min_overlap_ratio: float = 0.0,
     output_coord_type: Literal["gcj02", "wgs84"] = "gcj02",
@@ -210,7 +279,7 @@ def hexagons_to_geojson_features(
     Convert H3 indices to GeoJSON Polygon features.
     """
     features: List[Dict[str, Any]] = []
-    normalized_source = _normalize_polygon(source_polygon_wgs84)
+    normalized_source = _normalize_area_geometry(source_polygon_wgs84)
     if normalized_source.is_empty:
         return features
 
@@ -220,7 +289,7 @@ def hexagons_to_geojson_features(
             continue
 
         boundary_wgs84 = _ensure_closed_ring(boundary_wgs84)
-        cell_polygon = _normalize_polygon(Polygon(boundary_wgs84))
+        cell_polygon = _normalize_area_geometry(Polygon(boundary_wgs84))
         if cell_polygon.is_empty:
             continue
 
@@ -266,7 +335,7 @@ def hexagons_to_geojson_features(
 
 
 def build_h3_grid_feature_collection(
-    polygon_coords: List[List[float]],
+    polygon_coords: list,
     resolution: int = 9,
     coord_type: Literal["gcj02", "wgs84"] = "gcj02",
     include_mode: IncludeMode = "intersects",
@@ -275,12 +344,12 @@ def build_h3_grid_feature_collection(
     """
     Build H3 grid GeoJSON FeatureCollection from a polygon ring.
     """
-    input_polygon = _coords_to_polygon(polygon_coords)
+    input_polygon = _coords_to_area_geometry(polygon_coords)
     if input_polygon.is_empty:
         return {"type": "FeatureCollection", "features": [], "count": 0}
 
     if coord_type == "gcj02":
-        source_polygon_wgs84 = _normalize_polygon(_convert_polygon_coords(input_polygon, gcj02_to_wgs84))
+        source_polygon_wgs84 = _normalize_area_geometry(_convert_area_geometry(input_polygon, gcj02_to_wgs84))
     else:
         source_polygon_wgs84 = input_polygon
 
@@ -291,7 +360,7 @@ def build_h3_grid_feature_collection(
     # center-in-polygon semantics. Build a broader candidate set from bbox first,
     # then clip by geometric intersection.
     if include_mode == "intersects":
-        candidate_polygon = _normalize_polygon(source_polygon_wgs84.envelope)
+        candidate_polygon = _normalize_area_geometry(source_polygon_wgs84.envelope)
         if candidate_polygon.is_empty:
             candidate_polygon = source_polygon_wgs84
     else:

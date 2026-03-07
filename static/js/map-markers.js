@@ -94,6 +94,20 @@
         this._mapWriteToken = 0;
         this._inMapWriteTask = false;
         this._disposed = false;
+        this._interactionModeActive = false;
+        this._interactionResumeTimer = null;
+        this._interactionRawMarkerThreshold = Math.max(
+            0,
+            Number((config && config.interactionRawMarkerThreshold) || 900)
+        );
+        this._interactionResumeDelayMs = Math.max(
+            0,
+            Number((config && config.interactionResumeDelayMs) || 120)
+        );
+        this._mapMoveStartListener = null;
+        this._mapZoomStartListener = null;
+        this._mapMoveEndListener = null;
+        this._mapZoomEndListener = null;
 
         this.onMarkerClick = null;
     }
@@ -101,6 +115,11 @@
     MarkerManager.prototype.dispose = function () {
         this._disposed = true;
         this._mapWriteToken = Number(this._mapWriteToken || 0) + 1;
+        this._detachInteractionListeners();
+        if (this._interactionResumeTimer) {
+            window.clearTimeout(this._interactionResumeTimer);
+            this._interactionResumeTimer = null;
+        }
         try {
             this.destroyClusterers({ immediate: true });
         } catch (_) { }
@@ -219,6 +238,89 @@
         this.buildMarkerClassMap();
         MapUtils.injectMarkerStyles(this.mapTypeConfig);
         this.preparePointsIndex();
+        this._attachInteractionListeners();
+    };
+
+    MarkerManager.prototype._attachInteractionListeners = function () {
+        var map = this.mapCore && this.mapCore.map ? this.mapCore.map : null;
+        if (!map) return;
+        this._detachInteractionListeners();
+        this._mapMoveStartListener = this._enterInteractionFollowMode.bind(this);
+        this._mapZoomStartListener = this._enterInteractionFollowMode.bind(this);
+        this._mapMoveEndListener = this._scheduleInteractionResume.bind(this);
+        this._mapZoomEndListener = this._scheduleInteractionResume.bind(this);
+        try { map.on('movestart', this._mapMoveStartListener); } catch (_) { }
+        try { map.on('zoomstart', this._mapZoomStartListener); } catch (_) { }
+        try { map.on('moveend', this._mapMoveEndListener); } catch (_) { }
+        try { map.on('zoomend', this._mapZoomEndListener); } catch (_) { }
+    };
+
+    MarkerManager.prototype._detachInteractionListeners = function () {
+        var map = this.mapCore && this.mapCore.map ? this.mapCore.map : null;
+        if (map && this._mapMoveStartListener) {
+            try { map.off('movestart', this._mapMoveStartListener); } catch (_) { }
+        }
+        if (map && this._mapZoomStartListener) {
+            try { map.off('zoomstart', this._mapZoomStartListener); } catch (_) { }
+        }
+        if (map && this._mapMoveEndListener) {
+            try { map.off('moveend', this._mapMoveEndListener); } catch (_) { }
+        }
+        if (map && this._mapZoomEndListener) {
+            try { map.off('zoomend', this._mapZoomEndListener); } catch (_) { }
+        }
+        this._mapMoveStartListener = null;
+        this._mapZoomStartListener = null;
+        this._mapMoveEndListener = null;
+        this._mapZoomEndListener = null;
+    };
+
+    MarkerManager.prototype._shouldUseInteractionFollowMode = function () {
+        if (this._disposed || this.hideAllPoints || !this.showMarkers) return false;
+        if (this.clustererDegraded) return false;
+        var clusterKeys = Object.keys(this.typeClusterers || {});
+        if (!clusterKeys.length) return false;
+        var visibleCount = Array.isArray(this.lastFilteredPoints) ? this.lastFilteredPoints.length : 0;
+        if (visibleCount <= 0) return false;
+        return visibleCount <= this._interactionRawMarkerThreshold;
+    };
+
+    MarkerManager.prototype._enterInteractionFollowMode = function () {
+        if (!this._shouldUseInteractionFollowMode()) return;
+        if (this._interactionResumeTimer) {
+            window.clearTimeout(this._interactionResumeTimer);
+            this._interactionResumeTimer = null;
+        }
+        if (this._interactionModeActive) return;
+        this._interactionModeActive = true;
+        this._destroyClusterersNow();
+        var self = this;
+        Object.keys(this.markersByType || {}).forEach(function (typeKey) {
+            var list = self.markersByType[typeKey] || [];
+            list.forEach(function (marker) {
+                if (!marker) return;
+                if (!marker.getMap()) {
+                    self.safeSetMap(marker, self.map);
+                }
+                if (self.labelsVisible) {
+                    self.setMarkerLabel(marker);
+                }
+            });
+        });
+    };
+
+    MarkerManager.prototype._scheduleInteractionResume = function () {
+        var self = this;
+        if (!this._interactionModeActive) return;
+        if (this._interactionResumeTimer) {
+            window.clearTimeout(this._interactionResumeTimer);
+        }
+        this._interactionResumeTimer = window.setTimeout(function () {
+            self._interactionResumeTimer = null;
+            if (self._disposed) return;
+            self._interactionModeActive = false;
+            self.applyFilters();
+        }, this._interactionResumeDelayMs);
     };
 
     MarkerManager.prototype.collectExistingTypes = function () {
@@ -833,6 +935,11 @@
                 })
             };
         }
+        if (this._interactionResumeTimer) {
+            window.clearTimeout(this._interactionResumeTimer);
+            this._interactionResumeTimer = null;
+        }
+        this._interactionModeActive = false;
         var self = this;
         var resolvedHandle = function (payload) {
             var result = (payload && typeof payload === 'object')

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 
 import requests
-from shapely.geometry import GeometryCollection, LineString, MultiLineString, Polygon
+from shapely.geometry import GeometryCollection, LineString, MultiLineString, MultiPolygon, Polygon
 from shapely.prepared import prep
 
 from core.config import settings
@@ -87,36 +87,67 @@ def _ensure_closed_ring(coords: List[List[float]]) -> List[List[float]]:
 
 
 def _coords_to_wgs84_polygon(
-    polygon: List[List[float]],
+    polygon: list,
     coord_type: Literal["gcj02", "wgs84"],
-) -> Polygon:
-    ring: List[List[float]] = []
-    for pt in polygon or []:
-        if not isinstance(pt, (list, tuple)) or len(pt) < 2:
-            continue
-        try:
-            lng = float(pt[0])
-            lat = float(pt[1])
-        except (TypeError, ValueError):
-            continue
-        if coord_type == "gcj02":
-            lng, lat = gcj02_to_wgs84(lng, lat)
-        ring.append([lng, lat])
+) -> Polygon | MultiPolygon:
+    def _is_coord_pair(value: Any) -> bool:
+        return (
+            isinstance(value, (list, tuple))
+            and len(value) >= 2
+            and isinstance(value[0], (int, float))
+            and isinstance(value[1], (int, float))
+        )
 
-    ring = _ensure_closed_ring(ring)
-    if len(ring) < 4:
+    def _normalize_poly(raw_ring: list) -> Polygon | None:
+        ring: List[List[float]] = []
+        for pt in raw_ring or []:
+            if not isinstance(pt, (list, tuple)) or len(pt) < 2:
+                continue
+            try:
+                lng = float(pt[0])
+                lat = float(pt[1])
+            except (TypeError, ValueError):
+                continue
+            if coord_type == "gcj02":
+                lng, lat = gcj02_to_wgs84(lng, lat)
+            ring.append([lng, lat])
+        ring = _ensure_closed_ring(ring)
+        if len(ring) < 4:
+            return None
+        poly = Polygon(ring)
+        if not poly.is_valid:
+            poly = poly.buffer(0)
+        if isinstance(poly, Polygon) and not poly.is_empty:
+            return poly
+        if isinstance(poly, MultiPolygon):
+            geoms = [g for g in poly.geoms if isinstance(g, Polygon) and not g.is_empty]
+            if geoms:
+                return max(geoms, key=lambda g: g.area)
+        return None
+
+    if not isinstance(polygon, list) or not polygon:
         return Polygon()
 
-    poly = Polygon(ring)
-    if not poly.is_valid:
-        poly = poly.buffer(0)
-    if isinstance(poly, Polygon):
-        return poly
-    if hasattr(poly, "geoms"):
-        geoms = [g for g in poly.geoms if isinstance(g, Polygon)]
-        if geoms:
-            return max(geoms, key=lambda g: g.area)
-    return Polygon()
+    if _is_coord_pair(polygon[0]):
+        return _normalize_poly(polygon) or Polygon()
+
+    polygons: List[Polygon] = []
+    for item in polygon:
+        ring_source = None
+        if isinstance(item, list) and item and _is_coord_pair(item[0]):
+            ring_source = item
+        elif isinstance(item, list) and item and isinstance(item[0], list) and item[0] and _is_coord_pair(item[0][0]):
+            ring_source = item[0]
+        if ring_source is None:
+            continue
+        poly = _normalize_poly(ring_source)
+        if poly is not None:
+            polygons.append(poly)
+    if not polygons:
+        return Polygon()
+    if len(polygons) == 1:
+        return polygons[0]
+    return MultiPolygon(polygons)
 
 
 def _haversine_m(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
@@ -149,7 +180,7 @@ def _collect_linestring_geoms(geom: Any, out: List[LineString]) -> None:
 
 def _clip_line_to_polygon_segment(
     line: LineString,
-    polygon: Polygon,
+    polygon: Polygon | MultiPolygon,
 ) -> Optional[Tuple[float, float, float, float]]:
     if line.is_empty or polygon.is_empty:
         return None
@@ -1128,7 +1159,7 @@ def _empty_result(
 
 
 def analyze_road_syntax(
-    polygon: List[List[float]],
+    polygon: list,
     coord_type: Literal["gcj02", "wgs84"] = "gcj02",
     mode: OverpassMode = "walking",
     graph_model: GraphModel = "segment",

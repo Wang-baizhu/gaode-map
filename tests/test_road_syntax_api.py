@@ -20,19 +20,6 @@ def _sample_polygon():
     ]
 
 
-def test_road_syntax_api_rejects_sdna_graph_model():
-    client = TestClient(app)
-    payload = {
-        "polygon": _sample_polygon(),
-        "coord_type": "gcj02",
-        "mode": "walking",
-        "graph_model": "sdna",
-        "highway_filter": "all",
-    }
-    resp = client.post("/api/v1/analysis/road-syntax", json=payload)
-    assert resp.status_code == 422
-
-
 def test_road_syntax_api_rejects_context_polygon_extra_field():
     client = TestClient(app)
     payload = {

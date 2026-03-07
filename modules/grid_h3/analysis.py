@@ -494,7 +494,7 @@ def build_chart_payload(
 
 
 def analyze_h3_grid(
-    polygon: List[List[float]],
+    polygon: list,
     resolution: int = 10,
     coord_type: Literal["gcj02", "wgs84"] = "gcj02",
     include_mode: Literal["intersects", "inside"] = "intersects",
