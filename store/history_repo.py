@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
@@ -7,6 +7,18 @@ from .database import SessionLocal
 from .models import AnalysisHistory, PoiResult
 
 class HistoryRepo:
+    @staticmethod
+    def _serialize_created_at(value: datetime) -> str:
+        """
+        Persisted history timestamps are stored in UTC.
+        Serialize as explicit UTC (with trailing Z) to avoid
+        client-side local-time misinterpretation.
+        """
+        if not isinstance(value, datetime):
+            return str(value or "")
+        dt = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+        return dt.isoformat().replace("+00:00", "Z")
+
     def _build_detail_payload(
         self,
         history: AnalysisHistory,
@@ -18,7 +30,7 @@ class HistoryRepo:
         payload = {
             "id": history.id,
             "description": history.description,
-            "created_at": history.created_at.isoformat(),
+            "created_at": self._serialize_created_at(history.created_at),
             "params": history.params,
             "polygon": history.result_polygon,
             "poi_summary": poi_summary or {},
@@ -86,7 +98,7 @@ class HistoryRepo:
                 result.append({
                     "id": r.id,
                     "description": r.description,
-                    "created_at": r.created_at.isoformat(),
+                    "created_at": self._serialize_created_at(r.created_at),
                     "params": r.params
                 })
             return result

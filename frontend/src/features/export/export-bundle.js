@@ -1,3 +1,38 @@
+    const EXPORT_PART_ALIAS_MAP = {
+        poi_panel_json_bundle: ['poi_panel_json'],
+        poi_visual_png_bundle: ['poi_panel_png'],
+        h3_panel_json_bundle: [
+            'h3_metric_panel_json',
+            'h3_structure_panel_json',
+            'h3_typing_panel_json',
+            'h3_lq_panel_json',
+            'h3_gap_panel_json',
+        ],
+        h3_visual_png_bundle: [
+            'h3_metric_panel_png',
+            'h3_structure_panel_png',
+            'h3_typing_panel_png',
+            'h3_lq_panel_png',
+            'h3_gap_panel_png',
+        ],
+        road_panel_json_bundle: [
+            'road_connectivity_panel_json',
+            'road_control_panel_json',
+            'road_depth_panel_json',
+            'road_choice_panel_json',
+            'road_integration_panel_json',
+            'road_intelligibility_panel_json',
+        ],
+        road_visual_png_bundle: [
+            'road_connectivity_panel_png',
+            'road_control_panel_png',
+            'road_depth_panel_png',
+            'road_choice_panel_png',
+            'road_integration_panel_png',
+            'road_intelligibility_panel_png',
+        ],
+    };
+
     function createAnalysisExportInitialState() {
         return {
             exportBundleGroups: [
@@ -18,7 +53,8 @@
                     children: [
                         { value: 'poi_csv', label: 'POI 表格(CSV)' },
                         { value: 'poi_geojson', label: 'POI 点位(GEOJSON)' },
-                        { value: 'poi_panel_json', label: 'POI 子面板(JSON)' },
+                        { value: 'poi_panel_json_bundle', label: '子面板(JSON 聚合)' },
+                        { value: 'poi_visual_png_bundle', label: '可视化(PNG)' },
                     ],
                 },
                 {
@@ -29,11 +65,8 @@
                         { value: 'h3_grid_geojson', label: 'H3 网格(GEOJSON)' },
                         { value: 'h3_summary_csv', label: 'H3 汇总(CSV)' },
                         { value: 'h3_metrics_json', label: 'H3 指标(JSON)' },
-                        { value: 'h3_metric_panel_json', label: '密度场子面板(JSON)' },
-                        { value: 'h3_structure_panel_json', label: '结构图子面板(JSON)' },
-                        { value: 'h3_typing_panel_json', label: '功能混合度子面板(JSON)' },
-                        { value: 'h3_lq_panel_json', label: '区位商优势子面板(JSON)' },
-                        { value: 'h3_gap_panel_json', label: '缺口评估子面板(JSON)' },
+                        { value: 'h3_panel_json_bundle', label: '子面板(JSON 聚合)' },
+                        { value: 'h3_visual_png_bundle', label: '可视化(PNG)' },
                     ],
                 },
                 {
@@ -43,12 +76,8 @@
                     children: [
                         { value: 'road_syntax_geojson', label: '路网线(GEOJSON)' },
                         { value: 'road_syntax_summary_csv', label: '路网汇总(CSV)' },
-                        { value: 'road_connectivity_panel_json', label: '连接度子面板(JSON)' },
-                        { value: 'road_control_panel_json', label: '控制值子面板(JSON)' },
-                        { value: 'road_depth_panel_json', label: '深度值子面板(JSON)' },
-                        { value: 'road_choice_panel_json', label: '选择度子面板(JSON)' },
-                        { value: 'road_integration_panel_json', label: '整合度子面板(JSON)' },
-                        { value: 'road_intelligibility_panel_json', label: '可理解度子面板(JSON)' },
+                        { value: 'road_panel_json_bundle', label: '子面板(JSON 聚合)' },
+                        { value: 'road_visual_png_bundle', label: '可视化(PNG)' },
                     ],
                 },
                 {
@@ -75,8 +104,8 @@
                 'h3_grid_geojson',
                 'h3_summary_csv',
                 'map_snapshot_png',
-                'poi_panel_json',
-                'h3_metric_panel_json',
+                'poi_panel_json_bundle',
+                'h3_panel_json_bundle',
             ],
             h3ExportMenuOpen: false,
             h3ExportTasksOpen: false,
@@ -196,7 +225,7 @@
                         if (event && event.lengthComputable && event.total > 0) {
                             const ratio = event.loaded / event.total;
                             const pct = 55 + ratio * 20;
-                            this._setExportBundleTaskProgress(taskId, pct, `上传请求体 ${Math.round(ratio * 100)}%`);
+                            this._setExportBundleTaskProgress(taskId, pct, `导出进度 ${Math.round(pct)}%（上传请求体）`);
                         } else {
                             this._setExportBundleTaskProgress(taskId, 60, `上传请求体 ${this._formatBytes(requestBytes)}`);
                         }
@@ -206,7 +235,7 @@
                         if (event && event.lengthComputable && event.total > 0) {
                             const ratio = event.loaded / event.total;
                             const pct = 80 + ratio * 18;
-                            this._setExportBundleTaskProgress(taskId, pct, `接收导出文件 ${Math.round(ratio * 100)}%`);
+                            this._setExportBundleTaskProgress(taskId, pct, `导出进度 ${Math.round(pct)}%（接收文件）`);
                         } else {
                             this._setExportBundleTaskProgress(taskId, 84, '服务器正在打包 ZIP');
                         }
@@ -270,6 +299,25 @@
                     normalized.push(key);
                 });
                 return normalized;
+            },
+            _resolveExportPartAliases(part) {
+                const key = String(part || '').trim();
+                if (!key) return [];
+                if (EXPORT_PART_ALIAS_MAP[key]) return EXPORT_PART_ALIAS_MAP[key].slice();
+                return [key];
+            },
+            _expandExportBundleParts(parts) {
+                const expanded = [];
+                (parts || []).forEach((item) => {
+                    const resolved = this._resolveExportPartAliases(item);
+                    resolved.forEach((key) => {
+                        const part = String(key || '').trim();
+                        if (!part || expanded.includes(part)) return;
+                        if (this.getExportBundlePartDisabledReason(part)) return;
+                        expanded.push(part);
+                    });
+                });
+                return expanded;
             },
             _normalizeExportBundleParts() {
                 const normalized = this._getNormalizedExportBundleParts();
@@ -427,8 +475,17 @@
             getExportBundlePartDisabledReason(part) {
                 const key = String(part || '').trim();
                 if (!key) return '不可用导出项';
+                if (EXPORT_PART_ALIAS_MAP[key]) {
+                    const reasons = this._resolveExportPartAliases(key)
+                        .map((item) => this.getExportBundlePartDisabledReason(item))
+                        .filter((reason) => !!reason);
+                    return reasons.length >= this._resolveExportPartAliases(key).length
+                        ? (reasons[0] || '暂无可导出结果')
+                        : '';
+                }
                 if (key === 'overview_json') return '';
                 if (key === 'map_snapshot_png') return '';
+                if (key === 'frontend_charts_png') return this.hasAnyResultForExport() ? '' : '请先生成至少一类分析结果';
                 if (key === 'isochrone_geojson') return this.hasIsochroneForExport() ? '' : '请先生成等时圈结果';
                 if (key === 'poi_csv' || key === 'poi_geojson') return this.hasPoisForExport() ? '' : '请先完成 POI 抓取';
                 if (key === 'poi_panel_png') return this.hasPoisForExport() ? '' : '请先完成 POI 抓取';
@@ -478,6 +535,13 @@
                 if (reason) return reason;
                 if (key === 'overview_json') return '中心点、模式、时间、数据源等总览信息';
                 if (key === 'map_snapshot_png') return '按当前地图视图生成一张截图';
+                if (key === 'frontend_charts_png') return '导出全局统计图（分类、分布、散点等）PNG';
+                if (key === 'poi_panel_json_bundle') return 'POI 子面板结构化结果(JSON 聚合)';
+                if (key === 'poi_visual_png_bundle') return 'POI 结果可视化面板(PNG)';
+                if (key === 'h3_panel_json_bundle') return 'H3 子面板结构化结果(JSON 聚合)';
+                if (key === 'h3_visual_png_bundle') return 'H3 结果可视化面板(PNG)';
+                if (key === 'road_panel_json_bundle') return '路网子面板结构化结果(JSON 聚合)';
+                if (key === 'road_visual_png_bundle') return '路网结果可视化面板(PNG)';
                 if (key === 'isochrone_geojson') return '当前等时圈范围 GeoJSON';
                 if (key === 'poi_csv') return 'POI 明细表';
                 if (key === 'poi_geojson') return 'POI 空间点位';
@@ -1205,7 +1269,7 @@
                 }
                 return result;
             },
-            _buildExportBundlePayload(selectedParts, mapSnapshotBase64, frontendPanels) {
+            _buildExportBundlePayload(selectedParts, mapSnapshotBase64, frontendPanels, frontendCharts) {
                 const gridFeatures = this._buildH3ExportGridFeatures();
                 const roadFeatures = Array.isArray(this.roadSyntaxRoadFeatures) ? this.roadSyntaxRoadFeatures : [];
                 const pois = Array.isArray(this.allPoisDetails) ? this.allPoisDetails : [];
@@ -1255,6 +1319,7 @@
                         },
                         diagnostics: this.roadSyntaxDiagnostics || {},
                     },
+                    frontend_charts: Array.isArray(frontendCharts) ? frontendCharts : [],
                     frontend_panels: Array.isArray(frontendPanels) ? frontendPanels : [],
                     frontend_analysis: this._buildFrontendAnalysisForExport(),
                     map_snapshot_png_base64: mapSnapshotBase64 || null,
@@ -1267,7 +1332,8 @@
                     return;
                 }
                 const selectedParts = this._normalizeExportBundleParts();
-                if (!selectedParts.length) {
+                const expandedParts = this._expandExportBundleParts(selectedParts);
+                if (!expandedParts.length) {
                     this._showH3ExportToast('请至少勾选一个导出项', 'warning');
                     return;
                 }
@@ -1282,7 +1348,8 @@
 
                     let mapSnapshotBase64 = null;
                     let frontendPanels = [];
-                    if (selectedParts.includes('map_snapshot_png')) {
+                    let frontendCharts = [];
+                    if (expandedParts.includes('map_snapshot_png')) {
                         this._setExportBundleTaskProgress(taskId, 12, '生成地图快照');
                         if (typeof html2canvas !== 'function') {
                             this._showH3ExportToast('截图组件未加载，地图快照将自动跳过', 'warning', 2600);
@@ -1293,16 +1360,23 @@
                             }
                         }
                     }
-                    if (selectedParts.some((part) => this.isPanelExportPart(part))) {
+                    if (expandedParts.includes('frontend_charts_png')) {
+                        this._setExportBundleTaskProgress(taskId, 20, '生成图表 PNG');
+                        frontendCharts = await this._captureFrontendChartsForExport();
+                        if (!frontendCharts.length) {
+                            this._showH3ExportToast('当前没有可导出的图表 PNG，将自动跳过该项', 'warning', 2400);
+                        }
+                    }
+                    if (expandedParts.some((part) => this.isPanelExportPart(part))) {
                         this._setExportBundleTaskProgress(taskId, 28, '生成结果子面板 PNG');
-                        frontendPanels = await this._captureFrontendPanelsForExport(selectedParts);
+                        frontendPanels = await this._captureFrontendPanelsForExport(expandedParts);
                         if (!frontendPanels.length) {
                             this._showH3ExportToast('当前没有可导出的结果子面板，将自动跳过对应 PNG 项', 'warning', 2600);
                         }
                     }
 
                     this._setExportBundleTaskProgress(taskId, 50, '构建导出请求');
-                    const payload = this._buildExportBundlePayload(selectedParts, mapSnapshotBase64, frontendPanels);
+                    const payload = this._buildExportBundlePayload(expandedParts, mapSnapshotBase64, frontendPanels, frontendCharts);
                     await this._waitForUiPaint();
                     this._setExportBundleTaskProgress(taskId, 55, '上传导出请求');
                     const res = await this._postExportBundleWithProgress(payload, taskId);

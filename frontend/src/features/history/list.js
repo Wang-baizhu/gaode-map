@@ -49,7 +49,10 @@
                 const rawDate = record.created_at;
                 let dateText = String(rawDate || '');
                 if (rawDate) {
-                    const d = new Date(rawDate);
+                    const rawDateText = String(rawDate).trim();
+                    const hasTimezone = /(?:Z|[+-]\d{2}:\d{2})$/i.test(rawDateText);
+                    const normalizedDateText = hasTimezone ? rawDateText : `${rawDateText}Z`;
+                    const d = new Date(normalizedDateText);
                     if (!Number.isNaN(d.getTime())) {
                         dateText = d.toLocaleDateString();
                     }
@@ -97,13 +100,14 @@
                 });
             },
             refreshHistoryList() {
-                this.loadHistoryList({ force: true, keepExisting: true }).catch((err) => {
+                this.loadHistoryList({ force: true, keepExisting: true, hardRefresh: true }).catch((err) => {
                     console.warn('History refresh failed', err);
                 });
             },
             async loadHistoryList(options = {}) {
                 const force = !!(options && options.force);
                 const background = !!(options && options.background);
+                const hardRefresh = !!(options && options.hardRefresh);
                 const keepExisting = options && Object.prototype.hasOwnProperty.call(options, 'keepExisting')
                     ? !!options.keepExisting
                     : (this.historyHasLoadedOnce && this.historyList.length > 0);
@@ -124,8 +128,12 @@
                 this.historyFetchAbortController = new AbortController();
 
                 try {
-                    const res = await fetch('/api/v1/analysis/history', {
-                        signal: this.historyFetchAbortController.signal
+                    const historyUrl = hardRefresh
+                        ? `/api/v1/analysis/history?_ts=${Date.now()}`
+                        : '/api/v1/analysis/history';
+                    const res = await fetch(historyUrl, {
+                        signal: this.historyFetchAbortController.signal,
+                        cache: hardRefresh ? 'no-store' : 'default'
                     });
                     if (!res.ok) {
                         throw new Error(`历史记录请求失败(${res.status})`);
