@@ -33,7 +33,7 @@
     *   **Adapter**：边界层处理 GCJ02 -> WGS84（调用引擎）-> WGS84 -> GCJ02（返回前端）。
 
 #### C) 网格化服务层 (Grid H3 Service)
-*   **定位**：`gaode-map/modules/grid_h3`
+*   **定位**：`gaode-map/modules/h3`
 *   **职责**：纯几何计算，不依赖任何地图 SDK。
 *   **功能**：
     *   `polygon_to_hexagons(polygon_gcj02, resolution) -> [h3_index]`
@@ -51,12 +51,10 @@
     5.  **Save Cache**: 计算统计指标 -> 存入 SQLite。
 
 #### E) 分析服务层 (Spatial Analysis Layer)
-*   **定位**：`gaode-map/modules/analysis`
-*   **职责**：接收网格化的 POI 数据，运行统计模型（如核密度、GWR）。
+*   **定位**：`gaode-map/modules/h3`、`gaode-map/modules/road`、`gaode-map/modules/export`
+*   **职责**：接收网格化 POI 与路网数据，完成空间统计、空间句法与导出打包。
 
 ---
-
-### 3. 用户交互流程 (Frontend Workflow)
 
 ### 3. 用户交互流程 (Frontend Workflow)
 
@@ -84,7 +82,7 @@
 ---
 
 ### 4. 交付物
-1.  **Python Packages**: `isochrone`, `grid_h3`, `poi`, `analysis`.
+1.  **Python Packages**: `isochrone`, `h3`, `poi`, `road`, `export`.
 2.  **API Docs**: 定义清晰的 JSON 接口。
 3.  **Java Service**: 仅作为历史数据仓库被调用。
 

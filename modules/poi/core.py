@@ -11,7 +11,7 @@ import re
 import unicodedata
 from urllib.parse import urlencode
 
-from modules.gaode_service.utils.transform_posi import gcj02_to_wgs84, wgs84_to_gcj02
+from modules.providers.amap.utils.transform_posi import gcj02_to_wgs84, wgs84_to_gcj02
 
 logger = logging.getLogger(__name__)
 

@@ -1,0 +1,120 @@
+function createAnalysisLifecycleHooks(options = {}) {
+  const roadSyntaxModulesReady = !!options.roadSyntaxModulesReady
+  const roadSyntaxModuleMissing = Array.isArray(options.roadSyntaxModuleMissing)
+    ? options.roadSyntaxModuleMissing
+    : []
+
+  return {
+    async mounted() {
+      try {
+        this.config = (window.__ANALYSIS_BOOTSTRAP__ && window.__ANALYSIS_BOOTSTRAP__.config)
+          ? window.__ANALYSIS_BOOTSTRAP__.config
+          : { amap_js_api_key: '', amap_js_security_code: '', tianditu_key: '' }
+        this.initializePoiCategoriesFromTypeMap()
+        if (this.basemapSource === 'tianditu') {
+          const tileReady = await this.validateTiandituSource()
+          if (!tileReady) {
+            this.tdtDiagCopyStatus = ''
+          }
+        }
+
+        const amapTimeoutMs = 8000
+        await Promise.race([
+          this.loadAMapScript(this.config.amap_js_api_key, this.config.amap_js_security_code),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('AMap 加载超时，请检查网络或 Key')), amapTimeoutMs)),
+        ])
+
+        this.initMap()
+      } catch (e) {
+        console.error('Initialization Failed:', e)
+        this.errorMessage = '系统初始化失败: ' + e.message
+      } finally {
+        this.preloadHistoryListInBackground()
+        if (!roadSyntaxModulesReady) {
+          this.roadSyntaxSetStatus(`路网模块未完整加载：${roadSyntaxModuleMissing.join(', ')}`)
+        }
+        this.attachAmapRuntimeErrorProbe()
+        document.addEventListener('click', this.handleGlobalClick, true)
+        this.loadingConfig = false
+        const overlay = document.getElementById('loading-overlay')
+        if (overlay) overlay.style.display = 'none'
+      }
+    },
+    beforeUnmount() {
+      document.removeEventListener('click', this.handleGlobalClick, true)
+      this.detachAmapRuntimeErrorProbe()
+      this.destroyPlaceSearch()
+      this.stopScopeDrawing({ destroyTool: true })
+      this.clearPoiOverlayLayers({
+        reason: 'before_unmount',
+        clearManager: true,
+        clearSimpleMarkers: true,
+        clearCenterMarker: true,
+        resetFilterPanel: true,
+        immediate: true,
+      })
+      this.clearPoiKdeOverlay()
+      this.roadSyntaxDetachMapListeners()
+      if (typeof this.cancelRoadSyntaxRequest === 'function') {
+        this.cancelRoadSyntaxRequest('before_unmount')
+      }
+      this.invalidateRoadSyntaxCache('unmount', { resetData: true })
+      if (this.h3ToastTimer) {
+        clearTimeout(this.h3ToastTimer)
+        this.h3ToastTimer = null
+      }
+      this.cancelHistoryLoading()
+      this.cancelHistoryDetailLoading()
+      this.disposePoiChart()
+      this.disposeH3Charts()
+    },
+    watch: {
+      step(newStep, oldStep) {
+        if (oldStep === 1 && newStep !== 1) {
+          this.destroyPlaceSearch()
+          this.stopScopeDrawing()
+        }
+      },
+      sidebarView(newView, oldView) {
+        if (oldView === 'history' && newView !== 'history') {
+          this.cancelHistoryLoading()
+        }
+        if (oldView === 'wizard' && newView !== 'wizard') {
+          this.stopScopeDrawing()
+        }
+      },
+      activeStep3Panel(newPanel, oldPanel) {
+        if (newPanel === oldPanel) return
+        if (newPanel === 'syntax') {
+          if (typeof this.resumeRoadSyntaxDisplay === 'function') {
+            this.resumeRoadSyntaxDisplay()
+          }
+        } else if (typeof this.suspendRoadSyntaxDisplay === 'function') {
+          this.suspendRoadSyntaxDisplay()
+        }
+        if (newPanel === 'syntax') {
+          this.suspendPoiSystemForSyntax()
+        } else if (oldPanel === 'syntax') {
+          this.resumePoiSystemAfterSyntax()
+        }
+        if (oldPanel === 'h3' && newPanel !== 'h3') {
+          this.clearH3GridDisplayOnLeave()
+        }
+        if (newPanel === 'h3') {
+          this.restoreH3GridDisplayOnEnter()
+        }
+        this.$nextTick(() => {
+          this.refreshPoiKdeOverlay()
+        })
+      },
+      roadSyntaxGraphModel(newModel, oldModel) {
+        const nextModel = String(newModel || '').trim().toLowerCase()
+        const prevModel = String(oldModel || '').trim().toLowerCase()
+        if (!prevModel || nextModel === prevModel) return
+        this.roadSyntaxSetStatus(`图模型已切换为${this.roadSyntaxGraphModelLabel(nextModel)}，请重新计算路网指标`)
+      },
+    },
+  }
+}
+
+export { createAnalysisLifecycleHooks }

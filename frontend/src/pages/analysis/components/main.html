@@ -1,0 +1,226 @@
+
+
+        <!-- Middle: Map -->
+        <main class="main-content">
+            <div v-if="sidebarView === 'wizard' && step === 3" class="h3-map-toolbar">
+                <button type="button" class="h3-map-tool-btn h3-map-save-btn" @click="saveAndRestart" title="保存并开启新分析">
+                    <svg class="h3-map-tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h10.2l4.3 4.3V18.5A1.5 1.5 0 0 1 18.5 20h-13A1.5 1.5 0 0 1 4 18.5z"></path>
+                        <path d="M8 4.5v5h7v-5"></path>
+                        <path d="M8 20v-5h8v5"></path>
+                    </svg>
+                    <span class="h3-map-tool-text">保存并新建</span>
+                </button>
+
+                <div class="h3-simplify-wrap">
+                    <button type="button" class="h3-map-tool-btn h3-map-simplify-btn"
+                        :class="{ active: h3SimplifyMenuOpen }"
+                        @click.stop="toggleSimplifyMenu"
+                        title="简化配置">
+                        <svg class="h3-map-tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M4 7h16"></path>
+                            <path d="M4 12h16"></path>
+                            <path d="M4 17h16"></path>
+                        </svg>
+                        <span class="h3-map-tool-text">简化</span>
+                        <svg class="h3-map-tool-caret" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="m6 9 6 6 6-6"></path>
+                        </svg>
+                    </button>
+                    <div v-if="h3SimplifyMenuOpen" class="h3-simplify-menu">
+                        <label v-for="option in getVisibleSimplifyOptions()" :key="'simplify-' + option.value"
+                            class="h3-simplify-check">
+                            <input type="checkbox"
+                                :checked="h3SimplifyTargets.includes(option.value)"
+                                @change="onSimplifyTargetToggle(option.value, $event.target.checked)">
+                            <span v-text="option.label"></span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="h3-export-wrap">
+                    <button type="button" class="h3-map-tool-btn h3-map-export-btn"
+                        :class="{ active: h3ExportMenuOpen }"
+                        @click.stop="toggleH3ExportMenu"
+                        title="导出">
+                        <svg class="h3-map-tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M12 4v10"></path>
+                            <path d="M8.5 10.5 12 14l3.5-3.5"></path>
+                            <path d="M5 18h14"></path>
+                        </svg>
+                        <span class="h3-map-tool-text">导出</span>
+                        <svg class="h3-map-tool-caret" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="m6 9 6 6 6-6"></path>
+                        </svg>
+                    </button>
+                    <div v-if="h3ExportMenuOpen" class="h3-export-menu">
+                        <div class="h3-export-head">
+                            <div class="h3-export-field-label">导出内容</div>
+                            <button
+                                type="button"
+                                class="h3-export-icon-btn"
+                                :class="{ 'is-active': isAllAvailableExportPartsSelected() }"
+                                :disabled="isExportingBundle || !getSelectableExportParts().length"
+                                :title="isAllAvailableExportPartsSelected() ? '取消全选可导出项' : '一键全选可导出项'"
+                                @click="toggleSelectAllExportParts">
+                                <svg viewBox="0 0 24 24" aria-hidden="true">
+                                    <rect x="4" y="5" width="4" height="4" rx="1.2"></rect>
+                                    <rect x="4" y="10" width="4" height="4" rx="1.2"></rect>
+                                    <rect x="4" y="15" width="4" height="4" rx="1.2"></rect>
+                                    <path d="M11 7h8"></path>
+                                    <path d="M11 12h8"></path>
+                                    <path d="M11 17h8"></path>
+                                    <path d="m5.2 12 1.3 1.3 2.1-2.3"></path>
+                                    <path d="m5.2 17 1.3 1.3 2.1-2.3"></path>
+                                </svg>
+                            </button>
+                        </div>
+                        <div v-for="group in exportBundleGroups" :key="`bundle-group-${group.group_key}`" class="h3-export-group">
+                            <div class="h3-export-group-head">
+                                <input
+                                    type="checkbox"
+                                    class="h3-export-group-checkbox"
+                                    :checked="isExportBundleGroupAllSelected(group.group_key)"
+                                    :indeterminate.prop="isExportBundleGroupPartiallySelected(group.group_key)"
+                                    :disabled="isExportingBundle || !getSelectableExportPartsByGroup(group.group_key).length"
+                                    @change="toggleExportBundleGroupSelection(group.group_key)">
+                                <button
+                                    type="button"
+                                    class="h3-export-group-title"
+                                    @click="toggleExportBundleGroupExpanded(group.group_key)">
+                                    <span>{{ group.group_label }}</span>
+                                    <svg viewBox="0 0 24 24" aria-hidden="true" :class="{ 'is-open': isExportBundleGroupExpanded(group.group_key) }">
+                                        <path d="m6 9 6 6 6-6"></path>
+                                    </svg>
+                                </button>
+                            </div>
+                            <div v-if="isExportBundleGroupExpanded(group.group_key)" class="h3-export-group-body">
+                                <label v-for="item in group.children" :key="`bundle-item-${group.group_key}-${item.value}`" class="h3-export-check h3-export-check-child">
+                                    <input
+                                        type="checkbox"
+                                        :value="item.value"
+                                        v-model="exportBundleParts"
+                                        :disabled="isExportBundlePartDisabled(item.value)"
+                                        :title="getExportBundlePartDisabledReason(item.value)">
+                                    <span>{{ item.label }}</span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <button type="button" class="h3-export-item"
+                            :disabled="isExportingBundle || !exportBundleParts.length"
+                            @click="exportAnalysisBundle()">
+                            {{ isExportingBundle ? '导出中...' : '导出 ZIP' }}
+                        </button>
+                    </div>
+                </div>
+
+                <div class="h3-task-wrap">
+                    <button type="button" class="h3-map-tool-btn h3-map-task-btn"
+                        :class="{ active: h3ExportTasksOpen }"
+                        @click="toggleH3ExportTasks"
+                        title="导出任务">
+                        <svg class="h3-map-tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <rect x="4" y="5" width="16" height="14" rx="2"></rect>
+                            <path d="M8 10h8"></path>
+                            <path d="M8 14h6"></path>
+                        </svg>
+                        <span class="h3-map-tool-text">任务</span>
+                        <span v-if="getH3PendingTaskCount() > 0" class="h3-task-count">{{ getH3PendingTaskCount() }}</span>
+                    </button>
+                </div>
+
+                <button
+                    type="button"
+                    class="h3-map-tool-btn h3-map-debug-btn"
+                    :class="{ active: isochroneDebugOpen }"
+                    :disabled="isLoadingIsochroneDebug || (!isochroneDebugOpen && !isIsochroneDebugAvailable())"
+                    :title="getIsochroneDebugButtonTitle()"
+                    @click="toggleIsochroneDebug">
+                    <svg class="h3-map-tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M12 2.8v4.2"></path>
+                        <path d="M12 17v4.2"></path>
+                        <path d="M2.8 12H7"></path>
+                        <path d="M17 12h4.2"></path>
+                        <circle cx="12" cy="12" r="5.2"></circle>
+                        <circle cx="12" cy="12" r="1.4"></circle>
+                    </svg>
+                    <span class="h3-map-tool-text">{{ isLoadingIsochroneDebug ? '调试中...' : '调试' }}</span>
+                </button>
+            </div>
+
+            <div v-if="sidebarView === 'wizard' && step === 3 && h3ExportTasksOpen" class="h3-export-task-panel">
+                <div class="h3-export-task-panel-header">
+                    <span>导出任务</span>
+                    <button type="button" class="h3-export-task-close" @click="closeH3ExportTasks">关闭</button>
+                </div>
+                <div v-if="!h3ExportTasks.length" class="h3-export-task-empty">暂无任务</div>
+                <template v-else>
+                    <div v-for="task in h3ExportTasks" :key="task.id" class="h3-export-task-item">
+                        <div class="h3-export-task-row">
+                            <div class="h3-export-task-name">{{ task.title }}</div>
+                            <span class="h3-export-task-state"
+                                :class="{
+                                    'is-running': task.status === 'running',
+                                    'is-success': task.status === 'success',
+                                    'is-failed': task.status === 'failed'
+                                }">
+                                {{ task.status_label }}
+                            </span>
+                        </div>
+                        <div class="h3-export-task-progress">
+                            <div class="h3-export-task-progress-bar" :style="{ width: `${Math.max(0, Math.min(100, Number(task.progress_pct || 0)))}%` }"></div>
+                        </div>
+                        <div class="h3-export-task-meta">
+                            {{ task.scope_label }} · {{ task.created_at_text }}
+                        </div>
+                        <div v-if="task.progress_label" class="h3-export-task-meta">
+                            {{ task.progress_label }}
+                        </div>
+                        <div v-if="task.filename" class="h3-export-task-meta">
+                            文件：{{ task.filename }}
+                        </div>
+                        <div v-if="task.error" class="h3-export-task-error">{{ task.error }}</div>
+                    </div>
+                    <div class="h3-export-task-actions">
+                        <button type="button" class="h3-export-task-clear" @click="clearH3CompletedTasks">清理已完成</button>
+                    </div>
+                </template>
+            </div>
+
+            <div v-if="sidebarView === 'wizard' && step === 3 && h3Toast.message"
+                class="h3-export-toast"
+                :class="{
+                    'is-success': h3Toast.type === 'success',
+                    'is-error': h3Toast.type === 'error',
+                    'is-warning': h3Toast.type === 'warning'
+                }">
+                {{ h3Toast.message }}
+            </div>
+
+            <button
+                v-if="sidebarView === 'wizard'"
+                type="button"
+                class="map-recenter-btn"
+                title="回到中心"
+                aria-label="回到中心"
+                :disabled="!mapCore || !mapCore.map"
+                @click="goMapBackToCenter">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <circle cx="12" cy="12" r="3.2"></circle>
+                    <path d="M12 2.8v3.4"></path>
+                    <path d="M12 17.8v3.4"></path>
+                    <path d="M2.8 12h3.4"></path>
+                    <path d="M17.8 12h3.4"></path>
+                </svg>
+            </button>
+
+            <div id="tianditu-container" aria-hidden="true"></div>
+            <div id="container"></div>
+            <div v-if="basemapSource === 'osm'" style="position:absolute; right:8px; bottom:6px; z-index:2; background:rgba(255,255,255,0.9); border:1px solid #e5e7eb; border-radius:6px; padding:2px 6px; font-size:10px; color:#4b5563;">
+                © OpenStreetMap contributors
+            </div>
+            <div v-else-if="basemapSource === 'tianditu'" style="position:absolute; right:8px; bottom:6px; z-index:2; background:rgba(255,255,255,0.9); border:1px solid #e5e7eb; border-radius:6px; padding:2px 6px; font-size:10px; color:#4b5563;">
+                © 天地图
+            </div>
+        </main>
