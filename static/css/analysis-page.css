@@ -11,11 +11,13 @@
     display: none !important;
 }
 
-body {
+.analysis-layout-root {
     font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     margin: 0;
     padding: 0;
-    height: 100vh;
+    width: 100%;
+    height: 100%;
+    min-height: 100vh;
     display: flex;
     background: var(--bg-color);
     color: var(--text-primary);
@@ -1721,7 +1723,7 @@ label {
     margin-top: 0;
 }
 
-.legacy-filters-wrapper.modern-poi-tree {
+.poi-filters-wrapper.modern-poi-tree {
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -1730,7 +1732,7 @@ label {
     padding-right: 2px;
 }
 
-.poi-panel-fill .legacy-filters-wrapper.modern-poi-tree {
+.poi-panel-fill .poi-filters-wrapper.modern-poi-tree {
     flex: 1;
     min-height: 0;
     max-height: none;
@@ -1798,12 +1800,12 @@ label {
     margin-bottom: 0;
 }
 
-.wizard-step-step3 .panel-area-fill .panel.poi-panel .legacy-filters-wrapper.modern-poi-tree {
+.wizard-step-step3 .panel-area-fill .panel.poi-panel .poi-filters-wrapper.modern-poi-tree {
     max-height: none;
     min-height: 0;
 }
 
-.legacy-filters-wrapper.modern-poi-tree .poi-group-card {
+.poi-filters-wrapper.modern-poi-tree .poi-group-card {
     margin: 0;
     border: 1px solid #e6e9ef;
     border-radius: 12px;
@@ -1812,26 +1814,26 @@ label {
     padding: 10px;
 }
 
-.legacy-filters-wrapper.modern-poi-tree .poi-group-card.is-hidden {
+.poi-filters-wrapper.modern-poi-tree .poi-group-card.is-hidden {
     opacity: 0.65;
 }
 
-.legacy-filters-wrapper.modern-poi-tree .poi-group-card.is-on {
+.poi-filters-wrapper.modern-poi-tree .poi-group-card.is-on {
     border-color: #8ea2c6;
     background: linear-gradient(180deg, #ffffff 0%, #f7faff 100%);
 }
 
-.legacy-filters-wrapper.modern-poi-tree .poi-group-card.is-mixed {
+.poi-filters-wrapper.modern-poi-tree .poi-group-card.is-mixed {
     border-color: #c7ceda;
     background: linear-gradient(180deg, #ffffff 0%, #f9fafc 100%);
 }
 
-.legacy-filters-wrapper.modern-poi-tree .poi-group-card.is-off {
+.poi-filters-wrapper.modern-poi-tree .poi-group-card.is-off {
     border-color: #e6e9ef;
     background: #ffffff;
 }
 
-.legacy-filters-wrapper.modern-poi-tree .poi-group-header {
+.poi-filters-wrapper.modern-poi-tree .poi-group-header {
     margin-bottom: 0;
     cursor: pointer;
     border-radius: 8px;
@@ -1839,24 +1841,24 @@ label {
     transition: background 0.15s ease;
 }
 
-.legacy-filters-wrapper.modern-poi-tree .poi-group-header:hover {
+.poi-filters-wrapper.modern-poi-tree .poi-group-header:hover {
     background: #f4f7fb;
     box-shadow: none;
 }
 
-.legacy-filters-wrapper.modern-poi-tree .poi-group-header:focus-visible {
+.poi-filters-wrapper.modern-poi-tree .poi-group-header:focus-visible {
     outline: 2px solid rgba(29, 78, 216, 0.25);
     outline-offset: 1px;
     box-shadow: none;
 }
 
-.legacy-filters-wrapper.modern-poi-tree .poi-group-title-wrap {
+.poi-filters-wrapper.modern-poi-tree .poi-group-title-wrap {
     display: flex;
     align-items: center;
     min-width: 0;
 }
 
-.legacy-filters-wrapper.modern-poi-tree .group-color-dot {
+.poi-filters-wrapper.modern-poi-tree .group-color-dot {
     width: 10px;
     height: 10px;
     border-radius: 50%;
@@ -1865,28 +1867,28 @@ label {
     border: 1px solid rgba(0, 0, 0, 0.12);
 }
 
-.legacy-filters-wrapper.modern-poi-tree .poi-group-title {
+.poi-filters-wrapper.modern-poi-tree .poi-group-title {
     font-size: 13px;
     font-weight: 700;
     color: #1f2937;
 }
 
-.legacy-filters-wrapper.modern-poi-tree .group-content {
+.poi-filters-wrapper.modern-poi-tree .group-content {
     margin-top: 8px;
     border: none;
     padding: 0;
     background: transparent;
 }
 
-.legacy-filters-wrapper.modern-poi-tree .group-content.collapsed {
+.poi-filters-wrapper.modern-poi-tree .group-content.collapsed {
     display: none;
 }
 
-.legacy-filters-wrapper.modern-poi-tree .filter-group {
+.poi-filters-wrapper.modern-poi-tree .filter-group {
     gap: 8px;
 }
 
-.legacy-filters-wrapper.modern-poi-tree .poi-type-card-modern {
+.poi-filters-wrapper.modern-poi-tree .poi-type-card-modern {
     border: 1px solid #e6ebf2;
     border-radius: 10px;
     background: #ffffff;
@@ -1895,26 +1897,26 @@ label {
     box-shadow: none;
 }
 
-.legacy-filters-wrapper.modern-poi-tree .poi-type-card-modern.is-hidden {
+.poi-filters-wrapper.modern-poi-tree .poi-type-card-modern.is-hidden {
     opacity: 0.55;
 }
 
-.legacy-filters-wrapper.modern-poi-tree .poi-type-card-modern.is-on {
+.poi-filters-wrapper.modern-poi-tree .poi-type-card-modern.is-on {
     border-color: #9ab0d6;
     background: #f7faff;
 }
 
-.legacy-filters-wrapper.modern-poi-tree .poi-type-card-modern.is-mixed {
+.poi-filters-wrapper.modern-poi-tree .poi-type-card-modern.is-mixed {
     border-color: #b9c3d6;
     background: #f8fafd;
 }
 
-.legacy-filters-wrapper.modern-poi-tree .poi-type-card-modern.is-off {
+.poi-filters-wrapper.modern-poi-tree .poi-type-card-modern.is-off {
     border-color: #e6ebf2;
     background: #ffffff;
 }
 
-.legacy-filters-wrapper.modern-poi-tree .poi-type-row {
+.poi-filters-wrapper.modern-poi-tree .poi-type-row {
     display: flex;
     align-items: center;
     gap: 8px;
@@ -1924,18 +1926,18 @@ label {
     transition: background 0.15s ease;
 }
 
-.legacy-filters-wrapper.modern-poi-tree .poi-type-row:hover {
+.poi-filters-wrapper.modern-poi-tree .poi-type-row:hover {
     background: #f4f7fb;
     box-shadow: none;
 }
 
-.legacy-filters-wrapper.modern-poi-tree .poi-type-row:focus-visible {
+.poi-filters-wrapper.modern-poi-tree .poi-type-row:focus-visible {
     outline: 2px solid rgba(29, 78, 216, 0.25);
     outline-offset: 1px;
     box-shadow: none;
 }
 
-.legacy-filters-wrapper.modern-poi-tree .poi-type-label {
+.poi-filters-wrapper.modern-poi-tree .poi-type-label {
     margin: 0;
     flex: 1;
     min-width: 0;
@@ -1946,7 +1948,7 @@ label {
     cursor: pointer;
 }
 
-.legacy-filters-wrapper.modern-poi-tree .poi-type-label-text {
+.poi-filters-wrapper.modern-poi-tree .poi-type-label-text {
     font-size: 12px;
     color: #374151;
     font-weight: 600;
@@ -1955,7 +1957,7 @@ label {
     white-space: nowrap;
 }
 
-.legacy-filters-wrapper.modern-poi-tree input[type="checkbox"]:not(.point-checkbox) {
+.poi-filters-wrapper.modern-poi-tree input[type="checkbox"]:not(.point-checkbox) {
     position: absolute !important;
     width: 1px !important;
     height: 1px !important;
@@ -1968,19 +1970,19 @@ label {
     margin: 0 !important;
 }
 
-.legacy-filters-wrapper.modern-poi-tree .poi-expand-btn {
+.poi-filters-wrapper.modern-poi-tree .poi-expand-btn {
     width: 22px;
     height: 22px;
     border-radius: 7px;
     box-shadow: none;
 }
 
-.legacy-filters-wrapper.modern-poi-tree .poi-expand-btn:hover,
-.legacy-filters-wrapper.modern-poi-tree .poi-expand-btn:focus-visible {
+.poi-filters-wrapper.modern-poi-tree .poi-expand-btn:hover,
+.poi-filters-wrapper.modern-poi-tree .poi-expand-btn:focus-visible {
     box-shadow: none;
 }
 
-.legacy-filters-wrapper.modern-poi-tree .point-list {
+.poi-filters-wrapper.modern-poi-tree .point-list {
     margin: 6px 0 0 14px;
     padding: 0;
     border-left: 1px solid #e5e7eb;
@@ -1989,11 +1991,11 @@ label {
     gap: 4px;
 }
 
-.legacy-filters-wrapper.modern-poi-tree .point-list.collapsed {
+.poi-filters-wrapper.modern-poi-tree .point-list.collapsed {
     display: none;
 }
 
-.legacy-filters-wrapper.modern-poi-tree .point-item {
+.poi-filters-wrapper.modern-poi-tree .point-item {
     display: flex;
     align-items: center;
     margin-left: 8px;
@@ -2004,11 +2006,11 @@ label {
     gap: 8px;
 }
 
-.legacy-filters-wrapper.modern-poi-tree .point-item.disabled {
+.poi-filters-wrapper.modern-poi-tree .point-item.disabled {
     opacity: 0.5;
 }
 
-.legacy-filters-wrapper.modern-poi-tree .point-checkbox {
+.poi-filters-wrapper.modern-poi-tree .point-checkbox {
     margin: 0;
     width: 14px;
     height: 14px;
@@ -2017,7 +2019,7 @@ label {
     flex-shrink: 0;
 }
 
-.legacy-filters-wrapper.modern-poi-tree .point-name-btn {
+.poi-filters-wrapper.modern-poi-tree .point-name-btn {
     border: none;
     background: transparent;
     padding: 0;
@@ -2034,7 +2036,7 @@ label {
     transition: color 0.15s ease;
 }
 
-.legacy-filters-wrapper.modern-poi-tree .point-name-btn:hover {
+.poi-filters-wrapper.modern-poi-tree .point-name-btn:hover {
     color: #3F6690;
 }
 

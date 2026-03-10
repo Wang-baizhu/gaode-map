@@ -1,0 +1,72 @@
+import { useAnalysisSessionStore } from './session'
+import { useAnalysisPoiStore } from './poi'
+import { useAnalysisH3Store } from './h3'
+import { useAnalysisRoadStore } from './road'
+import { useAnalysisExportStore } from './export'
+import { useAnalysisHistoryStore } from './history'
+
+export function createAnalysisInitialStateFromPinia(pinia, options = {}) {
+  const {
+    typeMapConfig = { groups: [] },
+    roadSyntaxModulesReady = false,
+    roadSyntaxModuleMissing = [],
+    buildAnalysisPoiRuntimeInitialState = () => ({}),
+    buildAnalysisPoiInitialState = () => ({}),
+    buildAnalysisHistoryListInitialState = () => ({}),
+    buildAnalysisHistoryInitialState = () => ({}),
+    buildAnalysisH3InitialState = () => ({}),
+    buildAnalysisExportInitialState = () => ({}),
+    buildRoadSyntaxInitialState = () => ({}),
+  } = options
+
+  const sessionStore = useAnalysisSessionStore(pinia)
+  const poiStore = useAnalysisPoiStore(pinia)
+  const h3Store = useAnalysisH3Store(pinia)
+  const roadStore = useAnalysisRoadStore(pinia)
+  const exportStore = useAnalysisExportStore(pinia)
+  const historyStore = useAnalysisHistoryStore(pinia)
+
+  sessionStore.$reset()
+  poiStore.$reset()
+  h3Store.$reset()
+  roadStore.$reset()
+  exportStore.$reset()
+  historyStore.$reset()
+
+  poiStore.$patch({
+    typeMapConfig,
+    ...buildAnalysisPoiRuntimeInitialState(),
+    ...buildAnalysisPoiInitialState(),
+  })
+  historyStore.$patch({
+    ...buildAnalysisHistoryListInitialState(),
+    ...buildAnalysisHistoryInitialState(),
+  })
+  h3Store.$patch(buildAnalysisH3InitialState())
+  roadStore.$patch({
+    roadSyntaxModulesReady,
+    roadSyntaxModuleMissing: Array.isArray(roadSyntaxModuleMissing)
+      ? roadSyntaxModuleMissing.slice()
+      : [],
+    ...buildRoadSyntaxInitialState(),
+  })
+  exportStore.$patch(buildAnalysisExportInitialState())
+
+  const debugState = {
+    isochroneDebugOpen: false,
+    isLoadingIsochroneDebug: false,
+    isochroneDebugSamplePoints: [],
+    isochroneDebugFeatures: [],
+    isochroneDebugErrors: [],
+    isochroneDebugSelectedSampleId: '',
+    isochroneDebugMarkers: [],
+    isochroneDebugPolygons: [],
+    isochroneDebugInfoWindow: null,
+  }
+
+  return Object.assign(
+    {},
+    poiStore.$state,
+    debugState,
+  )
+}
