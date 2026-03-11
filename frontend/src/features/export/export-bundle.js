@@ -659,7 +659,9 @@
                 return `${num.toFixed(Math.max(0, Number(decimals) || 0))}%`;
             },
             _buildExportLegendHtml(items) {
-                const safeItems = Array.isArray(items) ? items : [];
+                const safeItems = Array.isArray(items)
+                    ? items
+                    : ((items && Array.isArray(items.items)) ? items.items : []);
                 if (!safeItems.length) return '';
                 const cells = safeItems.map((item) => {
                     const color = this._escapeExportHtml(item && item.color);
@@ -667,6 +669,85 @@
                     return `<div style="display:flex;align-items:center;gap:8px;"><span style="display:inline-block;width:12px;height:12px;border-radius:4px;background:${color};border:1px solid rgba(15,23,42,0.08);"></span><span style="font-size:13px;color:#475569;">${label}</span></div>`;
                 }).join('');
                 return `<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 14px;padding:12px 14px;border-radius:12px;background:#f8fafc;border:1px solid #e5e7eb;">${cells}</div>`;
+            },
+            _buildMetricLegend(metricBreaksOrLegend, metricKey = 'density') {
+                const normalizeItems = (input) => {
+                    const raw = Array.isArray(input)
+                        ? input
+                        : ((input && Array.isArray(input.items)) ? input.items : []);
+                    return raw
+                        .map((item) => {
+                            const color = String((item && item.color) || '').trim();
+                            const label = String((item && item.label) || '').trim();
+                            if (!color || !label) return null;
+                            return { color, label };
+                        })
+                        .filter((item) => !!item);
+                };
+
+                const direct = normalizeItems(metricBreaksOrLegend);
+                if (direct.length) return direct;
+
+                const fromPanelLegend = normalizeItems(this.h3Legend);
+                if (fromPanelLegend.length) return fromPanelLegend;
+
+                const source = (metricBreaksOrLegend && typeof metricBreaksOrLegend === 'object')
+                    ? metricBreaksOrLegend
+                    : {};
+                const spec = typeof this._getMetricSpec === 'function'
+                    ? (this._getMetricSpec(metricKey) || {})
+                    : {};
+
+                const palette = (Array.isArray(source.palette) && source.palette.length
+                    ? source.palette
+                    : (Array.isArray(spec.palette) ? spec.palette : []))
+                    .map((c) => String(c || '').trim())
+                    .filter((c) => !!c);
+                if (!palette.length) return [];
+
+                const formatValue = (value) => {
+                    if (typeof this._formatLegendValue === 'function') {
+                        return this._formatLegendValue(value, metricKey);
+                    }
+                    const num = Number(value);
+                    if (!Number.isFinite(num)) return '-';
+                    if (metricKey === 'entropy') return num.toFixed(2);
+                    const abs = Math.abs(num);
+                    if (abs >= 100) return num.toFixed(0);
+                    if (abs >= 10) return num.toFixed(1);
+                    return num.toFixed(2);
+                };
+
+                const breaks = (Array.isArray(source.breaks) ? source.breaks : [])
+                    .map((v) => Number(v))
+                    .filter((v) => Number.isFinite(v));
+
+                if (!breaks.length) {
+                    const min = Number(source.min);
+                    const max = Number(source.max);
+                    if (Number.isFinite(min) && Number.isFinite(max)) {
+                        return [{
+                            color: palette[palette.length - 1],
+                            label: `${formatValue(min)} ~ ${formatValue(max)}`,
+                        }];
+                    }
+                    return [{ color: palette[0], label: '无有效数据' }];
+                }
+
+                const classCount = Math.min(palette.length, breaks.length + 1);
+                const items = [];
+                for (let i = 0; i < classCount; i += 1) {
+                    let label = '';
+                    if (i === 0) {
+                        label = `≤ ${formatValue(breaks[0])}`;
+                    } else if (i === classCount - 1) {
+                        label = `> ${formatValue(breaks[breaks.length - 1])}`;
+                    } else {
+                        label = `${formatValue(breaks[i - 1])} ~ ${formatValue(breaks[i])}`;
+                    }
+                    items.push({ color: palette[i], label });
+                }
+                return items;
             },
             _buildExportDecisionCardsHtml(items) {
                 return this._buildExportCountBadgeGridHtml(items, 3);
@@ -710,6 +791,37 @@
                     return '';
                 }
             },
+            _cloneChartOptionForExport(instance) {
+                if (!instance || typeof instance.getOption !== 'function') return null;
+                try {
+                    const option = instance.getOption();
+                    if (!option || typeof option !== 'object') return null;
+                    return JSON.parse(JSON.stringify(option));
+                } catch (_) {
+                    return null;
+                }
+            },
+            _buildPoiChartExportOption() {
+                return this._cloneChartOptionForExport(this.poiChart);
+            },
+            _buildH3CategoryChartExportOption() {
+                return this._cloneChartOptionForExport(this.h3CategoryChart);
+            },
+            _buildH3DensityChartExportOption() {
+                return this._cloneChartOptionForExport(this.h3DensityChart);
+            },
+            _buildH3StructureChartExportOption() {
+                return this._cloneChartOptionForExport(this.h3StructureChart);
+            },
+            _buildH3LqChartExportOption() {
+                return this._cloneChartOptionForExport(this.h3LqChart);
+            },
+            _buildH3GapChartExportOption() {
+                return this._cloneChartOptionForExport(this.h3GapChart);
+            },
+            _buildRoadSyntaxScatterChartExportOption() {
+                return this._cloneChartOptionForExport(this.roadSyntaxScatterChart);
+            },
             _buildH3MetricLegendForExport() {
                 const summary = this.h3AnalysisSummary || {};
                 return this._buildMetricLegend(summary.metric_breaks || this.h3Legend || null, this.h3MetricView);
@@ -717,9 +829,30 @@
             _buildH3StructureLegendForExport() {
                 const summary = this.h3AnalysisSummary || {};
                 if (this.h3StructureFillMode === 'lisa_i') {
-                    return this._buildLisaLegend(summary.lisa_render_meta);
+                    if (typeof this._buildLisaLegend === 'function') {
+                        return this._buildLisaLegend(summary.lisa_render_meta);
+                    }
+                    return [];
                 }
-                return this._buildGiLegend(summary.gi_render_meta);
+                if (typeof this._buildGiLegend === 'function') {
+                    return this._buildGiLegend(summary.gi_render_meta);
+                }
+                return [];
+            },
+            _buildH3TypingLegendHtml() {
+                const legendItems = [
+                    { color: '#1d4ed8', label: '高密高混合：成熟复合中心' },
+                    { color: '#f97316', label: '高密低混合：单核主导片区' },
+                    { color: '#22c55e', label: '低密高混合：潜力培育片区' },
+                    { color: '#94a3b8', label: '低密低混合：薄弱提升片区' },
+                ];
+                const legendHtml = this._buildExportLegendHtml(legendItems);
+                const confidenceHtml = `
+                    <div class="panel-placeholder">
+                        可信度口径：POI ≥ 10 为高，5~9 为中，<5 为低。
+                    </div>
+                `;
+                return `${legendHtml}${confidenceHtml}`;
             },
             async _waitForExportImages(root) {
                 const images = Array.from((root && root.querySelectorAll) ? root.querySelectorAll('img') : []);

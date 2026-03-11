@@ -9,6 +9,43 @@ from store.history_repo import history_repo
 router = APIRouter()
 
 
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float))
+
+
+def _transform_nested_coords(raw: Any, transformer):
+    if not isinstance(raw, list):
+        return raw
+
+    if len(raw) >= 2 and _is_number(raw[0]) and _is_number(raw[1]):
+        try:
+            nx, ny = transformer(float(raw[0]), float(raw[1]))
+            out = [nx, ny]
+            if len(raw) > 2:
+                out.extend(raw[2:])
+            return out
+        except Exception:
+            return raw
+
+    return [_transform_nested_coords(item, transformer) for item in raw]
+
+
+def _transform_geojson_coordinates(value: Any, transformer):
+    if isinstance(value, dict):
+        out = {}
+        for key, val in value.items():
+            if key == "coordinates":
+                out[key] = _transform_nested_coords(val, transformer)
+            else:
+                out[key] = _transform_geojson_coordinates(val, transformer)
+        return out
+
+    if isinstance(value, list):
+        return [_transform_geojson_coordinates(item, transformer) for item in value]
+
+    return value
+
+
 def _transform_polygon_payload_coords(raw: Any, transformer) -> list:
     if not isinstance(raw, list):
         return []
@@ -47,7 +84,8 @@ async def save_history_manually(payload: HistorySaveRequest):
 
     s_drawn_poly = []
     if payload.drawn_polygon:
-        s_drawn_poly = [list(gcj02_to_wgs84(p[0], p[1])) for p in payload.drawn_polygon]
+        transformed_drawn = _transform_nested_coords(payload.drawn_polygon, gcj02_to_wgs84)
+        s_drawn_poly = transformed_drawn if isinstance(transformed_drawn, list) else []
 
     s_pois = []
     for p in payload.pois:
@@ -57,6 +95,14 @@ async def save_history_manually(payload: HistorySaveRequest):
             nwx, nwy = gcj02_to_wgs84(lx, ly)
             np["location"] = [nwx, nwy]
         s_pois.append(np)
+
+    s_h3_result = None
+    if isinstance(payload.h3_result, dict):
+        s_h3_result = _transform_geojson_coordinates(payload.h3_result, gcj02_to_wgs84)
+
+    s_road_result = None
+    if isinstance(payload.road_result, dict):
+        s_road_result = _transform_geojson_coordinates(payload.road_result, gcj02_to_wgs84)
 
     display_title = payload.location_name
     if not display_title and s_center:
@@ -79,6 +125,10 @@ async def save_history_manually(payload: HistorySaveRequest):
         }
         if s_drawn_poly:
             params_payload["drawn_polygon"] = s_drawn_poly
+        if s_h3_result:
+            params_payload["h3_result"] = s_h3_result
+        if s_road_result:
+            params_payload["road_result"] = s_road_result
         history_id = history_repo.create_record(
             params_payload,
             s_poly, s_pois, desc
@@ -90,7 +140,7 @@ async def save_history_manually(payload: HistorySaveRequest):
 
 
 @router.get("/api/v1/analysis/history")
-async def get_history_list(limit: int = 20):
+async def get_history_list(limit: int = Query(0, ge=0)):
     return history_repo.get_list(limit)
 
 
@@ -105,9 +155,16 @@ def _convert_history_detail_to_gcj02(res: Dict[str, Any], *, include_pois: bool)
 
     if params.get("drawn_polygon"):
         try:
-            params["drawn_polygon"] = [list(wgs84_to_gcj02(p[0], p[1])) for p in params["drawn_polygon"]]
+            transformed = _transform_nested_coords(params["drawn_polygon"], wgs84_to_gcj02)
+            params["drawn_polygon"] = transformed if isinstance(transformed, list) else []
         except Exception:
             params["drawn_polygon"] = []
+
+    if isinstance(params.get("h3_result"), dict):
+        params["h3_result"] = _transform_geojson_coordinates(params["h3_result"], wgs84_to_gcj02)
+
+    if isinstance(params.get("road_result"), dict):
+        params["road_result"] = _transform_geojson_coordinates(params["road_result"], wgs84_to_gcj02)
 
     if payload.get("polygon"):
         poly = payload["polygon"]

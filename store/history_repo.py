@@ -8,6 +8,79 @@ from .models import AnalysisHistory, PoiResult
 
 class HistoryRepo:
     @staticmethod
+    def _build_list_params_from_params(raw_params: Dict) -> Dict:
+        params = raw_params if isinstance(raw_params, dict) else {}
+        return {
+            "center": params.get("center"),
+            "time_min": params.get("time_min"),
+            "keywords": params.get("keywords"),
+            "mode": params.get("mode"),
+            "source": params.get("source"),
+        }
+
+    @staticmethod
+    def _build_history_list_dedupe_key(description: str, params: Dict) -> str:
+        params = params if isinstance(params, dict) else {}
+        center = params.get("center")
+        if isinstance(center, (list, tuple)) and len(center) >= 2:
+            try:
+                center_key = f"{float(center[0]):.6f},{float(center[1]):.6f}"
+            except Exception:
+                center_key = str(center)
+        else:
+            center_key = ""
+        time_min = str(params.get("time_min") if params.get("time_min") is not None else "")
+        mode = str(params.get("mode") or "").strip().lower()
+        source = str(params.get("source") or "").strip().lower()
+        keywords = str(params.get("keywords") or "").strip()
+        desc_key = str(description or "").strip()
+        return "||".join([center_key, time_min, mode, source, keywords, desc_key])
+
+    @staticmethod
+    def _build_history_overwrite_key(params: Dict) -> str:
+        """
+        Stable overwrite key for "same analysis run":
+        center + time_min + mode + source + keywords.
+        Do not include description, because description may contain POI count.
+        """
+        params = params if isinstance(params, dict) else {}
+        center = params.get("center")
+        if isinstance(center, (list, tuple)) and len(center) >= 2:
+            try:
+                center_key = f"{float(center[0]):.6f},{float(center[1]):.6f}"
+            except Exception:
+                center_key = str(center)
+        else:
+            center_key = ""
+        time_min = str(params.get("time_min") if params.get("time_min") is not None else "")
+        mode = str(params.get("mode") or "").strip().lower()
+        source = str(params.get("source") or "").strip().lower()
+        keywords = str(params.get("keywords") or "").strip()
+        return "||".join([center_key, time_min, mode, source, keywords])
+
+    def _find_same_history_ids_for_overwrite(
+        self,
+        session: Session,
+        params: Dict,
+    ) -> List[int]:
+        incoming_list_params = self._build_list_params_from_params(params)
+        incoming_key = self._build_history_overwrite_key(incoming_list_params)
+
+        query = session.query(
+            AnalysisHistory.id,
+            AnalysisHistory.params,
+        )
+
+        rows = query.order_by(desc(AnalysisHistory.id)).all()
+        matched_ids: List[int] = []
+        for row in rows:
+            row_list_params = self._build_list_params_from_params(row.params)
+            row_key = self._build_history_overwrite_key(row_list_params)
+            if row_key == incoming_key:
+                matched_ids.append(int(row.id))
+        return matched_ids
+
+    @staticmethod
     def _serialize_created_at(value: datetime) -> str:
         """
         Persisted history timestamps are stored in UTC.
@@ -51,6 +124,12 @@ class HistoryRepo:
         """
         session: Session = SessionLocal()
         try:
+            # Physical overwrite: delete old records with the same history key first.
+            same_ids = self._find_same_history_ids_for_overwrite(session, params)
+            if same_ids:
+                session.query(PoiResult).filter(PoiResult.history_id.in_(same_ids)).delete(synchronize_session=False)
+                session.query(AnalysisHistory).filter(AnalysisHistory.id.in_(same_ids)).delete(synchronize_session=False)
+
             # 1. Create History
             history = AnalysisHistory(
                 params=params,
@@ -82,24 +161,42 @@ class HistoryRepo:
         finally:
             session.close()
 
-    def get_list(self, limit: int = 20) -> List[Dict]:
+    def get_list(self, limit: int = 0) -> List[Dict]:
         """
         Get latest history records (metadata only).
+        If limit <= 0, return all records.
         """
         session: Session = SessionLocal()
         try:
-            records = session.query(AnalysisHistory)\
-                .order_by(desc(AnalysisHistory.created_at))\
-                .limit(limit)\
-                .all()
+            # Keep history list query lightweight:
+            # - select only list fields (exclude large JSON polygon payload)
+            # - order by PK (indexed) to avoid MySQL sort-buffer pressure
+            query = (
+                session.query(
+                    AnalysisHistory.id,
+                    AnalysisHistory.description,
+                    AnalysisHistory.created_at,
+                    AnalysisHistory.params,
+                )
+                .order_by(desc(AnalysisHistory.id))
+            )
+            if isinstance(limit, int) and limit > 0:
+                query = query.limit(limit)
+            records = query.all()
             
             result = []
+            seen_keys = set()
             for r in records:
+                list_params = self._build_list_params_from_params(r.params)
+                dedupe_key = self._build_history_list_dedupe_key(r.description, list_params)
+                if dedupe_key in seen_keys:
+                    continue
+                seen_keys.add(dedupe_key)
                 result.append({
                     "id": r.id,
                     "description": r.description,
                     "created_at": self._serialize_created_at(r.created_at),
-                    "params": r.params
+                    "params": list_params
                 })
             return result
         finally:

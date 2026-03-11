@@ -11,9 +11,76 @@ function createAnalysisHistoryOrchestratorMethods() {
       }
       this.historyDetailLoadToken += 1
     },
+    buildHistoryH3ResultSnapshot() {
+      const analysisFeatures = Array.isArray(this.h3AnalysisGridFeatures)
+        ? this.h3AnalysisGridFeatures
+        : []
+      const plainFeatures = Array.isArray(this.h3GridFeatures) ? this.h3GridFeatures : []
+      const features = analysisFeatures.length ? analysisFeatures : plainFeatures
+      const hasData = features.length > 0 || !!this.h3AnalysisSummary
+      if (!hasData) return null
+
+      const countRaw = Number(this.h3GridCount)
+      return {
+        grid: {
+          type: 'FeatureCollection',
+          features,
+          count: Number.isFinite(countRaw) ? countRaw : features.length,
+          resolution: Number(this.h3GridResolution) || 10,
+          include_mode: String(this.h3GridIncludeMode || 'intersects'),
+          min_overlap_ratio: Number(this.h3GridMinOverlapRatio) || 0,
+        },
+        summary: this.h3AnalysisSummary || null,
+        charts: this.h3AnalysisCharts || null,
+        ui: {
+          main_stage: String(this.h3MainStage || 'params'),
+          sub_tab: String(this.h3SubTab || 'metric_map'),
+          metric_view: String(this.h3MetricView || 'density'),
+          structure_fill_mode: String(this.h3StructureFillMode || 'gi_z'),
+          panel_active: this.activeStep3Panel === 'h3',
+        },
+      }
+    },
+    buildHistoryRoadResultSnapshot() {
+      const roadFeatures = Array.isArray(this.roadSyntaxRoadFeatures)
+        ? this.roadSyntaxRoadFeatures
+        : []
+      const nodeFeatures = Array.isArray(this.roadSyntaxNodes) ? this.roadSyntaxNodes : []
+      const hasData = roadFeatures.length > 0 || nodeFeatures.length > 0 || !!this.roadSyntaxSummary
+      if (!hasData) return null
+
+      return {
+        summary: this.roadSyntaxSummary || null,
+        diagnostics: this.roadSyntaxDiagnostics || null,
+        roads: {
+          type: 'FeatureCollection',
+          features: roadFeatures,
+          count: roadFeatures.length,
+        },
+        nodes: {
+          type: 'FeatureCollection',
+          features: nodeFeatures,
+          count: nodeFeatures.length,
+        },
+        webgl: this.roadSyntaxWebglPayload || null,
+        ui: {
+          graph_model: String(this.roadSyntaxGraphModel || 'segment'),
+          main_tab: String(this.roadSyntaxMainTab || 'params'),
+          metric: String(this.roadSyntaxMetric || 'connectivity'),
+          radius_label: String(this.roadSyntaxRadiusLabel || 'global'),
+          color_scale: String(this.roadSyntaxDepthmapColorScale || 'axmanesque'),
+          display_blue: Number(this.roadSyntaxDisplayBlue) || 0,
+          display_red: Number(this.roadSyntaxDisplayRed) || 1,
+          panel_active: this.activeStep3Panel === 'syntax',
+        },
+      }
+    },
     saveAnalysisHistoryAsync(polygon, selectedCats, pois) {
-      if (!this.selectedPoint || !Array.isArray(pois) || pois.length === 0) return
-      const typesLabel = (selectedCats || []).map((c) => c.name).join(',')
+      if (!this.selectedPoint) return
+      const selectedCatsSafe = Array.isArray(selectedCats)
+        ? selectedCats
+        : (typeof this.buildSelectedCategoryBuckets === 'function' ? this.buildSelectedCategoryBuckets() : [])
+      const typesLabel = selectedCatsSafe.map((c) => c.name).join(',')
       const drawnPolygonForSave = (
         this.isochroneScopeMode === 'area'
         && Array.isArray(this.drawnScopePolygon)
@@ -21,7 +88,10 @@ function createAnalysisHistoryOrchestratorMethods() {
       )
         ? this._closePolygonRing(this.normalizePath(this.drawnScopePolygon, 3, 'history.drawn_polygon'))
         : null
-      const compactPois = pois.map((p) => ({
+      const poiList = Array.isArray(pois)
+        ? pois
+        : (Array.isArray(this.allPoisDetails) ? this.allPoisDetails : [])
+      const compactPois = poiList.map((p) => ({
         id: p && p.id ? String(p.id) : '',
         name: p && p.name ? String(p.name) : '未命名',
         location: Array.isArray(p && p.location) ? [p.location[0], p.location[1]] : null,
@@ -30,9 +100,14 @@ function createAnalysisHistoryOrchestratorMethods() {
         adname: p && p.adname ? String(p.adname) : '',
         lines: Array.isArray(p && p.lines) ? p.lines : [],
       })).filter((p) => Array.isArray(p.location) && p.location.length === 2)
+      const resolvedPolygon = Array.isArray(polygon) && polygon.length
+        ? polygon
+        : this.getIsochronePolygonPayload()
+      const h3Result = this.buildHistoryH3ResultSnapshot()
+      const roadResult = this.buildHistoryRoadResultSnapshot()
       const payload = {
         center: [this.selectedPoint.lng, this.selectedPoint.lat],
-        polygon: this.getIsochronePolygonPayload(),
+        polygon: resolvedPolygon,
         drawn_polygon: Array.isArray(drawnPolygonForSave) && drawnPolygonForSave.length >= 4
           ? drawnPolygonForSave
           : null,
@@ -42,6 +117,8 @@ function createAnalysisHistoryOrchestratorMethods() {
         mode: this.transportMode,
         time_min: parseInt(this.timeHorizon),
         source: this.normalizePoiSource(this.resultDataSource || this.poiDataSource, 'local'),
+        h3_result: h3Result,
+        road_result: roadResult,
       }
       setTimeout(() => {
         fetch('/api/v1/analysis/history/save', {
@@ -59,10 +136,22 @@ function createAnalysisHistoryOrchestratorMethods() {
             }
             return res.json().catch(() => ({}))
           })
-          .then(() => {})
+          .then(() => {
+            if (typeof this.loadHistoryList === 'function') {
+              this.loadHistoryList({
+                force: true,
+                keepExisting: true,
+                background: true,
+                hardRefresh: true,
+              }).catch((err) => {
+                console.warn('refresh history list after save failed', err)
+              })
+            }
+          })
           .catch((err) => {
             console.warn('Failed to save history', err)
-            this.poiStatus = `抓取完成，但历史保存失败：${err && err.message ? err.message : String(err)}`
+            const message = err && err.message ? err.message : String(err)
+            this.poiStatus = `分析完成，但历史保存失败：${message}`
           })
       }, 0)
     },
