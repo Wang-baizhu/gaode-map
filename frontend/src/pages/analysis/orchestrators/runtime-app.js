@@ -2899,6 +2899,13 @@ export function runAnalysisBootstrapApp() {
                               }
                           }
                           this.roadSyntaxSetStatus(`局部（当前多边形）${this.buildRoadSyntaxCompletionStatus(poolReady)}`);
+                          if (typeof this.saveAnalysisHistoryAsync === 'function') {
+                              this.saveAnalysisHistoryAsync(
+                                  this.getIsochronePolygonPayload(),
+                                  typeof this.buildSelectedCategoryBuckets === 'function' ? this.buildSelectedCategoryBuckets() : [],
+                                  this.allPoisDetails
+                              );
+                          }
                       } catch (e) {
                           if (requestToken !== this.roadSyntaxRequestToken) {
                               return;

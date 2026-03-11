@@ -43,3 +43,11 @@ class HistorySaveRequest(BaseModel):
     time_min: int = Field(default=15)
     location_name: Optional[str] = Field(None, description="Location name or coordinates for title")
     source: Optional[Literal["gaode", "local"]] = Field(default="local", description="POI source for this analysis")
+    h3_result: Optional[dict] = Field(
+        default=None,
+        description="Optional H3 analysis snapshot payload (GCJ02 coordinates)",
+    )
+    road_result: Optional[dict] = Field(
+        default=None,
+        description="Optional road syntax snapshot payload (GCJ02 coordinates)",
+    )

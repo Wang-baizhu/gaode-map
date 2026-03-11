@@ -106,7 +106,28 @@
                     return;
                 }
                 if (nextPanelId === STEP3_PANEL_IDS.SYNTAX) {
-                    this.setRoadSyntaxMainTab('params', { refresh: false, syncMetric: false });
+                    const hasRoadSnapshot = !!this.roadSyntaxSummary
+                        || (Array.isArray(this.roadSyntaxRoadFeatures) && this.roadSyntaxRoadFeatures.length > 0)
+                        || (Array.isArray(this.roadSyntaxNodes) && this.roadSyntaxNodes.length > 0);
+                    if (hasRoadSnapshot) {
+                        const metricTabs = (typeof this.roadSyntaxMetricTabs === 'function')
+                            ? this.roadSyntaxMetricTabs().map((tab) => tab.value)
+                            : ['connectivity', 'control', 'depth', 'choice', 'integration', 'intelligibility'];
+                        const currentTab = String(this.roadSyntaxMainTab || '').trim();
+                        const currentMetric = String(this.roadSyntaxMetric || '').trim();
+                        const lastMetric = String(this.roadSyntaxLastMetricTab || '').trim();
+                        const defaultMetric = typeof this.roadSyntaxDefaultMetric === 'function'
+                            ? this.roadSyntaxDefaultMetric()
+                            : 'connectivity';
+                        const targetTab = metricTabs.includes(currentTab)
+                            ? currentTab
+                            : (metricTabs.includes(currentMetric)
+                                ? currentMetric
+                                : (metricTabs.includes(lastMetric) ? lastMetric : defaultMetric));
+                        this.setRoadSyntaxMainTab(targetTab, { refresh: false, syncMetric: true });
+                    } else {
+                        this.setRoadSyntaxMainTab('params', { refresh: false, syncMetric: false });
+                    }
                     this.resumeRoadSyntaxDisplay();
                 }
                 this.applySimplifyPointVisibility();

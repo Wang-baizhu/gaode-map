@@ -251,7 +251,7 @@
                 this._ensureH3CategoryState();
                 const hasAnalysis = Array.isArray(this.h3AnalysisGridFeatures)
                     && this.h3AnalysisGridFeatures.length > 0
-                    && !!this.h3AnalysisSummary;
+                    && (!!this.h3AnalysisSummary || !!this.h3AnalysisCharts);
                 const stage = String(this.h3MainStage || '').trim();
                 if (!hasAnalysis) {
                     this.h3MainStage = 'params';
@@ -1956,6 +1956,13 @@
                     } else {
                         this.clearH3GridDisplayOnLeave();
                         this.h3GridStatus = `${baseStatus}（已就绪，切换到“网格”查看）`;
+                    }
+                    if (typeof this.saveAnalysisHistoryAsync === 'function') {
+                        this.saveAnalysisHistoryAsync(
+                            this.getIsochronePolygonPayload(),
+                            typeof this.buildSelectedCategoryBuckets === 'function' ? this.buildSelectedCategoryBuckets() : [],
+                            this.allPoisDetails
+                        );
                     }
                 } catch (e) {
                     console.error(e);

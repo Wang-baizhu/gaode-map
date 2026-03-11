@@ -36,7 +36,7 @@ services:
     volumes:
       - .:/app
       - ./data:/app/data
-      - "${CITY_BOUNDARY_HOST_DIR:-/mnt/d/MapData/boundaries}:/mapdata/boundaries:ro"
+      - "${CITY_BOUNDARY_HOST_DIR:-D:/MapData/boundaries}:/mapdata/boundaries:ro"
       - /app/.venv
       - /app/__pycache__
 
@@ -46,8 +46,8 @@ services:
     ports:
       - "8002:8002"
     volumes:
-      - "${VALHALLA_CUSTOM_FILES_DIR}:/custom_files"
-      - "${VALHALLA_TILES_DIR}:/valhalla/tiles"
+      - "${VALHALLA_CUSTOM_FILES_DIR:-D:/MapData/osm_source}:/custom_files"
+      - "${VALHALLA_TILES_DIR:-D:/MapData/valhalla_tiles}:/valhalla/tiles"
     environment:
       - build_elevation=False
       - build_admins=False
@@ -67,10 +67,10 @@ services:
     environment:
       - OVERPASS_MODE=init
       - OVERPASS_META=no
-      - OVERPASS_PLANET_URL=file:///osm/${OVERPASS_PBF_FILE}
+      - OVERPASS_PLANET_URL=file:///osm/${OVERPASS_PBF_FILE:-hunan-260201.osm.pbf}
       - "OVERPASS_PLANET_PREPROCESS=mv /db/planet.osm.bz2 /db/planet.osm.pbf && osmium cat /db/planet.osm.pbf -o /db/planet.osm.bz2 -f osm.bz2 --overwrite && rm -f /db/planet.osm.pbf"
       - OVERPASS_RULES_LOAD=10
     volumes:
-      - "${OVERPASS_DB_DIR}:/db"
-      - "${OVERPASS_SOURCE_DIR}:/osm:ro"
+      - "${OVERPASS_DB_DIR:-D:/MapData/overpass_db}:/db"
+      - "${OVERPASS_SOURCE_DIR:-D:/MapData/osm_source}:/osm:ro"
     restart: unless-stopped
