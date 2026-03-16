@@ -791,6 +791,7 @@ import { markRaw } from 'vue'
                     this.fetchProgress = 0;
                     this.poiStatus = '';
                     this.resetRoadSyntaxState();
+                    this.resetPopulationAnalysisState({ keepMeta: true });
                     this.clearIsochroneDebugState();
 
                     try {

@@ -105,5 +105,11 @@ async def render_analysis_page():
             status_code=503,
             detail="frontend 构建产物不存在，请先在 frontend 目录执行 npm run build",
         )
-    return FileResponse(frontend_index)
-
+    return FileResponse(
+        frontend_index,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )

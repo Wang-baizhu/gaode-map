@@ -61,8 +61,14 @@ uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ## 6. 关键环境变量
 - 地图：`AMAP_WEB_SERVICE_KEY`、`AMAP_JS_API_KEY`、`AMAP_JS_SECURITY_CODE`、`TIANDITU_KEY`
 - 路网/等时圈：`DEPTHMAPX_CLI_PATH`、`OVERPASS_ENDPOINT`、`VALHALLA_BASE_URL`
+- 人口分析：`POPULATION_DATA_DIR`、`POPULATION_PREVIEW_MAX_SIZE`
 - 数据库：`DB_URL`（可选；未配置时走 SQLite）
 - 图表输出目录覆盖：`CHART_OUTPUT_DIR`（可选，默认 `runtime/generated_charts/`）
+
+### 人口数据目录
+- Docker 启动时，默认把宿主机 `E:/PeopleData` 挂到容器内 `/mapdata/population`
+- 可通过 `POPULATION_DATA_HOST_DIR` 覆盖宿主机目录
+- 容器内应用读取目录由 `POPULATION_DATA_DIR` 控制，默认 `/mapdata/population`
 
 ## 7. 测试与仓库卫生
 ```bash

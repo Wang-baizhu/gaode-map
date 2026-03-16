@@ -2,6 +2,7 @@
         POI: 'poi',
         H3: 'h3',
         H3_SETTINGS: 'h3_settings',
+        POPULATION: 'population',
         SYNTAX: 'syntax',
     });
 
@@ -78,6 +79,9 @@
                 if (previousPanel === STEP3_PANEL_IDS.SYNTAX && nextPanelId !== STEP3_PANEL_IDS.SYNTAX) {
                     this.suspendRoadSyntaxDisplay();
                 }
+                if (previousPanel === STEP3_PANEL_IDS.POPULATION && nextPanelId !== STEP3_PANEL_IDS.POPULATION) {
+                    this.clearPopulationRasterDisplayOnLeave();
+                }
                 if (nextPanelId !== STEP3_PANEL_IDS.H3) {
                     this.h3ExportMenuOpen = false;
                     this.h3ExportTasksOpen = false;
@@ -101,6 +105,15 @@
                     this.$nextTick(() => {
                         if (typeof this.updateH3Charts === 'function') this.updateH3Charts();
                         if (typeof this.updateDecisionCards === 'function') this.updateDecisionCards();
+                    });
+                    this.applySimplifyPointVisibility();
+                    return;
+                }
+                if (nextPanelId === STEP3_PANEL_IDS.POPULATION) {
+                    this.ensurePopulationPanelEntryState();
+                    this.restorePopulationRasterDisplayOnEnter();
+                    this.$nextTick(() => {
+                        if (typeof this.updatePopulationCharts === 'function') this.updatePopulationCharts();
                     });
                     this.applySimplifyPointVisibility();
                     return;
@@ -208,6 +221,7 @@
                                 resetFilterPanel: true,
                             });
                             this.resetRoadSyntaxState();
+                            this.resetPopulationAnalysisState({ keepMeta: true });
                             this.poiStatus = '';
                             this.clearH3Grid();
                         }
@@ -217,6 +231,7 @@
                                 this.clearScopePolygonsFromMap();
                             }
                             this.resetRoadSyntaxState();
+                            this.resetPopulationAnalysisState({ keepMeta: true });
                             this.lastIsochroneGeoJSON = null;
                             this.clearH3Grid();
                         }

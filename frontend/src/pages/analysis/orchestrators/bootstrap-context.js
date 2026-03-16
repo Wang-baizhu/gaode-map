@@ -7,6 +7,7 @@ import { createAnalysisPoiRuntimeInitialState, createAnalysisPoiRuntimeMethods }
 import { createAnalysisHistoryListInitialState, createAnalysisHistoryListMethods } from '../../../features/history/list'
 import { createAnalysisHistoryInitialState, createAnalysisHistoryMethods } from '../../../features/history/restore'
 import { createAnalysisH3InitialState, createAnalysisH3Methods } from '../../../features/h3/panel'
+import { createAnalysisPopulationInitialState, createAnalysisPopulationMethods } from '../../../features/population/panel'
 import { createAnalysisExportInitialState, createAnalysisExportMethods } from '../../../features/export/export-bundle'
 import { createRoadSyntaxUiMethods } from '../../../features/road/ui'
 import { createRoadSyntaxControllerCoreMethods } from '../../../features/road/controller-core'
@@ -18,6 +19,7 @@ import { createAnalysisInitialStateFromPinia } from '../../../stores/analysis/bo
 import { useAnalysisSessionStore, ANALYSIS_SESSION_STATE_KEYS } from '../../../stores/analysis/session'
 import { useAnalysisHistoryStore, ANALYSIS_HISTORY_STATE_KEYS } from '../../../stores/analysis/history'
 import { useAnalysisH3Store, ANALYSIS_H3_STATE_KEYS } from '../../../stores/analysis/h3'
+import { useAnalysisPopulationStore, ANALYSIS_POPULATION_STATE_KEYS } from '../../../stores/analysis/population'
 import { useAnalysisExportStore, ANALYSIS_EXPORT_STATE_KEYS } from '../../../stores/analysis/export'
 import { useAnalysisRoadStore, ANALYSIS_ROAD_STATE_KEYS } from '../../../stores/analysis/road'
 import { createStoreBackedComputed } from '../adapters/store-computed-bridge'
@@ -61,6 +63,8 @@ function createAnalysisBootstrapContext(options = {}) {
   const historyMethods = createAnalysisHistoryMethods()
   const buildAnalysisH3InitialState = () => createAnalysisH3InitialState()
   const h3Methods = createAnalysisH3Methods()
+  const buildAnalysisPopulationInitialState = () => createAnalysisPopulationInitialState()
+  const populationMethods = createAnalysisPopulationMethods()
   const buildAnalysisExportInitialState = () => createAnalysisExportInitialState()
   const exportMethods = createAnalysisExportMethods()
   const roadSyntaxUiMethods = createRoadSyntaxUiMethods(roadSyntaxConst)
@@ -102,6 +106,7 @@ function createAnalysisBootstrapContext(options = {}) {
     buildAnalysisHistoryListInitialState,
     buildAnalysisHistoryInitialState,
     buildAnalysisH3InitialState,
+    buildAnalysisPopulationInitialState,
     buildAnalysisExportInitialState,
     buildRoadSyntaxInitialState,
   })
@@ -109,12 +114,14 @@ function createAnalysisBootstrapContext(options = {}) {
   const sessionStore = useAnalysisSessionStore(pinia)
   const historyStore = useAnalysisHistoryStore(pinia)
   const h3Store = useAnalysisH3Store(pinia)
+  const populationStore = useAnalysisPopulationStore(pinia)
   const exportStore = useAnalysisExportStore(pinia)
   const roadStore = useAnalysisRoadStore(pinia)
   const storeBackedComputed = createStoreBackedComputed([
     { store: sessionStore, fieldKeys: ANALYSIS_SESSION_STATE_KEYS },
     { store: historyStore, fieldKeys: ANALYSIS_HISTORY_STATE_KEYS },
     { store: h3Store, fieldKeys: ANALYSIS_H3_STATE_KEYS },
+    { store: populationStore, fieldKeys: ANALYSIS_POPULATION_STATE_KEYS },
     { store: exportStore, fieldKeys: ANALYSIS_EXPORT_STATE_KEYS },
     { store: roadStore, fieldKeys: ANALYSIS_ROAD_STATE_KEYS },
   ])
@@ -134,6 +141,7 @@ function createAnalysisBootstrapContext(options = {}) {
       historyListMethods,
       historyMethods,
       h3Methods,
+      populationMethods,
       exportMethods,
       roadSyntaxOverlayCommitMethods,
       roadSyntaxControllerCoreMethods,

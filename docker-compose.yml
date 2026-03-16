@@ -27,6 +27,8 @@ services:
       - DEPTHMAPX_CLI_PATH=${DEPTHMAPX_CLI_PATH:-/usr/local/bin/depthmapXcli}
       - OVERPASS_ENDPOINT=${OVERPASS_ENDPOINT}
       - CITY_BOUNDARY_DIR=${CITY_BOUNDARY_DIR:-/mapdata/boundaries}
+      - POPULATION_DATA_DIR=${POPULATION_DATA_DIR:-/mapdata/population}
+      - POPULATION_PREVIEW_MAX_SIZE=${POPULATION_PREVIEW_MAX_SIZE:-2048}
       - PYTHONUNBUFFERED=1
     depends_on:
       - search
@@ -37,6 +39,7 @@ services:
       - .:/app
       - ./data:/app/data
       - "${CITY_BOUNDARY_HOST_DIR:-D:/MapData/boundaries}:/mapdata/boundaries:ro"
+      - "${POPULATION_DATA_HOST_DIR:-E:/PeopleData}:/mapdata/population:ro"
       - /app/.venv
       - /app/__pycache__
 

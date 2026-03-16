@@ -7,6 +7,7 @@ export const useAnalysisPoiStore = defineStore('analysis_poi', {
     step3NavItems: [
       { id: 'poi', label: 'POI', title: 'POI 点数据分析' },
       { id: 'h3', label: '网格', title: '网格分析' },
+      { id: 'population', label: '人口', title: '人口栅格分析' },
       { id: 'syntax', label: '路网', title: '路网分析' },
     ],
     activeStep3Panel: 'poi',

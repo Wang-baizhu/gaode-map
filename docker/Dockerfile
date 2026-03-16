@@ -5,10 +5,25 @@ WORKDIR /app
 ARG DEPTHMAPX_VERSION=v0.8.0
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y \
+RUN printf '%s\n' \
+    'Types: deb' \
+    'URIs: https://mirrors.tuna.tsinghua.edu.cn/debian' \
+    'Suites: trixie' \
+    'Components: main' \
+    'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
+    '' \
+    'Types: deb' \
+    'URIs: https://mirrors.tuna.tsinghua.edu.cn/debian-security' \
+    'Suites: trixie-security' \
+    'Components: main' \
+    'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
+    > /etc/apt/sources.list.d/debian.sources \
+    && apt-get update -o Acquire::Retries=3 \
+    && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     gcc \
+    libexpat1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install depthmapX CLI

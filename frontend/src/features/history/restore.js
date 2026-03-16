@@ -223,6 +223,7 @@
                 this.clearScopeOutlineDisplay();
                 this.drawnScopePolygon = [];
                 this.resetRoadSyntaxState();
+                this.resetPopulationAnalysisState({ keepMeta: true });
                 this.allPoisDetails = [];
 
                 if (data.params && data.params.center) {
