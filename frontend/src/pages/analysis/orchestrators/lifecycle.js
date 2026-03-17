@@ -67,6 +67,8 @@ function createAnalysisLifecycleHooks(options = {}) {
       this.cancelHistoryDetailLoading()
       this.disposePoiChart()
       this.disposeH3Charts()
+      this.disposePopulationCharts()
+      this.clearPopulationRasterDisplayOnLeave()
     },
     watch: {
       step(newStep, oldStep) {
@@ -100,8 +102,14 @@ function createAnalysisLifecycleHooks(options = {}) {
         if (oldPanel === 'h3' && newPanel !== 'h3') {
           this.clearH3GridDisplayOnLeave()
         }
+        if (oldPanel === 'population' && newPanel !== 'population') {
+          this.clearPopulationRasterDisplayOnLeave()
+        }
         if (newPanel === 'h3') {
           this.restoreH3GridDisplayOnEnter()
+        }
+        if (newPanel === 'population') {
+          this.ensurePopulationPanelEntryState()
         }
         this.$nextTick(() => {
           this.refreshPoiKdeOverlay()

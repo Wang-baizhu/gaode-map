@@ -1,6 +1,7 @@
 import { useAnalysisSessionStore } from './session'
 import { useAnalysisPoiStore } from './poi'
 import { useAnalysisH3Store } from './h3'
+import { useAnalysisPopulationStore } from './population'
 import { useAnalysisRoadStore } from './road'
 import { useAnalysisExportStore } from './export'
 import { useAnalysisHistoryStore } from './history'
@@ -15,6 +16,7 @@ export function createAnalysisInitialStateFromPinia(pinia, options = {}) {
     buildAnalysisHistoryListInitialState = () => ({}),
     buildAnalysisHistoryInitialState = () => ({}),
     buildAnalysisH3InitialState = () => ({}),
+    buildAnalysisPopulationInitialState = () => ({}),
     buildAnalysisExportInitialState = () => ({}),
     buildRoadSyntaxInitialState = () => ({}),
   } = options
@@ -22,6 +24,7 @@ export function createAnalysisInitialStateFromPinia(pinia, options = {}) {
   const sessionStore = useAnalysisSessionStore(pinia)
   const poiStore = useAnalysisPoiStore(pinia)
   const h3Store = useAnalysisH3Store(pinia)
+  const populationStore = useAnalysisPopulationStore(pinia)
   const roadStore = useAnalysisRoadStore(pinia)
   const exportStore = useAnalysisExportStore(pinia)
   const historyStore = useAnalysisHistoryStore(pinia)
@@ -29,6 +32,7 @@ export function createAnalysisInitialStateFromPinia(pinia, options = {}) {
   sessionStore.$reset()
   poiStore.$reset()
   h3Store.$reset()
+  populationStore.$reset()
   roadStore.$reset()
   exportStore.$reset()
   historyStore.$reset()
@@ -43,6 +47,7 @@ export function createAnalysisInitialStateFromPinia(pinia, options = {}) {
     ...buildAnalysisHistoryInitialState(),
   })
   h3Store.$patch(buildAnalysisH3InitialState())
+  populationStore.$patch(buildAnalysisPopulationInitialState())
   roadStore.$patch({
     roadSyntaxModulesReady,
     roadSyntaxModuleMissing: Array.isArray(roadSyntaxModuleMissing)

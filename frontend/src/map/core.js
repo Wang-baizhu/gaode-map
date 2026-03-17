@@ -56,6 +56,21 @@ import { MapUtils } from './utils'
         this._pluginPromise = null;
         this.poiHeatmap = null;
         this.poiHeatmapConfig = null;
+        this.populationRasterLayer = null;
+        this.populationRasterLayerMode = '';
+        this.populationRasterBounds = null;
+        this.populationRasterUrl = '';
+        this.populationRasterOpacity = 0.58;
+        this.populationRasterCanvas = null;
+        this.populationRasterContext = null;
+        this.populationRasterImage = null;
+        this.populationRasterClipPolygon = [];
+        this.populationPixelGridEnabled = false;
+        this.populationPixelGridFocus = null;
+        this.populationPixelGridWindowSize = 15;
+        this.populationPixelGridZoomThreshold = 16;
+        this.populationRasterRenderFrame = 0;
+        this.populationRasterListeners = [];
         this._amapTileLayer = null;
         this._osmTileLayer = null;
         this._tdtVecLayer = null;
@@ -131,6 +146,386 @@ import { MapUtils } from './utils'
         }
         this.poiHeatmap = null;
         this.poiHeatmapConfig = null;
+    };
+
+    MapCore.prototype.clearPopulationRasterOverlay = function () {
+        if (this.populationRasterRenderFrame && typeof window !== 'undefined' && window.cancelAnimationFrame) {
+            window.cancelAnimationFrame(this.populationRasterRenderFrame);
+        }
+        this.populationRasterRenderFrame = 0;
+        this._detachPopulationRasterListeners();
+        try {
+            if (this.populationRasterLayer && typeof this.populationRasterLayer.setMap === 'function') {
+                this.populationRasterLayer.setMap(null);
+            }
+        } catch (err) {
+            console.warn('[MapCore] clear population raster failed:', err);
+        }
+        if (this.populationRasterCanvas && this.populationRasterCanvas.parentNode) {
+            this.populationRasterCanvas.parentNode.removeChild(this.populationRasterCanvas);
+        }
+        this.populationRasterLayer = null;
+        this.populationRasterLayerMode = '';
+        this.populationRasterBounds = null;
+        this.populationRasterUrl = '';
+        this.populationRasterOpacity = 0.58;
+        this.populationRasterCanvas = null;
+        this.populationRasterContext = null;
+        this.populationRasterImage = null;
+        this.populationRasterClipPolygon = [];
+        this.populationPixelGridEnabled = false;
+        this.populationPixelGridFocus = null;
+    };
+
+    MapCore.prototype._detachPopulationRasterListeners = function () {
+        if (!this.map || !this.populationRasterListeners.length || typeof this.map.off !== 'function') {
+            this.populationRasterListeners = [];
+            return;
+        }
+        this.populationRasterListeners.forEach(function (item) {
+            try {
+                this.map.off(item.event, item.handler);
+            } catch (_) { }
+        }, this);
+        this.populationRasterListeners = [];
+    };
+
+    MapCore.prototype._attachPopulationRasterListeners = function () {
+        if (!this.map || typeof this.map.on !== 'function' || this.populationRasterListeners.length) return;
+        var self = this;
+        ['mapmove', 'zoomchange', 'resize'].forEach(function (eventName) {
+            var handler = function () {
+                self._schedulePopulationRasterRender();
+            };
+            try {
+                self.map.on(eventName, handler);
+                self.populationRasterListeners.push({ event: eventName, handler: handler });
+            } catch (_) { }
+        });
+    };
+
+    MapCore.prototype._getMapContainerNode = function () {
+        if (this.map && typeof this.map.getContainer === 'function') {
+            return this.map.getContainer();
+        }
+        if (typeof document === 'undefined') return null;
+        return document.getElementById(this.containerId);
+    };
+
+    MapCore.prototype._normalizePopulationClipPolygon = function (clipPolygon) {
+        var rings = [];
+        var appendRing = function (candidate) {
+            var normalized = this._normalizePathPoints(candidate, 3);
+            if (normalized.length < 3) return;
+            var first = normalized[0];
+            var last = normalized[normalized.length - 1];
+            if (!last || first[0] !== last[0] || first[1] !== last[1]) {
+                normalized = normalized.concat([[first[0], first[1]]]);
+            }
+            rings.push(normalized);
+        }.bind(this);
+
+        if (!Array.isArray(clipPolygon) || !clipPolygon.length) return rings;
+        if (this._normalizeLngLatPoint(clipPolygon[0])) {
+            appendRing(clipPolygon);
+            return rings;
+        }
+
+        clipPolygon.forEach(function (item) {
+            if (Array.isArray(item) && item.length && this._normalizeLngLatPoint(item[0])) {
+                appendRing(item);
+                return;
+            }
+            if (Array.isArray(item) && item.length && Array.isArray(item[0]) && item[0].length && this._normalizeLngLatPoint(item[0][0])) {
+                appendRing(item[0]);
+            }
+        }, this);
+        return rings;
+    };
+
+    MapCore.prototype._populationLngLatToPixel = function (pt) {
+        var pair = this._normalizeLngLatPoint(pt);
+        if (!pair || !this.map || typeof this.map.lngLatToContainer !== 'function' || !(window.AMap && AMap.LngLat)) {
+            return null;
+        }
+        try {
+            var pixel = this.map.lngLatToContainer(new AMap.LngLat(pair[0], pair[1]));
+            if (!pixel) return null;
+            var x = typeof pixel.getX === 'function' ? Number(pixel.getX()) : Number(pixel.x);
+            var y = typeof pixel.getY === 'function' ? Number(pixel.getY()) : Number(pixel.y);
+            if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+            return [x, y];
+        } catch (_) {
+            return null;
+        }
+    };
+
+    MapCore.prototype._syncPopulationRasterCanvas = function () {
+        var container = this._getMapContainerNode();
+        var canvas = this.populationRasterCanvas;
+        if (!container || !canvas) return null;
+        var width = Math.max(1, Math.round(container.clientWidth || container.offsetWidth || 0));
+        var height = Math.max(1, Math.round(container.clientHeight || container.offsetHeight || 0));
+        var dpr = (typeof window !== 'undefined' && window.devicePixelRatio) ? Math.max(1, window.devicePixelRatio) : 1;
+        var targetWidth = Math.max(1, Math.round(width * dpr));
+        var targetHeight = Math.max(1, Math.round(height * dpr));
+        if (canvas.width !== targetWidth) canvas.width = targetWidth;
+        if (canvas.height !== targetHeight) canvas.height = targetHeight;
+        canvas.style.width = width + 'px';
+        canvas.style.height = height + 'px';
+        return { width: width, height: height, dpr: dpr };
+    };
+
+    MapCore.prototype._drawPopulationPixelGrid = function (ctx, left, top, width, height) {
+        if (
+            !this.populationPixelGridEnabled
+            || !this.populationPixelGridFocus
+            || !this.populationRasterImage
+            || !this.map
+        ) {
+            return;
+        }
+
+        var zoom = typeof this.map.getZoom === 'function' ? Number(this.map.getZoom()) : 0;
+        if (!(zoom >= this.populationPixelGridZoomThreshold)) return;
+
+        var focusLngLat = this._normalizeLngLatPoint(this.populationPixelGridFocus);
+        var focusPixel = this._populationLngLatToPixel(focusLngLat);
+        if (!focusPixel) return;
+
+        var right = left + width;
+        var bottom = top + height;
+        if (focusPixel[0] < left || focusPixel[0] > right || focusPixel[1] < top || focusPixel[1] > bottom) {
+            return;
+        }
+
+        var imageWidth = Math.max(1, Math.round(Number(this.populationRasterImage.naturalWidth || this.populationRasterImage.width || 0)));
+        var imageHeight = Math.max(1, Math.round(Number(this.populationRasterImage.naturalHeight || this.populationRasterImage.height || 0)));
+        if (!(imageWidth > 0 && imageHeight > 0)) return;
+
+        var relativeX = (focusPixel[0] - left) / width;
+        var relativeY = (focusPixel[1] - top) / height;
+        if (!Number.isFinite(relativeX) || !Number.isFinite(relativeY)) return;
+
+        var focusCol = Math.max(0, Math.min(imageWidth - 1, Math.floor(relativeX * imageWidth)));
+        var focusRow = Math.max(0, Math.min(imageHeight - 1, Math.floor(relativeY * imageHeight)));
+        var windowSize = Math.max(3, Math.round(Number(this.populationPixelGridWindowSize) || 15));
+        if (windowSize % 2 === 0) windowSize += 1;
+        var halfWindow = Math.floor(windowSize / 2);
+        var startCol = Math.max(0, focusCol - halfWindow);
+        var endCol = Math.min(imageWidth - 1, focusCol + halfWindow);
+        var startRow = Math.max(0, focusRow - halfWindow);
+        var endRow = Math.min(imageHeight - 1, focusRow + halfWindow);
+
+        var projectX = function (colIndex) {
+            return left + (colIndex / imageWidth) * width;
+        };
+        var projectY = function (rowIndex) {
+            return top + (rowIndex / imageHeight) * height;
+        };
+        var crisp = function (value) {
+            return Math.round(value) + 0.5;
+        };
+
+        ctx.save();
+        ctx.beginPath();
+        for (var col = startCol; col <= endCol + 1; col += 1) {
+            var x = crisp(projectX(col));
+            ctx.moveTo(x, projectY(startRow));
+            ctx.lineTo(x, projectY(endRow + 1));
+        }
+        for (var row = startRow; row <= endRow + 1; row += 1) {
+            var y = crisp(projectY(row));
+            ctx.moveTo(projectX(startCol), y);
+            ctx.lineTo(projectX(endCol + 1), y);
+        }
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = 'rgba(255,255,255,0.34)';
+        ctx.stroke();
+
+        var cellLeft = projectX(focusCol);
+        var cellTop = projectY(focusRow);
+        var cellWidth = Math.max(1, projectX(focusCol + 1) - cellLeft);
+        var cellHeight = Math.max(1, projectY(focusRow + 1) - cellTop);
+        ctx.fillStyle = 'rgba(255,255,255,0.10)';
+        ctx.fillRect(cellLeft, cellTop, cellWidth, cellHeight);
+        ctx.lineWidth = 1.4;
+        ctx.strokeStyle = 'rgba(15,23,42,0.78)';
+        ctx.strokeRect(
+            crisp(cellLeft),
+            crisp(cellTop),
+            Math.max(0, Math.round(cellWidth) - 1),
+            Math.max(0, Math.round(cellHeight) - 1)
+        );
+        ctx.restore();
+    };
+
+    MapCore.prototype._renderPopulationRasterOverlay = function () {
+        this.populationRasterRenderFrame = 0;
+        if (!this.populationRasterCanvas || !this.populationRasterContext) return;
+        var canvasState = this._syncPopulationRasterCanvas();
+        if (!canvasState) return;
+
+        var ctx = this.populationRasterContext;
+        ctx.setTransform(canvasState.dpr, 0, 0, canvasState.dpr, 0, 0);
+        ctx.clearRect(0, 0, canvasState.width, canvasState.height);
+
+        if (!this.populationRasterImage || !this.populationRasterBounds || this.populationRasterBounds.length < 2) {
+            return;
+        }
+
+        var sw = this.populationRasterBounds[0];
+        var ne = this.populationRasterBounds[1];
+        var nwPixel = this._populationLngLatToPixel([sw[0], ne[1]]);
+        var sePixel = this._populationLngLatToPixel([ne[0], sw[1]]);
+        if (!nwPixel || !sePixel) return;
+
+        var left = Math.min(nwPixel[0], sePixel[0]);
+        var top = Math.min(nwPixel[1], sePixel[1]);
+        var width = Math.abs(sePixel[0] - nwPixel[0]);
+        var height = Math.abs(sePixel[1] - nwPixel[1]);
+        if (!(width > 0 && height > 0)) return;
+
+        if (this.populationRasterClipPolygon.length) {
+            ctx.save();
+            ctx.beginPath();
+            this.populationRasterClipPolygon.forEach(function (ring) {
+                var started = false;
+                (Array.isArray(ring) ? ring : []).forEach(function (pt) {
+                    var px = this._populationLngLatToPixel(pt);
+                    if (!px) return;
+                    if (!started) {
+                        ctx.moveTo(px[0], px[1]);
+                        started = true;
+                    } else {
+                        ctx.lineTo(px[0], px[1]);
+                    }
+                }, this);
+                if (started) ctx.closePath();
+            }, this);
+            try {
+                ctx.clip('evenodd');
+            } catch (_) {
+                ctx.clip();
+            }
+        }
+
+        ctx.globalAlpha = Math.max(0.05, Math.min(1, Number(this.populationRasterOpacity) || 0.58));
+        ctx.imageSmoothingEnabled = false;
+        ctx.mozImageSmoothingEnabled = false;
+        ctx.webkitImageSmoothingEnabled = false;
+        ctx.msImageSmoothingEnabled = false;
+        ctx.drawImage(this.populationRasterImage, left, top, width, height);
+        ctx.globalAlpha = 1;
+        this._drawPopulationPixelGrid(ctx, left, top, width, height);
+
+        if (this.populationRasterClipPolygon.length) {
+            ctx.restore();
+        }
+    };
+
+    MapCore.prototype._schedulePopulationRasterRender = function () {
+        if (this.populationRasterRenderFrame || typeof window === 'undefined' || !window.requestAnimationFrame) {
+            if (!this.populationRasterRenderFrame) {
+                this._renderPopulationRasterOverlay();
+            }
+            return;
+        }
+        var self = this;
+        this.populationRasterRenderFrame = window.requestAnimationFrame(function () {
+            self._renderPopulationRasterOverlay();
+        });
+    };
+
+    MapCore.prototype._ensurePopulationRasterLayer = function () {
+        if (this.populationRasterCanvas && this.populationRasterContext) return true;
+        if (typeof document === 'undefined') return false;
+
+        var canvas = document.createElement('canvas');
+        canvas.setAttribute('data-population-raster-canvas', '1');
+        canvas.style.pointerEvents = 'none';
+        canvas.style.position = 'absolute';
+        canvas.style.inset = '0';
+        canvas.style.zIndex = '104';
+
+        var context = canvas.getContext('2d');
+        if (!context) return false;
+
+        this.populationRasterCanvas = canvas;
+        this.populationRasterContext = context;
+        var container = this._getMapContainerNode();
+        if (!container) return false;
+        if (typeof window !== 'undefined' && window.getComputedStyle && window.getComputedStyle(container).position === 'static') {
+            container.style.position = 'relative';
+        }
+        // Keep the raster overlay fully in screen space. AMap.CustomLayer applies
+        // additional internal transforms during pan/zoom, which makes our local
+        // pixel-grid diagnostics drift away from the raster image.
+        container.appendChild(canvas);
+        this.populationRasterLayer = {
+            setMap: function (mapInstance) {
+                if (!mapInstance && canvas.parentNode) {
+                    canvas.parentNode.removeChild(canvas);
+                }
+            }
+        };
+        this.populationRasterLayerMode = 'dom';
+        this._attachPopulationRasterListeners();
+        return true;
+    };
+
+    MapCore.prototype.setPopulationRasterOverlay = function (options) {
+        if (!this.map) {
+            return { ok: false, reason: 'population_raster_layer_unavailable' };
+        }
+        var safe = options && typeof options === 'object' ? options : {};
+        var imageUrl = String(safe.imageUrl || '').trim();
+        var bounds = Array.isArray(safe.bounds) ? safe.bounds : [];
+        if (!imageUrl || bounds.length < 2) {
+            this.clearPopulationRasterOverlay();
+            return { ok: false, reason: 'population_raster_payload_invalid' };
+        }
+        var sw = this._normalizeLngLatPoint(bounds[0]);
+        var ne = this._normalizeLngLatPoint(bounds[1]);
+        if (!sw || !ne) {
+            this.clearPopulationRasterOverlay();
+            return { ok: false, reason: 'population_raster_bounds_invalid' };
+        }
+        var opacity = Math.max(0.05, Math.min(1, Number(safe.opacity) || 0.58));
+        var clipPolygon = this._normalizePopulationClipPolygon(safe.clipPolygon);
+        var pixelGridEnabled = !!safe.pixelGridEnabled;
+        var pixelGridFocus = this._normalizeLngLatPoint(safe.pixelGridFocus);
+
+        if (!this.populationRasterLayer && !this._ensurePopulationRasterLayer()) {
+            this.clearPopulationRasterOverlay();
+            return { ok: false, reason: 'population_raster_layer_unavailable' };
+        }
+
+        this.populationRasterBounds = [sw, ne];
+        this.populationRasterOpacity = opacity;
+        this.populationRasterClipPolygon = clipPolygon;
+        this.populationPixelGridEnabled = pixelGridEnabled;
+        this.populationPixelGridFocus = pixelGridFocus;
+
+        var shouldReloadImage = this.populationRasterUrl !== imageUrl || !this.populationRasterImage;
+        this.populationRasterUrl = imageUrl;
+        if (shouldReloadImage) {
+            var self = this;
+            var image = new Image();
+            image.crossOrigin = 'anonymous';
+            image.onload = function () {
+                if (self.populationRasterUrl !== imageUrl) return;
+                self.populationRasterImage = image;
+                self._schedulePopulationRasterRender();
+            };
+            image.onerror = function (err) {
+                console.warn('[MapCore] population raster image load failed:', err);
+            };
+            image.src = imageUrl;
+            this.populationRasterImage = image.complete ? image : null;
+        }
+        this._schedulePopulationRasterRender();
+        return { ok: true };
     };
 
     MapCore.prototype.renderPoiHeatmap = function (points, options) {

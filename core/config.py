@@ -134,6 +134,16 @@ class Settings(BaseSettings):
         validation_alias="CITY_BOUNDARY_DIR",
         description="Directory containing local city boundary GeoJSON files",
     )
+    population_data_dir: str = Field(
+        str(Path(__file__).resolve().parent.parent / "runtime" / "population_data"),
+        validation_alias="POPULATION_DATA_DIR",
+        description="Directory containing population GeoTIFF files",
+    )
+    population_preview_max_size: int = Field(
+        2048,
+        validation_alias="POPULATION_PREVIEW_MAX_SIZE",
+        description="Maximum preview PNG size for population raster outputs",
+    )
 
     # ArcGIS HTTP bridge config
     arcgis_bridge_enabled: bool = Field(

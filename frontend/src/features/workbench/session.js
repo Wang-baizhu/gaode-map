@@ -16,6 +16,7 @@
                 this.poiAnalysisSubTab = 'kde';
                 this.poiKdeEnabled = false;
                 this.poiKdeStats = this.createEmptyPoiKdeStats();
+                this.populationSubTab = 'analysis';
                 this.scopeSource = '';
                 this.drawnScopePolygon = [];
                 this.lastIsochroneGeoJSON = null;
@@ -24,6 +25,7 @@
                 this.h3GridFeatures = [];
                 this.isGeneratingGrid = false;
                 this.resetH3AnalysisState();
+                this.resetPopulationAnalysisState({ keepMeta: true });
                 this.clearIsochroneDebugState();
 
                 this.clearPoiOverlayLayers({
@@ -34,10 +36,14 @@
                 });
                 this.clearPoiKdeOverlay();
                 this.resetRoadSyntaxState();
+                this.disposePopulationCharts();
 
                 if (this.mapCore) {
                     if (this.mapCore.clearGridPolygons) {
                         this.mapCore.clearGridPolygons();
+                    }
+                    if (this.mapCore.clearPopulationRasterOverlay) {
+                        this.mapCore.clearPopulationRasterOverlay();
                     }
                     this.mapCore.setRadius(0);
                 }
@@ -84,6 +90,7 @@
                 this.poiAnalysisSubTab = 'kde';
                 this.poiKdeEnabled = false;
                 this.poiKdeStats = this.createEmptyPoiKdeStats();
+                this.populationSubTab = 'analysis';
                 this.resultDataSource = this.normalizePoiSource(this.poiDataSource, 'local');
                 this.scopeSource = '';
                 this.drawnScopePolygon = [];
@@ -103,8 +110,10 @@
                 });
                 this.clearPoiKdeOverlay();
                 this.clearH3Grid();
+                this.resetPopulationAnalysisState({ keepMeta: true });
                 this.clearScopeOutlineDisplay();
                 this.disposePoiChart();
+                this.disposePopulationCharts();
                 this.applySimplifyConfig();
             },
         };

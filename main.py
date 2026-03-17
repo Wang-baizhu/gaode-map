@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 from core.config import settings
+from modules.population.runtime_check import run_population_runtime_check
 from router import admin_router, app_router
 from store import init_db
 import asyncio
@@ -39,6 +40,7 @@ async def lifespan(_: FastAPI):
 
     # 确保静态文件目录存在
     os.makedirs(settings.static_dir, exist_ok=True)
+    await asyncio.to_thread(run_population_runtime_check)
 
     try:
         yield
@@ -74,11 +76,17 @@ from core.exceptions import BizError
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc):
-    logger.error(f"Validation Error: {exc.body}")
+    body = exc.body
+    if isinstance(body, (bytes, bytearray)):
+        try:
+            body = body.decode("utf-8")
+        except Exception:
+            body = str(body)
+    logger.error(f"Validation Error: {body}")
     logger.error(f"Errors: {exc.errors()}")
     return JSONResponse(
         status_code=422,
-        content={"detail": exc.errors(), "body": exc.body},
+        content={"detail": exc.errors(), "body": body},
     )
 
 @app.exception_handler(BizError)
