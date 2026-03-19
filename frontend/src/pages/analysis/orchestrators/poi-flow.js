@@ -118,17 +118,16 @@ function createAnalysisPoiFlowOrchestratorMethods() {
           const first = fetchErrors[0]
           throw new Error(`本地源请求失败（${fetchErrors.length}/${totalCats} 分类）。示例：${first.category} -> ${first.error}`)
         }
-        this.poiStatus = `完成！共找到 ${totalFetched} 个结果`
+        this.poiStatus = ''
         if (fetchErrors.length > 0) {
           console.warn('[poi-fetch] partial category failures', fetchErrors)
-          this.poiStatus += `（${fetchErrors.length} 个分类失败，已输出到控制台）`
+          this.poiStatus = `抓取完成，但有 ${fetchErrors.length} 个分类失败（详见控制台）`
         }
 
         // Integration with Legacy Filter Panel (single render path).
         this.rebuildPoiRuntimeSystem(this.allPoisDetails)
 
         setTimeout(() => {
-          this.step = 3 // Advance to Step 3 after short delay to see 100%
           this.activeStep3Panel = 'poi'
           this.updatePoiCharts()
           this.resizePoiChart()
@@ -204,7 +203,7 @@ function createAnalysisPoiFlowOrchestratorMethods() {
         return
       }
 
-      // Otherwise, delay slightly for initial rendering (Step 3 panels use v-show)
+      // Otherwise, delay slightly for initial rendering (result panels use v-show)
       setTimeout(() => {
         const chart = this.initPoiChart()
         if (!chart) return

@@ -241,90 +241,10 @@
                         </div>
                     </div>
 
-                    <!-- Step 2: POI Categories -->
-                    <div v-show="step === 2" class="wizard-step">
+                    <!-- Step 2: Results & Filter -->
+                    <div v-show="step === 2" class="wizard-step wizard-step-step3">
                         <div class="step-header-nav">
-                            <button class="btn-text-back" @click="goToStep(1)">← 返回</button>
-                            <h3>2. 选择业态</h3>
-                        </div>
-                        <p class="step-desc">选择需要在等时圈内抓取的设施类型</p>
-
-                        <div class="category-grid">
-                            <div v-for="cat in poiCategories" :key="cat.id" class="cat-card" :class="{checked: cat.checked}">
-                                <div class="cat-color" :style="{background: cat.color}"></div>
-                                <div class="cat-texts">
-                                    <div class="cat-header-row">
-                                        <label class="cat-check" @click.stop>
-                                            <input type="checkbox" :checked="cat.checked"
-                                                @change="togglePoiCategory(cat, $event.target.checked)">
-                                            <span class="cat-name">{{ cat.name }}</span>
-                                        </label>
-                                        <button v-if="getPoiSubItems(cat.id).length" type="button" class="cat-expand-btn"
-                                            @click.stop="togglePoiCategoryExpand(cat.id)">
-                                            {{ expandedPoiCategoryId === cat.id ? '收起' : '展开' }}
-                                        </button>
-                                    </div>
-                                    <div class="cat-subtypes" v-if="getPoiSubItems(cat.id).length">
-                                        已选 {{ getPoiSubSelectedCount(cat.id) }}/{{ getPoiSubItems(cat.id).length }} 个小类
-                                    </div>
-                                    <div class="cat-subitem-list" v-show="expandedPoiCategoryId === cat.id"
-                                        v-if="getPoiSubItems(cat.id).length">
-                                        <label v-for="item in getPoiSubItems(cat.id)" :key="`step2-sub-${cat.id}-${item.id}`"
-                                            class="cat-subitem" @click.stop>
-                                            <input type="checkbox" :checked="isPoiSubItemChecked(item.id)"
-                                                @change="onPoiSubItemToggle(cat, item, $event.target.checked)">
-                                            <span>{{ item.label }}</span>
-                                        </label>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="form-group" style="display:flex; align-items:center; gap:8px;">
-                            <label style="margin:0;">数据来源</label>
-                            <select v-model="poiDataSource" class="minimal-input"
-                                style="padding:4px 8px; max-width:180px;">
-                                <option value="local">本地源（2018年）</option>
-                                <option value="gaode">高德源</option>
-                            </select>
-                        </div>
-
-                        <button class="btn-black" :disabled="isFetchingPois" @click="fetchPois">
-                            {{ isFetchingPois ? '数据抓取中 ' + fetchProgress + '%' : '下一步: 抓取数据' }}
-                        </button>
-
-                        <div v-if="isFetchingPois"
-                            style="margin-top:10px; background:#f0f0f0; height:6px; border-radius:3px; overflow:hidden;">
-                            <div
-                                :style="{width: fetchProgress + '%', background:'#000', height:'100%', transition:'width 0.3s ease'}">
-                            </div>
-                        </div>
-                        <div v-if="isFetchingPois && fetchSubtypeProgress.categoryName" class="fetch-subtype-progress">
-                            <div class="line">
-                                <span class="label">当前大类：</span>
-                                <span>{{ fetchSubtypeProgress.categoryName }}</span>
-                            </div>
-                            <div class="line">
-                                <span class="label">已命中小类：</span>
-                                <template v-if="fetchSubtypeProgress.typeNamesPreview.length">
-                                    <span>{{ fetchSubtypeProgress.typeNamesPreview.join('、') }}</span>
-                                    <span v-if="fetchSubtypeProgress.hiddenTypeCount > 0">
-                                         等{{ fetchSubtypeProgress.typeNamesFullCount }}个小类
-                                    </span>
-                                </template>
-                                <template v-else>
-                                    <span>暂无</span>
-                                </template>
-                            </div>
-                        </div>
-
-                        <div v-if="poiStatus" class="status-text">{{ poiStatus }}</div>
-                    </div>
-
-                    <!-- Step 3: Results & Filter -->
-                    <div v-show="step === 3" class="wizard-step wizard-step-step3">
-                        <div class="step-header-nav">
-                            <h3>3. 结果分析</h3>
+                            <h3>2. 结果分析</h3>
                             <span class="count-badge" style="margin-left:10px;">
                                 数据源 {{ getPoiSourceLabel(resultDataSource) }}
                             </span>
@@ -350,13 +270,19 @@
                                     <div class="poi-panel-topbar">
                                         <div class="h3-subtabs h3-stage-tabs poi-stage-tabs">
                                             <button type="button" class="h3-subtab-pill h3-stage-pill"
+                                                :class="{ active: poiSubTab === 'load' }"
+                                                @click="setPoiSubTab('load')">抓取</button>
+                                            <button type="button" class="h3-subtab-pill h3-stage-pill"
                                                 :class="{ active: poiSubTab === 'category' }"
                                                 @click="setPoiSubTab('category')">分类</button>
                                             <button type="button" class="h3-subtab-pill h3-stage-pill"
                                                 :class="{ active: poiSubTab === 'analysis' }"
                                                 @click="setPoiSubTab('analysis')">分析</button>
+                                            <button type="button" class="h3-subtab-pill h3-stage-pill"
+                                                :class="{ active: poiSubTab === 'grid' }"
+                                                @click="setPoiSubTab('grid')">网格</button>
                                         </div>
-                                        <div class="poi-panel-header">
+                                        <div class="poi-panel-header" v-show="poiSubTab !== 'grid'">
                                             <div class="poi-panel-actions">
                                                 <span id="poiTotalCount" class="count-badge">总数 0</span>
                                                 <button v-show="poiSubTab === 'category'" id="toggleAllPoi" type="button"
@@ -364,12 +290,84 @@
                                                 <button v-show="poiSubTab === 'category'" id="toggleExpandAll" class="btn-outline btn-compact">全部展开</button>
                                             </div>
                                         </div>
-                                        <div v-if="shouldShowPoiPanelStatus()" class="poi-panel-status" :class="{ 'is-loading': isHistoryPoiRestoring() }">
+                                        <div v-if="poiSubTab !== 'grid' && shouldShowPoiPanelStatus()" class="poi-panel-status" :class="{ 'is-loading': isHistoryPoiRestoring() }">
                                             <span v-if="isHistoryPoiRestoring()" class="poi-panel-status-dot"></span>
                                             <span>{{ getPoiPanelStatusText() }}</span>
                                         </div>
                                     </div>
+                                    <div v-show="poiSubTab === 'load'" class="poi-subpanel">
+                                        <div class="category-grid">
+                                            <div v-for="cat in poiCategories" :key="cat.id" class="cat-card" :class="{checked: cat.checked}">
+                                                <div class="cat-color" :style="{background: cat.color}"></div>
+                                                <div class="cat-texts">
+                                                    <div class="cat-header-row">
+                                                        <label class="cat-check" @click.stop>
+                                                            <input type="checkbox" :checked="cat.checked"
+                                                                @change="togglePoiCategory(cat, $event.target.checked)">
+                                                            <span class="cat-name">{{ cat.name }}</span>
+                                                        </label>
+                                                        <button v-if="getPoiSubItems(cat.id).length" type="button" class="cat-expand-btn"
+                                                            @click.stop="togglePoiCategoryExpand(cat.id)">
+                                                            {{ expandedPoiCategoryId === cat.id ? '收起' : '展开' }}
+                                                        </button>
+                                                    </div>
+                                                    <div class="cat-subtypes" v-if="getPoiSubItems(cat.id).length">
+                                                        已选 {{ getPoiSubSelectedCount(cat.id) }}/{{ getPoiSubItems(cat.id).length }} 个小类
+                                                    </div>
+                                                    <div class="cat-subitem-list" v-show="expandedPoiCategoryId === cat.id"
+                                                        v-if="getPoiSubItems(cat.id).length">
+                                                        <label v-for="item in getPoiSubItems(cat.id)" :key="`step2-sub-${cat.id}-${item.id}`"
+                                                            class="cat-subitem" @click.stop>
+                                                            <input type="checkbox" :checked="isPoiSubItemChecked(item.id)"
+                                                                @change="onPoiSubItemToggle(cat, item, $event.target.checked)">
+                                                            <span>{{ item.label }}</span>
+                                                        </label>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div class="form-group" style="display:flex; align-items:center; gap:8px;">
+                                            <label style="margin:0;">数据来源</label>
+                                            <select v-model="poiDataSource" class="minimal-input"
+                                                style="padding:4px 8px; max-width:180px;">
+                                                <option value="local">本地源（2018年）</option>
+                                                <option value="gaode">高德源</option>
+                                            </select>
+                                        </div>
+
+                                        <button class="btn-black" :disabled="isFetchingPois" @click="fetchPois">
+                                            {{ isFetchingPois ? '数据抓取中 ' + fetchProgress + '%' : '开始抓取 POI' }}
+                                        </button>
+
+                                        <div v-if="isFetchingPois"
+                                            style="margin-top:10px; background:#f0f0f0; height:6px; border-radius:3px; overflow:hidden;">
+                                            <div
+                                                :style="{width: fetchProgress + '%', background:'#000', height:'100%', transition:'width 0.3s ease'}">
+                                            </div>
+                                        </div>
+                                        <div v-if="isFetchingPois && fetchSubtypeProgress.categoryName" class="fetch-subtype-progress">
+                                            <div class="line">
+                                                <span class="label">当前大类：</span>
+                                                <span>{{ fetchSubtypeProgress.categoryName }}</span>
+                                            </div>
+                                            <div class="line">
+                                                <span class="label">已命中小类：</span>
+                                                <template v-if="fetchSubtypeProgress.typeNamesPreview.length">
+                                                    <span>{{ fetchSubtypeProgress.typeNamesPreview.join('、') }}</span>
+                                                    <span v-if="fetchSubtypeProgress.hiddenTypeCount > 0">
+                                                         等{{ fetchSubtypeProgress.typeNamesFullCount }}个小类
+                                                    </span>
+                                                </template>
+                                                <template v-else>
+                                                    <span>暂无</span>
+                                                </template>
+                                            </div>
+                                        </div>
+                                    </div>
+
                                     <div v-show="poiSubTab === 'category'" class="poi-subpanel">
+                                        <p class="step-desc">按分类查看与筛选已加载的 POI</p>
                                         <div id="filtersContainer" class="poi-filters-wrapper"></div>
                                     </div>
                                     <div v-show="poiSubTab === 'analysis'" class="poi-subpanel poi-kde-panel">
@@ -437,73 +435,7 @@
                                             <div v-else class="panel-placeholder">当前没有可用于统计的 POI。</div>
                                         </div>
                                     </div>
-                                </div>
-
-                                <div class="panel poi-panel" v-show="activeStep3Panel === 'population'">
-                                    <div class="poi-subpanel">
-                                        <div v-if="!populationGrid || !populationGrid.features || !populationGrid.features.length" class="panel-placeholder" style="margin-top:10px;">
-                                            先在步骤一生成分析范围。
-                                        </div>
-                                        <div v-if="populationOverview" class="h3-subtabs population-view-tabs">
-                                            <button type="button" class="h3-subtab-pill"
-                                                :class="{ active: populationAnalysisView === 'density' }"
-                                                @click="setPopulationAnalysisView('density')">密度</button>
-                                            <button type="button" class="h3-subtab-pill"
-                                                :class="{ active: populationAnalysisView === 'sex' }"
-                                                @click="setPopulationAnalysisView('sex')">性别结构</button>
-                                            <button type="button" class="h3-subtab-pill"
-                                                :class="{ active: populationAnalysisView === 'age' }"
-                                                @click="setPopulationAnalysisView('age')">年龄</button>
-                                        </div>
-                                        <div v-if="populationOverview" class="population-view-control-row">
-                                            <label v-if="populationAnalysisView === 'sex'" class="population-inline-field">
-                                                <span>地图图层</span>
-                                                <select v-model="populationSexMetricMode" @change="onPopulationSexMetricModeChange" class="h3-params-select">
-                                                    <option value="ratio">性别占比（%）</option>
-                                                    <option value="diff">性别差异（人）</option>
-                                                </select>
-                                            </label>
-                                        </div>
-                                        <div v-if="populationLayer && populationLayer.legend" class="population-legend-card" style="margin-top:10px;">
-                                            <div class="population-legend-title">
-                                                {{ populationLayer.legend.title }}
-                                                <span style="color:#6b7280; font-weight:400;">
-                                                    {{ populationLayer.legend.unit ? `（${populationLayer.legend.unit}）` : '' }}
-                                                </span>
-                                            </div>
-                                            <div v-if="populationLayer.legend.kind !== 'categorical'" class="population-legend-gradient" :style="getPopulationLegendGradientStyle()"></div>
-                                            <div class="population-legend-grid">
-                                                <div v-for="(item, idx) in populationLayer.legend.stops" :key="`population-legend-${idx}`"
-                                                    class="population-legend-item">
-                                                    <span class="population-legend-swatch"
-                                                        :style="{ background:item.color }"></span>
-                                                    <span>
-                                                        {{ item.label || (populationLayer.legend.unit === '人/平方公里'
-                                                            ? formatPopulationDensity(item.value)
-                                                            : (populationLayer.legend.unit === '%'
-                                                                ? formatPopulationLegendPercent(item.value)
-                                                                : formatPopulationValue(item.value))) }}
-                                                    </span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div v-if="populationOverview" class="population-analysis-grid" style="margin-top:10px;">
-                                            <div v-for="row in getPopulationSummaryRows()" :key="`population-card-${row.key}`" class="population-analysis-card">
-                                                <div class="population-analysis-card-label">{{ row.label }}</div>
-                                                <div class="population-analysis-card-value">{{ row.value }}</div>
-                                            </div>
-                                        </div>
-                                        <div v-if="populationOverview" style="margin-top:10px;">
-                                            <div id="populationPrimaryChart" :style="{ height: populationAnalysisView === 'age' ? '240px' : '200px' }"></div>
-                                            <div v-if="populationAnalysisView !== 'age'" id="populationSecondaryChart" style="height:220px; margin-top:8px;"></div>
-                                        </div>
-                                        <div v-else class="panel-placeholder" style="margin-top:10px;">
-                                            {{ isComputingPopulation ? '正在自动计算人口分析...' : '进入人口面板后会自动计算并展示结果。' }}
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div class="panel" v-show="activeStep3Panel === 'h3'">
+                                <div class="poi-subpanel poi-grid-subpanel" v-show="poiSubTab === 'grid'">
                                     <div class="h3-subtabs h3-stage-tabs">
                                         <button type="button" class="h3-subtab-pill h3-stage-pill"
                                             :class="{ active: h3MainStage === 'params' }"
@@ -909,6 +841,72 @@
                                         </button>
                                     </div>
                                 </div>
+                                </div>
+
+                                <div class="panel poi-panel" v-show="activeStep3Panel === 'population'">
+                                    <div class="poi-subpanel">
+                                        <div v-if="!populationGrid || !populationGrid.features || !populationGrid.features.length" class="panel-placeholder" style="margin-top:10px;">
+                                            先在步骤一生成分析范围。
+                                        </div>
+                                        <div v-if="populationOverview" class="h3-subtabs population-view-tabs">
+                                            <button type="button" class="h3-subtab-pill"
+                                                :class="{ active: populationAnalysisView === 'density' }"
+                                                @click="setPopulationAnalysisView('density')">密度</button>
+                                            <button type="button" class="h3-subtab-pill"
+                                                :class="{ active: populationAnalysisView === 'sex' }"
+                                                @click="setPopulationAnalysisView('sex')">性别结构</button>
+                                            <button type="button" class="h3-subtab-pill"
+                                                :class="{ active: populationAnalysisView === 'age' }"
+                                                @click="setPopulationAnalysisView('age')">年龄</button>
+                                        </div>
+                                        <div v-if="populationOverview" class="population-view-control-row">
+                                            <label v-if="populationAnalysisView === 'sex'" class="population-inline-field">
+                                                <span>地图图层</span>
+                                                <select v-model="populationSexMetricMode" @change="onPopulationSexMetricModeChange" class="h3-params-select">
+                                                    <option value="ratio">性别占比（%）</option>
+                                                    <option value="diff">性别差异（人）</option>
+                                                </select>
+                                            </label>
+                                        </div>
+                                        <div v-if="populationLayer && populationLayer.legend" class="population-legend-card" style="margin-top:10px;">
+                                            <div class="population-legend-title">
+                                                {{ populationLayer.legend.title }}
+                                                <span style="color:#6b7280; font-weight:400;">
+                                                    {{ populationLayer.legend.unit ? `（${populationLayer.legend.unit}）` : '' }}
+                                                </span>
+                                            </div>
+                                            <div v-if="populationLayer.legend.kind !== 'categorical'" class="population-legend-gradient" :style="getPopulationLegendGradientStyle()"></div>
+                                            <div class="population-legend-grid">
+                                                <div v-for="(item, idx) in populationLayer.legend.stops" :key="`population-legend-${idx}`"
+                                                    class="population-legend-item">
+                                                    <span class="population-legend-swatch"
+                                                        :style="{ background:item.color }"></span>
+                                                    <span>
+                                                        {{ item.label || (populationLayer.legend.unit === '人/平方公里'
+                                                            ? formatPopulationDensity(item.value)
+                                                            : (populationLayer.legend.unit === '%'
+                                                                ? formatPopulationLegendPercent(item.value)
+                                                                : formatPopulationValue(item.value))) }}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div v-if="populationOverview" class="population-analysis-grid" style="margin-top:10px;">
+                                            <div v-for="row in getPopulationSummaryRows()" :key="`population-card-${row.key}`" class="population-analysis-card">
+                                                <div class="population-analysis-card-label">{{ row.label }}</div>
+                                                <div class="population-analysis-card-value">{{ row.value }}</div>
+                                            </div>
+                                        </div>
+                                        <div v-if="populationOverview" style="margin-top:10px;">
+                                            <div id="populationPrimaryChart" :style="{ height: populationAnalysisView === 'age' ? '240px' : '200px' }"></div>
+                                            <div v-if="populationAnalysisView !== 'age'" id="populationSecondaryChart" style="height:220px; margin-top:8px;"></div>
+                                        </div>
+                                        <div v-else class="panel-placeholder" style="margin-top:10px;">
+                                            {{ isComputingPopulation ? '正在自动计算人口分析...' : '进入人口面板后会自动计算并展示结果。' }}
+                                        </div>
+                                    </div>
+                                </div>
+
 
                                 <div class="panel" v-show="activeStep3Panel === 'syntax'">
                                     <h4>路网分析</h4>

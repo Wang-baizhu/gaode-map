@@ -129,7 +129,13 @@ function createAnalysisPopulationMethods() {
   return {
     createPopulationFallbackMeta,
     isPopulationPanelActive() {
-      return this.step === 3 && this.activeStep3Panel === 'population'
+      return this.step === 2 && this.activeStep3Panel === 'population'
+    },
+    isPopulationDisplayActive() {
+      return this.step === 2 && (
+        this.isPopulationPanelActive()
+        || (typeof this.hasSimplifyDisplayTarget === 'function' && this.hasSimplifyDisplayTarget('population'))
+      )
     },
     setPopulationAnalysisView(view) {
       const nextView = ['density', 'sex', 'age'].includes(String(view || '').trim().toLowerCase())
@@ -851,7 +857,7 @@ function createAnalysisPopulationMethods() {
       }
     },
     restorePopulationRasterDisplayOnEnter() {
-      if (!this.isPopulationPanelActive()) return
+      if (!this.isPopulationDisplayActive()) return
       this.applyPopulationGridToMap()
     },
     buildPopulationStyledFeatures() {
@@ -936,7 +942,7 @@ function createAnalysisPopulationMethods() {
         if (!this.populationOverview && this.populationGridCount <= 0) {
           this.populationStatus = '当前范围没有可用人口格子'
         }
-        if (this.isPopulationPanelActive()) {
+        if (this.isPopulationDisplayActive()) {
           this.applyPopulationGridToMap()
         }
         return data
@@ -1035,7 +1041,7 @@ function createAnalysisPopulationMethods() {
         this.populationScopeId = String(sexLayer.scope_id || this.populationScopeId || '')
         this.populationLayer = sexLayer
         this.populationStatus = `人口分析完成：${this.getPopulationSexMetricLabel(this.populationSexMetricMode)}已更新`
-        if (this.isPopulationPanelActive()) {
+        if (this.isPopulationDisplayActive()) {
           this.applyPopulationGridToMap()
         }
         this.$nextTick(() => {
@@ -1059,7 +1065,7 @@ function createAnalysisPopulationMethods() {
       this.populationLayer = layer
       const selected = layer.selected || {}
       this.populationStatus = `人口分析完成：${selected.view_label || '人口图层'}已更新`
-      if (this.isPopulationPanelActive()) {
+      if (this.isPopulationDisplayActive()) {
         this.applyPopulationGridToMap()
       }
       this.$nextTick(() => {

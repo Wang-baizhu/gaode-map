@@ -53,22 +53,66 @@
                 }
             },
             setPoiSubTab(tab) {
-                const nextTab = String(tab || '').trim().toLowerCase() === 'analysis' ? 'analysis' : 'category';
+                const normalized = String(tab || '').trim().toLowerCase();
+                let nextTab = 'category';
+                if (normalized === 'analysis') nextTab = 'analysis';
+                if (normalized === 'load') nextTab = 'load';
+                if (normalized === 'grid') nextTab = 'grid';
                 if (this.poiSubTab === nextTab && this.poiKdeEnabled === (nextTab === 'analysis')) {
                     return;
                 }
+                const prevTab = String(this.poiSubTab || '').trim().toLowerCase();
                 this.poiSubTab = nextTab;
                 if (nextTab === 'analysis' && !['kde', 'stats'].includes(String(this.poiAnalysisSubTab || ''))) {
                     this.poiAnalysisSubTab = 'kde';
                 }
                 this.poiKdeEnabled = nextTab === 'analysis';
+                if (typeof this.autoEnableDisplayTargetsForPanel === 'function') {
+                    this.autoEnableDisplayTargetsForPanel('poi', { openPoiGrid: nextTab === 'grid' });
+                }
                 this.applySimplifyPointVisibility();
                 this.$nextTick(() => {
                     if (nextTab === 'category') {
+                        if (
+                            prevTab === 'grid'
+                            && typeof this.clearH3GridDisplayOnLeave === 'function'
+                            && !(typeof this.hasSimplifyDisplayTarget === 'function' && this.hasSimplifyDisplayTarget('h3'))
+                        ) {
+                            this.clearH3GridDisplayOnLeave();
+                        }
                         this.updatePoiCharts();
                         setTimeout(() => this.resizePoiChart(), 0);
-                    } else {
+                    } else if (nextTab === 'analysis') {
+                        if (
+                            prevTab === 'grid'
+                            && typeof this.clearH3GridDisplayOnLeave === 'function'
+                            && !(typeof this.hasSimplifyDisplayTarget === 'function' && this.hasSimplifyDisplayTarget('h3'))
+                        ) {
+                            this.clearH3GridDisplayOnLeave();
+                        }
                         this.recomputePoiKdeStats();
+                    } else if (nextTab === 'grid') {
+                        if (typeof this.syncH3PoiFilterSelection === 'function') {
+                            this.syncH3PoiFilterSelection(false);
+                        }
+                        if (typeof this.ensureH3PanelEntryState === 'function') {
+                            this.ensureH3PanelEntryState();
+                        }
+                        if (typeof this.restoreH3GridDisplayOnEnter === 'function') {
+                            this.restoreH3GridDisplayOnEnter();
+                        }
+                        if (typeof this.updateH3Charts === 'function') {
+                            this.updateH3Charts();
+                        }
+                        if (typeof this.updateDecisionCards === 'function') {
+                            this.updateDecisionCards();
+                        }
+                    } else if (
+                        prevTab === 'grid'
+                        && typeof this.clearH3GridDisplayOnLeave === 'function'
+                        && !(typeof this.hasSimplifyDisplayTarget === 'function' && this.hasSimplifyDisplayTarget('h3'))
+                    ) {
+                        this.clearH3GridDisplayOnLeave();
                     }
                     this.refreshPoiKdeOverlay();
                 });

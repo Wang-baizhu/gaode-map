@@ -14,7 +14,8 @@
             isGeneratingH3ArcgisSnapshot: false,
             h3BasemapMuted: false,
             h3SimplifyMenuOpen: false,
-            h3SimplifyTargets: [],
+            h3SimplifyTargets: ['map', 'isochrone', 'drawn_polygon', 'poi'],
+            h3SimplifyTargetsInitialized: false,
             h3GridFeatures: [],
             selectedH3Id: null,
             isComputingH3Analysis: false,
@@ -213,26 +214,67 @@
                 if (this.mapCore && this.mapCore.clearGridPolygons) {
                     this.mapCore.clearGridPolygons();
                 }
+                this.applySimplifyConfig();
             },
             isH3PanelActive() {
-                return this.step === 3 && this.activeStep3Panel === 'h3';
+                const activePanel = String(this.activeStep3Panel || '');
+                const poiSubTab = String(this.poiSubTab || '').trim().toLowerCase();
+                return this.step === 2 && activePanel === 'poi' && poiSubTab === 'grid';
+            },
+            isH3DisplayActive() {
+                return this.step === 2 && (this.isH3PanelActive() || this.hasSimplifyDisplayTarget('h3'));
+            },
+            getDefaultSimplifyTargets() {
+                return ['map', 'isochrone', 'drawn_polygon', 'poi'];
+            },
+            hasSimplifyDisplayTarget(target) {
+                const key = String(target || '').trim().toLowerCase();
+                if (!key) return false;
+                return this.normalizeSimplifyTargets().includes(key);
+            },
+            enableSimplifyDisplayTarget(target, enabled = true, options = {}) {
+                const key = String(target || '').trim().toLowerCase();
+                if (!key) return;
+                const next = this.normalizeSimplifyTargets().slice();
+                const existingIndex = next.indexOf(key);
+                if (enabled) {
+                    if (existingIndex < 0) next.push(key);
+                } else if (existingIndex >= 0) {
+                    next.splice(existingIndex, 1);
+                }
+
+                if (enabled && key === 'h3') {
+                    const populationIndex = next.indexOf('population');
+                    if (populationIndex >= 0) next.splice(populationIndex, 1);
+                } else if (enabled && key === 'population') {
+                    const h3Index = next.indexOf('h3');
+                    if (h3Index >= 0) next.splice(h3Index, 1);
+                }
+
+                this.h3SimplifyTargets = next;
+                this.h3SimplifyTargetsInitialized = true;
+                if (!options || options.apply !== false) {
+                    this.applySimplifyConfig();
+                }
             },
             clearH3GridDisplayOnLeave() {
                 if (!this.mapCore || typeof this.mapCore.clearGridPolygons !== 'function') return;
                 this.mapCore.clearGridPolygons();
             },
             restoreH3GridDisplayOnEnter() {
-                if (!this.isH3PanelActive()) return;
+                if (!this.isH3DisplayActive()) return;
                 if (!this.mapCore) return;
                 const shouldRenderAnalysis = this.h3MainStage !== 'params'
                     && Array.isArray(this.h3AnalysisGridFeatures)
                     && this.h3AnalysisGridFeatures.length > 0;
                 if (shouldRenderAnalysis) {
                     this.renderH3BySubTab();
-                    this.$nextTick(() => {
-                        this.updateH3Charts();
-                        this.updateDecisionCards();
-                    });
+                    if (this.isH3PanelActive()) {
+                        this.$nextTick(() => {
+                            this.updateH3Charts();
+                            this.updateDecisionCards();
+                        });
+                    }
                     return;
                 }
                 const plainGridFeatures = Array.isArray(this.h3GridFeatures) && this.h3GridFeatures.length
@@ -310,16 +352,27 @@
                 if (this.shouldShowDrawnPolygonSimplifyOption()) {
                     options.push({ value: 'drawn_polygon', label: '手绘多边形' });
                 }
+                options.push(
+                    { value: 'poi', label: 'POI' },
+                    { value: 'h3', label: '网格(H3)' },
+                    { value: 'population', label: '人口' },
+                    { value: 'syntax', label: '路网' },
+                );
                 return options;
             },
             normalizeSimplifyTargets() {
                 const rawTargets = Array.isArray(this.h3SimplifyTargets) ? this.h3SimplifyTargets : [];
-                const allowed = new Set(this.getVisibleSimplifyOptions().map((item) => item.value));
+                const allowed = new Set(['map', 'isochrone', 'drawn_polygon', 'poi', 'h3', 'population', 'syntax']);
                 const normalized = [];
-                rawTargets.forEach((item) => {
+                const source = (!this.h3SimplifyTargetsInitialized && rawTargets.length === 0)
+                    ? this.getDefaultSimplifyTargets()
+                    : rawTargets;
+                source.forEach((item) => {
                     const key = String(item || '').trim().toLowerCase();
                     if (!allowed.has(key)) return;
                     if (normalized.indexOf(key) >= 0) return;
+                    if (key === 'h3' && normalized.includes('population')) return;
+                    if (key === 'population' && normalized.includes('h3')) return;
                     normalized.push(key);
                 });
                 const changed = (
@@ -328,6 +381,9 @@
                 );
                 if (changed) {
                     this.h3SimplifyTargets = normalized;
+                }
+                if (!this.h3SimplifyTargetsInitialized) {
+                    this.h3SimplifyTargetsInitialized = true;
                 }
                 return normalized;
             },
@@ -346,6 +402,14 @@
                 const existingIndex = next.indexOf(key);
                 if (checked) {
                     if (existingIndex < 0) next.push(key);
+                    if (key === 'h3') {
+                        const populationIndex = next.indexOf('population');
+                        if (populationIndex >= 0) next.splice(populationIndex, 1);
+                    }
+                    if (key === 'population') {
+                        const h3Index = next.indexOf('h3');
+                        if (h3Index >= 0) next.splice(h3Index, 1);
+                    }
                 } else if (existingIndex >= 0) {
                     next.splice(existingIndex, 1);
                 }
@@ -354,12 +418,48 @@
             },
             applySimplifyConfig() {
                 const targets = this.normalizeSimplifyTargets();
-                const muteMap = targets.indexOf('map') >= 0;
-                this.pointSimplifyEnabled = muteMap;
-                this.h3BasemapMuted = muteMap;
+                const showMap = targets.indexOf('map') >= 0;
+                this.pointSimplifyEnabled = !showMap;
+                this.h3BasemapMuted = !showMap;
+                if (String(this.activeStep3Panel || '') === 'syntax') {
+                    const showPoiInSyntax = targets.indexOf('poi') >= 0;
+                    if (showPoiInSyntax) {
+                        if (typeof this.resumePoiSystemAfterSyntax === 'function') {
+                            this.resumePoiSystemAfterSyntax();
+                        }
+                    } else if (typeof this.suspendPoiSystemForSyntax === 'function') {
+                        this.suspendPoiSystemForSyntax();
+                    }
+                }
                 this.applySimplifyBasemapStyle();
                 this.applySimplifyPointVisibility();
                 this.refreshScopeOutlineDisplay();
+                this.syncSimplifyResultLayerVisibility(targets);
+            },
+            syncSimplifyResultLayerVisibility(targets) {
+                const normalizedTargets = Array.isArray(targets) ? targets : this.normalizeSimplifyTargets();
+                const showH3 = normalizedTargets.indexOf('h3') >= 0;
+                const showPopulation = normalizedTargets.indexOf('population') >= 0;
+                const showSyntax = normalizedTargets.indexOf('syntax') >= 0;
+
+                if (showPopulation) {
+                    this.clearH3GridDisplayOnLeave();
+                    this.restorePopulationRasterDisplayOnEnter();
+                } else if (showH3) {
+                    this.clearPopulationRasterDisplayOnLeave();
+                    this.restoreH3GridDisplayOnEnter();
+                } else {
+                    this.clearH3GridDisplayOnLeave();
+                    this.clearPopulationRasterDisplayOnLeave();
+                }
+
+                if (showSyntax) {
+                    if (typeof this.resumeRoadSyntaxDisplay === 'function') {
+                        this.resumeRoadSyntaxDisplay();
+                    }
+                } else if (typeof this.suspendRoadSyntaxDisplay === 'function') {
+                    this.suspendRoadSyntaxDisplay();
+                }
             },
             extractIsochroneOutlinePaths() {
                 const feature = this.lastIsochroneGeoJSON || null;
@@ -387,17 +487,17 @@
                 const canClear = typeof this.mapCore.clearCustomPolygons === 'function';
                 const canSet = typeof this.mapCore.setCustomPolygons === 'function';
                 const targets = this.normalizeSimplifyTargets();
-                const hideDrawnPolygon = targets.indexOf('drawn_polygon') >= 0;
-                const hideIsochrone = targets.indexOf('isochrone') >= 0;
+                const showDrawnPolygon = targets.indexOf('drawn_polygon') >= 0;
+                const showIsochrone = targets.indexOf('isochrone') >= 0;
                 const paths = [];
 
-                if (!hideDrawnPolygon && this.shouldShowDrawnPolygonSimplifyOption()) {
+                if (showDrawnPolygon && this.shouldShowDrawnPolygonSimplifyOption()) {
                     const drawnRing = this._closePolygonRing(this.normalizePath(this.drawnScopePolygon, 3, 'scope.outline.drawn'));
                     if (Array.isArray(drawnRing) && drawnRing.length >= 4) {
                         paths.push(drawnRing.map((pt) => [Number(pt[0]), Number(pt[1])]));
                     }
                 }
-                if (!hideIsochrone) {
+                if (showIsochrone) {
                     paths.push(...this.extractIsochroneOutlinePaths());
                 }
 
@@ -417,7 +517,7 @@
                 if (!this.mapCore || typeof this.mapCore.setBasemapMuted !== 'function') return;
                 const muted = !!this.h3BasemapMuted;
                 this.mapCore.setBasemapMuted(muted);
-                console.info('[basemap-simplify]', {
+                console.info('[basemap-display]', {
                     basemap_muted: muted,
                     source: this.basemapSource || ''
                 });
@@ -1542,7 +1642,7 @@
                 this.tryRefocusSelectedGrid();
             },
             renderH3BySubTab() {
-                if (!this.isH3PanelActive()) {
+                if (!this.isH3DisplayActive()) {
                     this.clearH3GridDisplayOnLeave();
                     return;
                 }
@@ -1728,7 +1828,7 @@
             },
             renderH3AnalysisGrid(metricKey) {
                 const source = this.h3AnalysisGridFeatures;
-                if (!this.isH3PanelActive()) {
+                if (!this.isH3DisplayActive()) {
                     this.clearH3GridDisplayOnLeave();
                     return;
                 }
@@ -1946,12 +2046,14 @@
                     const baseStatus = this.h3GridCount > 0
                         ? `分析完成：${this.h3GridCount} 个网格，${(this.h3AnalysisSummary && this.h3AnalysisSummary.poi_count) || 0} 个POI`
                         : '分析完成，但当前范围无可用网格';
-                    if (this.isH3PanelActive()) {
+                    if (this.isH3DisplayActive()) {
                         setProgress(5, '正在渲染图层与图表');
                         this.renderH3BySubTab();
-                        await this.$nextTick();
-                        this.updateH3Charts();
-                        this.updateDecisionCards();
+                        if (this.isH3PanelActive()) {
+                            await this.$nextTick();
+                            this.updateH3Charts();
+                            this.updateDecisionCards();
+                        }
                         this.h3GridStatus = baseStatus;
                     } else {
                         this.clearH3GridDisplayOnLeave();
@@ -2044,11 +2146,13 @@
                     this.h3ArcgisImageVersion = Date.now();
                     this.h3ArcgisSnapshotLoadError = false;
                     const sec = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
-                    if (this.isH3PanelActive()) {
+                    if (this.isH3DisplayActive()) {
                         this.renderH3BySubTab();
-                        await this.$nextTick();
-                        this.updateH3Charts();
-                        this.updateDecisionCards();
+                        if (this.isH3PanelActive()) {
+                            await this.$nextTick();
+                            this.updateH3Charts();
+                            this.updateDecisionCards();
+                        }
                         this.h3GridStatus = `ArcGIS 结构快照已生成（${sec}s）`;
                     } else {
                         this.clearH3GridDisplayOnLeave();

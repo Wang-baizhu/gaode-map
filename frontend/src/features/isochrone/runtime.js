@@ -762,9 +762,6 @@ import { markRaw } from 'vue'
                     }
                     return true;
                 },
-                step2StatusText() {
-                    return this.poiStatus;
-                },
                 getIsochronePolygonPoints() {
                     const ring = this.getIsochronePolygonRing();
                     return Array.isArray(ring) ? ring.slice() : [];
@@ -774,9 +771,6 @@ import { markRaw } from 'vue'
                         this.normalizePath(this.drawnScopePolygon, 3, 'draw_scope.stored')
                     );
                     return Array.isArray(ring) ? ring.slice() : [];
-                },
-                async fetchStep2Data() {
-                    await this.fetchPois();
                 },
                 async startAnalysis() {
                     if (this.isCalculating || this.drawScopeActive) return;
@@ -854,7 +848,7 @@ import { markRaw } from 'vue'
                         this.scopeSource = 'isochrone';
                         this.lastIsochroneGeoJSON = geojson;
                         this.renderResult(geojson);
-                        this.step = 2; // Advance to Step 2
+                        this.step = 2; // Enter result step
                         this.activeStep3Panel = 'poi';
 
                     } catch (e) {
