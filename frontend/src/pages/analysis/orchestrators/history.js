@@ -37,7 +37,8 @@ function createAnalysisHistoryOrchestratorMethods() {
           sub_tab: String(this.h3SubTab || 'metric_map'),
           metric_view: String(this.h3MetricView || 'density'),
           structure_fill_mode: String(this.h3StructureFillMode || 'gi_z'),
-          panel_active: this.activeStep3Panel === 'h3',
+          panel_active: this.activeStep3Panel === 'poi'
+            && String(this.poiSubTab || '').trim().toLowerCase() === 'grid',
         },
       }
     },

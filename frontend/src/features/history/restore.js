@@ -19,9 +19,9 @@
                 const roadUi = (roadResult && typeof roadResult.ui === 'object') ? roadResult.ui : {};
 
                 if (roadHasData && !!roadUi.panel_active) return 'syntax';
-                if (h3HasData && !!h3Ui.panel_active) return 'h3';
+                if (h3HasData && !!h3Ui.panel_active) return 'poi';
                 if (roadHasData && !h3HasData) return 'syntax';
-                if (h3HasData && !roadHasData) return 'h3';
+                if (h3HasData && !roadHasData) return 'poi';
                 return 'poi';
             },
             async _restoreHistoryH3ResultAsync(h3Result, token) {
@@ -80,7 +80,7 @@
                 if (typeof this.ensureH3PanelEntryState === 'function') {
                     this.ensureH3PanelEntryState();
                 }
-                if (this.activeStep3Panel === 'h3') {
+                if (this.activeStep3Panel === 'poi' && String(this.poiSubTab || '').trim().toLowerCase() === 'grid') {
                     if (typeof this.renderH3BySubTab === 'function') {
                         this.renderH3BySubTab();
                     }
@@ -190,7 +190,11 @@
 
                 if (this.activeStep3Panel === 'syntax' && targetTab !== 'params' && typeof this.renderRoadSyntaxByMetric === 'function') {
                     await this.renderRoadSyntaxByMetric(this.roadSyntaxMetric || preferredMetric);
-                } else if (this.activeStep3Panel !== 'syntax' && typeof this.suspendRoadSyntaxDisplay === 'function') {
+                } else if (
+                    this.activeStep3Panel !== 'syntax'
+                    && typeof this.suspendRoadSyntaxDisplay === 'function'
+                    && !(typeof this.hasSimplifyDisplayTarget === 'function' && this.hasSimplifyDisplayTarget('syntax'))
+                ) {
                     this.suspendRoadSyntaxDisplay();
                 }
                 return true;
@@ -274,7 +278,7 @@
                 }
                 this.applySimplifyConfig();
 
-                this.step = 3;
+                this.step = 2;
                 this.sidebarView = 'wizard';
                 this.activeStep3Panel = 'poi';
             },
@@ -318,9 +322,9 @@
                         this.errorMessage = '地图尚未初始化，请稍后重试';
                         return;
                     }
-                    // Give immediate feedback when opening history from Step 3:
+                    // Give immediate feedback when opening history from result step:
                     // switch back to workbench first, then stream in restored data.
-                    this.step = 3;
+                    this.step = 2;
                     this.sidebarView = 'wizard';
                     this.activeStep3Panel = 'poi';
                     this.poiStatus = '正在加载历史记录...';
@@ -362,7 +366,7 @@
                 } catch (e) {
                     if (e && e.name === 'AbortError') return;
                     console.error(e);
-                    if (baseRestored && this.step === 3 && this.lastIsochroneGeoJSON) {
+                    if (baseRestored && this.step === 2 && this.lastIsochroneGeoJSON) {
                         this.poiStatus = '历史主结果已恢复，但 POI 恢复失败，可稍后重试';
                     } else {
                         this.errorMessage = `加载历史失败: ${(e && e.message) || e}`;

@@ -56,7 +56,10 @@
                 this.step = 1;
                 this.isochroneScopeMode = 'point';
                 this.h3SimplifyMenuOpen = false;
-                this.h3SimplifyTargets = [];
+                this.h3SimplifyTargets = typeof this.getDefaultSimplifyTargets === 'function'
+                    ? this.getDefaultSimplifyTargets()
+                    : ['map', 'isochrone', 'drawn_polygon', 'poi'];
+                this.h3SimplifyTargetsInitialized = false;
                 this.clearIsochroneDebugState();
                 this.sidebarView = 'wizard';
                 this.selectedPoint = null;
@@ -80,7 +83,10 @@
                 this.activeStep3Panel = 'poi';
                 this.isochroneScopeMode = 'point';
                 this.h3SimplifyMenuOpen = false;
-                this.h3SimplifyTargets = [];
+                this.h3SimplifyTargets = typeof this.getDefaultSimplifyTargets === 'function'
+                    ? this.getDefaultSimplifyTargets()
+                    : ['map', 'isochrone', 'drawn_polygon', 'poi'];
+                this.h3SimplifyTargetsInitialized = false;
                 this.poiSystemSuspendedForSyntax = false;
                 this.selectedPoint = null;
                 this.errorMessage = '';

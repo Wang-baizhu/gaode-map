@@ -122,7 +122,7 @@ export function runAnalysisBootstrapApp() {
                           this.h3GridFeatures = data.features || [];
                           this.h3GridCount = Number.isFinite(data.count) ? data.count : this.h3GridFeatures.length;
   
-                          if (this.isH3PanelActive() && this.mapCore && this.mapCore.setGridFeatures) {
+                          if (this.isH3DisplayActive() && this.mapCore && this.mapCore.setGridFeatures) {
                               this.mapCore.setGridFeatures(this.h3GridFeatures, {
                                   strokeColor: '#2c6ecb',
                                   strokeWeight: 1.1,
@@ -135,7 +135,7 @@ export function runAnalysisBootstrapApp() {
                           const baseStatus = this.h3GridCount > 0
                               ? `已生成 ${this.h3GridCount} 个 H3 网格`
                               : '已生成网络，但当前范围无可用网格';
-                          this.h3GridStatus = this.isH3PanelActive()
+                          this.h3GridStatus = this.isH3DisplayActive()
                               ? baseStatus
                               : `${baseStatus}（已就绪，切换到“网格”查看）`;
                       } catch (e) {
@@ -146,7 +146,9 @@ export function runAnalysisBootstrapApp() {
                       }
                   },
                   isRoadSyntaxPanelActive() {
-                      return this.activeStep3Panel === 'syntax';
+                      const syntaxEnabled = (typeof this.hasSimplifyDisplayTarget === 'function')
+                          && this.hasSimplifyDisplayTarget('syntax');
+                      return this.step === 2 && (this.activeStep3Panel === 'syntax' || syntaxEnabled);
                   },
                   isRoadSyntaxMetricViewActive() {
                       return this.isRoadSyntaxPanelActive() && this.roadSyntaxMainTab !== 'params';
@@ -1149,7 +1151,7 @@ export function runAnalysisBootstrapApp() {
                           refresh: false,
                           syncMetric: true,
                       });
-                      if (this.activeStep3Panel === 'syntax') {
+                      if (this.isRoadSyntaxPanelActive()) {
                           await this.renderRoadSyntaxByMetric(targetMetric);
                       }
                   },
@@ -2894,7 +2896,7 @@ export function runAnalysisBootstrapApp() {
                                   refresh: false,
                                   syncMetric: true,
                               });
-                              if (this.activeStep3Panel === 'syntax') {
+                              if (this.isRoadSyntaxPanelActive()) {
                                   await this.renderRoadSyntaxByMetric(this.roadSyntaxLastMetricTab || this.roadSyntaxMetric || this.roadSyntaxDefaultMetric());
                               } else if (typeof this.suspendRoadSyntaxDisplay === 'function') {
                                   this.suspendRoadSyntaxDisplay();

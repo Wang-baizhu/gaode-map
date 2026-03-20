@@ -10,14 +10,23 @@
         return {
             normalizeStep3PanelId(panelId = '') {
                 const panel = String(panelId || '');
-                if (panel === STEP3_PANEL_IDS.H3_SETTINGS) return STEP3_PANEL_IDS.H3;
+                if (panel === STEP3_PANEL_IDS.H3_SETTINGS || panel === STEP3_PANEL_IDS.H3) {
+                    return STEP3_PANEL_IDS.POI;
+                }
                 return panel;
             },
             shouldShowPoiOnCurrentPanel() {
                 const panel = String(this.activeStep3Panel || '');
-                return panel === STEP3_PANEL_IDS.POI
+                const poiTab = String(this.poiSubTab || 'category').trim().toLowerCase();
+                const panelAllowsPoi = panel === STEP3_PANEL_IDS.POI
+                    && poiTab !== 'analysis'
+                    && poiTab !== 'grid';
+                const displayAllowsPoi = (typeof this.hasSimplifyDisplayTarget === 'function')
+                    ? this.hasSimplifyDisplayTarget('poi')
+                    : true;
+                return this.step === 2
                     && !this.poiSystemSuspendedForSyntax
-                    && String(this.poiSubTab || 'category') !== 'analysis';
+                    && (panelAllowsPoi || displayAllowsPoi);
             },
             shouldShowPoiKdeOnCurrentPanel() {
                 const panel = String(this.activeStep3Panel || '');
@@ -25,6 +34,25 @@
                     && !this.poiSystemSuspendedForSyntax
                     && String(this.poiSubTab || '') === 'analysis'
                     && !!this.poiKdeEnabled;
+            },
+            autoEnableDisplayTargetsForPanel(panelId, options = {}) {
+                if (typeof this.enableSimplifyDisplayTarget !== 'function') return;
+                const panel = String(panelId || '').trim().toLowerCase();
+                const openPoiGrid = !!(options && options.openPoiGrid);
+                const poiTab = openPoiGrid ? 'grid' : String(this.poiSubTab || '').trim().toLowerCase();
+                if (panel === STEP3_PANEL_IDS.POI) {
+                    this.enableSimplifyDisplayTarget('poi', true, { apply: false });
+                    if (poiTab === 'grid') {
+                        this.enableSimplifyDisplayTarget('h3', true, { apply: false });
+                        this.enableSimplifyDisplayTarget('population', false, { apply: false });
+                    }
+                } else if (panel === STEP3_PANEL_IDS.POPULATION) {
+                    this.enableSimplifyDisplayTarget('population', true, { apply: false });
+                    this.enableSimplifyDisplayTarget('h3', false, { apply: false });
+                } else if (panel === STEP3_PANEL_IDS.SYNTAX) {
+                    this.enableSimplifyDisplayTarget('syntax', true, { apply: false });
+                }
+                this.applySimplifyConfig();
             },
             applyPoiFilterPanel(reason = '') {
                 const panel = this.filterPanel;
@@ -66,6 +94,9 @@
             },
             selectStep3Panel(panelId) {
                 if (this.isDraggingNav) return;
+                const requestedPanelId = String(panelId || '');
+                const openPoiGrid = requestedPanelId === STEP3_PANEL_IDS.H3
+                    || requestedPanelId === STEP3_PANEL_IDS.H3_SETTINGS;
                 const nextPanelId = this.normalizeStep3PanelId(panelId);
                 if (nextPanelId === STEP3_PANEL_IDS.SYNTAX && !this.roadSyntaxModulesReady) {
                     this.roadSyntaxSetStatus('路网模块未完整加载：' + (this.roadSyntaxModuleMissing || []).join(', '));
@@ -74,39 +105,61 @@
                 if (!this.isStep3PanelVisible(nextPanelId)) return;
 
                 const previousPanel = this.activeStep3Panel;
+                const previousPoiSubTab = String(this.poiSubTab || '').trim().toLowerCase();
                 this.activeStep3Panel = nextPanelId;
+                if (nextPanelId === STEP3_PANEL_IDS.POI && openPoiGrid) {
+                    this.poiSubTab = 'grid';
+                    this.poiKdeEnabled = false;
+                }
+                this.autoEnableDisplayTargetsForPanel(nextPanelId, { openPoiGrid });
 
-                if (previousPanel === STEP3_PANEL_IDS.SYNTAX && nextPanelId !== STEP3_PANEL_IDS.SYNTAX) {
+                if (
+                    previousPanel === STEP3_PANEL_IDS.SYNTAX
+                    && nextPanelId !== STEP3_PANEL_IDS.SYNTAX
+                    && !(typeof this.hasSimplifyDisplayTarget === 'function' && this.hasSimplifyDisplayTarget('syntax'))
+                ) {
                     this.suspendRoadSyntaxDisplay();
                 }
-                if (previousPanel === STEP3_PANEL_IDS.POPULATION && nextPanelId !== STEP3_PANEL_IDS.POPULATION) {
+                if (
+                    previousPanel === STEP3_PANEL_IDS.POPULATION
+                    && nextPanelId !== STEP3_PANEL_IDS.POPULATION
+                    && !(typeof this.hasSimplifyDisplayTarget === 'function' && this.hasSimplifyDisplayTarget('population'))
+                ) {
                     this.clearPopulationRasterDisplayOnLeave();
                 }
-                if (nextPanelId !== STEP3_PANEL_IDS.H3) {
+                if (
+                    previousPanel === STEP3_PANEL_IDS.POI
+                    && previousPoiSubTab === 'grid'
+                    && nextPanelId !== STEP3_PANEL_IDS.POI
+                    && !(typeof this.hasSimplifyDisplayTarget === 'function' && this.hasSimplifyDisplayTarget('h3'))
+                ) {
+                    this.clearH3GridDisplayOnLeave();
+                }
+                const nextPoiSubTab = openPoiGrid ? 'grid' : String(this.poiSubTab || '').trim().toLowerCase();
+                const nextShowsH3Panel = nextPanelId === STEP3_PANEL_IDS.POI && nextPoiSubTab === 'grid';
+                if (!nextShowsH3Panel) {
                     this.h3ExportMenuOpen = false;
                     this.h3ExportTasksOpen = false;
                 }
                 if (nextPanelId === STEP3_PANEL_IDS.POI) {
                     this.applySimplifyPointVisibility();
                     this.$nextTick(() => {
-                        if (String(this.poiSubTab || 'category') === 'analysis') {
+                        const poiTab = String(this.poiSubTab || 'category').trim().toLowerCase();
+                        if (poiTab === 'analysis') {
                             this.refreshPoiKdeOverlay();
-                        } else {
+                        } else if (poiTab === 'category') {
                             this.updatePoiCharts();
                             setTimeout(() => this.resizePoiChart(), 0);
+                        } else if (poiTab === 'grid') {
+                            this.syncH3PoiFilterSelection(false);
+                            this.ensureH3PanelEntryState();
+                            this.restoreH3GridDisplayOnEnter();
+                            if (typeof this.updateH3Charts === 'function') this.updateH3Charts();
+                            if (typeof this.updateDecisionCards === 'function') this.updateDecisionCards();
+                        } else {
+                            this.clearPoiKdeOverlay();
                         }
                     });
-                    return;
-                }
-                if (nextPanelId === STEP3_PANEL_IDS.H3) {
-                    this.syncH3PoiFilterSelection(false);
-                    this.ensureH3PanelEntryState();
-                    this.restoreH3GridDisplayOnEnter();
-                    this.$nextTick(() => {
-                        if (typeof this.updateH3Charts === 'function') this.updateH3Charts();
-                        if (typeof this.updateDecisionCards === 'function') this.updateDecisionCards();
-                    });
-                    this.applySimplifyPointVisibility();
                     return;
                 }
                 if (nextPanelId === STEP3_PANEL_IDS.POPULATION) {
@@ -213,9 +266,9 @@
                         if (typeof this.cancelHistoryDetailLoading === 'function') {
                             this.cancelHistoryDetailLoading();
                         }
-                        if (this.step === 3 && targetStep <= 2) {
+                        if (this.step === 2 && targetStep <= 1) {
                             this.clearPoiOverlayLayers({
-                                reason: 'go_to_step_back_to_step2',
+                                reason: 'go_to_step_back_to_step1',
                                 clearManager: true,
                                 clearSimpleMarkers: true,
                                 resetFilterPanel: true,

@@ -87,32 +87,36 @@ function createAnalysisLifecycleHooks(options = {}) {
       },
       activeStep3Panel(newPanel, oldPanel) {
         if (newPanel === oldPanel) return
-        if (newPanel === 'syntax') {
+        if (typeof this.autoEnableDisplayTargetsForPanel === 'function') {
+          this.autoEnableDisplayTargetsForPanel(newPanel)
+        }
+        const syntaxEnabled = (typeof this.hasSimplifyDisplayTarget === 'function')
+          && this.hasSimplifyDisplayTarget('syntax')
+        if (newPanel === 'syntax' || syntaxEnabled) {
           if (typeof this.resumeRoadSyntaxDisplay === 'function') {
             this.resumeRoadSyntaxDisplay()
           }
         } else if (typeof this.suspendRoadSyntaxDisplay === 'function') {
           this.suspendRoadSyntaxDisplay()
         }
-        if (newPanel === 'syntax') {
+        const poiEnabled = (typeof this.hasSimplifyDisplayTarget === 'function')
+          && this.hasSimplifyDisplayTarget('poi')
+        if (newPanel === 'syntax' && !poiEnabled) {
           this.suspendPoiSystemForSyntax()
         } else if (oldPanel === 'syntax') {
           this.resumePoiSystemAfterSyntax()
         }
-        if (oldPanel === 'h3' && newPanel !== 'h3') {
-          this.clearH3GridDisplayOnLeave()
-        }
-        if (oldPanel === 'population' && newPanel !== 'population') {
+        const populationEnabled = (typeof this.hasSimplifyDisplayTarget === 'function')
+          && this.hasSimplifyDisplayTarget('population')
+        if (oldPanel === 'population' && newPanel !== 'population' && !populationEnabled) {
           this.clearPopulationRasterDisplayOnLeave()
-        }
-        if (newPanel === 'h3') {
-          this.restoreH3GridDisplayOnEnter()
         }
         if (newPanel === 'population') {
           this.ensurePopulationPanelEntryState()
         }
         this.$nextTick(() => {
           this.refreshPoiKdeOverlay()
+          this.applySimplifyConfig()
         })
       },
       roadSyntaxGraphModel(newModel, oldModel) {

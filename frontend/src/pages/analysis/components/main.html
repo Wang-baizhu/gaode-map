@@ -2,7 +2,7 @@
 
         <!-- Middle: Map -->
         <main class="main-content">
-            <div v-if="sidebarView === 'wizard' && step === 3" class="h3-map-toolbar">
+            <div v-if="sidebarView === 'wizard' && step === 2" class="h3-map-toolbar">
                 <button type="button" class="h3-map-tool-btn h3-map-save-btn" @click="saveAndRestart" title="保存并开启新分析">
                     <svg class="h3-map-tool-icon" viewBox="0 0 24 24" aria-hidden="true">
                         <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h10.2l4.3 4.3V18.5A1.5 1.5 0 0 1 18.5 20h-13A1.5 1.5 0 0 1 4 18.5z"></path>
@@ -16,13 +16,13 @@
                     <button type="button" class="h3-map-tool-btn h3-map-simplify-btn"
                         :class="{ active: h3SimplifyMenuOpen }"
                         @click.stop="toggleSimplifyMenu"
-                        title="简化配置">
+                        title="显示配置">
                         <svg class="h3-map-tool-icon" viewBox="0 0 24 24" aria-hidden="true">
                             <path d="M4 7h16"></path>
                             <path d="M4 12h16"></path>
                             <path d="M4 17h16"></path>
                         </svg>
-                        <span class="h3-map-tool-text">简化</span>
+                        <span class="h3-map-tool-text">显示</span>
                         <svg class="h3-map-tool-caret" viewBox="0 0 24 24" aria-hidden="true">
                             <path d="m6 9 6 6 6-6"></path>
                         </svg>
@@ -149,7 +149,7 @@
                 </button>
             </div>
 
-            <div v-if="sidebarView === 'wizard' && step === 3 && h3ExportTasksOpen" class="h3-export-task-panel">
+            <div v-if="sidebarView === 'wizard' && step === 2 && h3ExportTasksOpen" class="h3-export-task-panel">
                 <div class="h3-export-task-panel-header">
                     <span>导出任务</span>
                     <button type="button" class="h3-export-task-close" @click="closeH3ExportTasks">关闭</button>
@@ -188,7 +188,7 @@
                 </template>
             </div>
 
-            <div v-if="sidebarView === 'wizard' && step === 3 && h3Toast.message"
+            <div v-if="sidebarView === 'wizard' && step === 2 && h3Toast.message"
                 class="h3-export-toast"
                 :class="{
                     'is-success': h3Toast.type === 'success',
