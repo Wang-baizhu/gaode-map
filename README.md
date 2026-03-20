@@ -40,6 +40,16 @@ cd /mnt/d/Coding/map_analyse/gaode-map
 uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
+### 3.4 Docker 开发模式
+```bash
+cd /mnt/d/Coding/map_analyse/gaode-map
+docker compose up --build
+```
+- 会启动后端热更新容器和 `frontend-builder` 监听构建服务
+- `frontend-builder` 会把 Vite 产物持续写入 `static/frontend/`
+- `app` 会等待 `static/frontend/index.html` 出现后再启动
+- `static/frontend/` 是部署产物，继续保持 `.gitignore`
+
 ## 4. 访问入口
 - `http://localhost:8000/analysis`：分析工作台
 - `http://localhost:8000/map?...`：常规地图页
@@ -80,5 +90,12 @@ bash scripts/check_repo_hygiene.sh
 ## 8. Docker
 ```bash
 cd /mnt/d/Coding/map_analyse/gaode-map
-docker compose up -d --build
+docker compose -f docker-compose.prod.yml up -d --build
 ```
+- 生产镜像会在 Docker 多阶段构建中自动执行前端 `npm ci` 和 `npm run build`
+- 运行容器直接加载镜像内的 `static/frontend/`，不依赖宿主机预先打包
+
+### 8.1 构建产物约定
+- `frontend/` 存放 Vue + Vite 源码
+- `static/frontend/` 存放部署产物，由 Vite 输出
+- 部署产物不应提交到仓库；本地缺失时可通过 `npm run build` 或 Docker 构建重新生成
