@@ -9,6 +9,18 @@ services:
     ports:
       - "8001:8001"
 
+  frontend-builder:
+    image: node:20-slim
+    container_name: gaode-map-frontend-builder
+    user: "${UID:-1000}:${GID:-1000}"
+    working_dir: /app/frontend
+    command: >
+      sh -c "npm ci && npm run build -- --watch"
+    volumes:
+      - ./frontend:/app/frontend
+      - ./static:/app/static
+      - frontend_node_modules:/app/frontend/node_modules
+
   app:
     build:
       context: .
@@ -31,10 +43,16 @@ services:
       - POPULATION_PREVIEW_MAX_SIZE=${POPULATION_PREVIEW_MAX_SIZE:-2048}
       - PYTHONUNBUFFERED=1
     depends_on:
+      - frontend-builder
       - search
       - valhalla
       - overpass
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    command: >
+      sh -c "until [ -f /app/static/frontend/index.html ]; do
+      echo 'waiting for frontend build output at /app/static/frontend/index.html';
+      sleep 2;
+      done;
+      exec uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
     volumes:
       - .:/app
       - ./data:/app/data
@@ -77,3 +95,6 @@ services:
       - "${OVERPASS_DB_DIR:-D:/MapData/overpass_db}:/db"
       - "${OVERPASS_SOURCE_DIR:-D:/MapData/osm_source}:/osm:ro"
     restart: unless-stopped
+
+volumes:
+  frontend_node_modules:
