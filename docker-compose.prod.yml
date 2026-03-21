@@ -8,6 +8,7 @@ services:
       - ../search/.env
     ports:
       - "8001:8001"
+    restart: unless-stopped
 
   app:
     build:
@@ -27,6 +28,8 @@ services:
       - DEPTHMAPX_CLI_PATH=${DEPTHMAPX_CLI_PATH:-/usr/local/bin/depthmapXcli}
       - OVERPASS_ENDPOINT=${OVERPASS_ENDPOINT}
       - CITY_BOUNDARY_DIR=${CITY_BOUNDARY_DIR:-/mapdata/boundaries}
+      - POPULATION_DATA_DIR=${POPULATION_DATA_DIR:-/mapdata/population}
+      - POPULATION_PREVIEW_MAX_SIZE=${POPULATION_PREVIEW_MAX_SIZE:-2048}
       - PYTHONUNBUFFERED=1
     depends_on:
       - search
@@ -34,7 +37,10 @@ services:
       - overpass
     command: uvicorn main:app --host 0.0.0.0 --port 8000
     volumes:
+      - ./data:/app/data
       - "${CITY_BOUNDARY_HOST_DIR:-D:/MapData/boundaries}:/mapdata/boundaries:ro"
+      - "${POPULATION_DATA_HOST_DIR:-E:/PeopleData}:/mapdata/population:ro"
+    restart: unless-stopped
 
   valhalla:
     image: ghcr.io/gis-ops/docker-valhalla/valhalla:latest
@@ -54,6 +60,7 @@ services:
       - default_speeds_config_url=https://raw.githubusercontent.com/OpenStreetMapSpeeds/schema/master/default_speeds.json
     # Note: Valhalla needs a 'tiles.tar' or PBF files in the mapped volume to start effectively.
     # Without data, it will start but return empty results for routing.
+    restart: unless-stopped
 
   overpass:
     image: wiktorn/overpass-api:latest
