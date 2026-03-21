@@ -1,12 +1,42 @@
+import json
 from datetime import datetime, timezone
-from typing import List, Dict, Optional
+from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import desc
+from sqlalchemy import desc, func
 
 from .database import SessionLocal
 from .models import AnalysisHistory, PoiResult
 
 class HistoryRepo:
+    @staticmethod
+    def _coerce_extracted_json_value(value: Any) -> Any:
+        if value is None or isinstance(value, (dict, list, int, float)):
+            return value
+        text = str(value).strip()
+        if not text or text.lower() == "null":
+            return None
+        try:
+            return json.loads(text)
+        except Exception:
+            return value
+
+    @staticmethod
+    def _build_lightweight_list_params(row: Any) -> Dict:
+        return {
+            "center": HistoryRepo._coerce_extracted_json_value(getattr(row, "center", None)),
+            "time_min": HistoryRepo._coerce_extracted_json_value(getattr(row, "time_min", None)),
+            "keywords": HistoryRepo._coerce_extracted_json_value(getattr(row, "keywords", None)),
+            "mode": HistoryRepo._coerce_extracted_json_value(getattr(row, "mode", None)),
+            "source": HistoryRepo._coerce_extracted_json_value(getattr(row, "source", None)),
+        }
+
+    @staticmethod
+    def _json_extract_expr(dialect_name: str, path: str):
+        extracted = func.json_extract(AnalysisHistory.params, path)
+        if dialect_name == "mysql":
+            return func.json_unquote(extracted)
+        return extracted
+
     @staticmethod
     def _build_list_params_from_params(raw_params: Dict) -> Dict:
         params = raw_params if isinstance(raw_params, dict) else {}
@@ -168,18 +198,38 @@ class HistoryRepo:
         """
         session: Session = SessionLocal()
         try:
+            bind = session.get_bind()
+            dialect_name = bind.dialect.name if bind is not None else ""
             # Keep history list query lightweight:
-            # - select only list fields (exclude large JSON polygon payload)
-            # - order by PK (indexed) to avoid MySQL sort-buffer pressure
-            query = (
-                session.query(
-                    AnalysisHistory.id,
-                    AnalysisHistory.description,
-                    AnalysisHistory.created_at,
-                    AnalysisHistory.params,
+            # - select only list fields needed by sidebar
+            # - avoid fetching large h3/road snapshots embedded in params JSON
+            # - order by PK (indexed) to avoid extra sort cost
+            if dialect_name in {"mysql", "sqlite"}:
+                query = (
+                    session.query(
+                        AnalysisHistory.id,
+                        AnalysisHistory.description,
+                        AnalysisHistory.created_at,
+                        self._json_extract_expr(dialect_name, "$.center").label("center"),
+                        self._json_extract_expr(dialect_name, "$.time_min").label("time_min"),
+                        self._json_extract_expr(dialect_name, "$.keywords").label("keywords"),
+                        self._json_extract_expr(dialect_name, "$.mode").label("mode"),
+                        self._json_extract_expr(dialect_name, "$.source").label("source"),
+                    )
+                    .order_by(desc(AnalysisHistory.id))
                 )
-                .order_by(desc(AnalysisHistory.id))
-            )
+                build_list_params = self._build_lightweight_list_params
+            else:
+                query = (
+                    session.query(
+                        AnalysisHistory.id,
+                        AnalysisHistory.description,
+                        AnalysisHistory.created_at,
+                        AnalysisHistory.params,
+                    )
+                    .order_by(desc(AnalysisHistory.id))
+                )
+                build_list_params = lambda row: self._build_list_params_from_params(row.params)
             if isinstance(limit, int) and limit > 0:
                 query = query.limit(limit)
             records = query.all()
@@ -187,7 +237,7 @@ class HistoryRepo:
             result = []
             seen_keys = set()
             for r in records:
-                list_params = self._build_list_params_from_params(r.params)
+                list_params = build_list_params(r)
                 dedupe_key = self._build_history_list_dedupe_key(r.description, list_params)
                 if dedupe_key in seen_keys:
                     continue
