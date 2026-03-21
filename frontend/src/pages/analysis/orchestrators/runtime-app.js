@@ -146,9 +146,7 @@ export function runAnalysisBootstrapApp() {
                       }
                   },
                   isRoadSyntaxPanelActive() {
-                      const syntaxEnabled = (typeof this.hasSimplifyDisplayTarget === 'function')
-                          && this.hasSimplifyDisplayTarget('syntax');
-                      return this.step === 2 && (this.activeStep3Panel === 'syntax' || syntaxEnabled);
+                      return this.step === 2 && this.activeStep3Panel === 'syntax';
                   },
                   isRoadSyntaxMetricViewActive() {
                       return this.isRoadSyntaxPanelActive() && this.roadSyntaxMainTab !== 'params';

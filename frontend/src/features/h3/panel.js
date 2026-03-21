@@ -222,10 +222,51 @@
                 return this.step === 2 && activePanel === 'poi' && poiSubTab === 'grid';
             },
             isH3DisplayActive() {
-                return this.step === 2 && (this.isH3PanelActive() || this.hasSimplifyDisplayTarget('h3'));
+                return this.step === 2
+                    && (typeof this.hasSimplifyDisplayTarget === 'function'
+                        ? this.hasSimplifyDisplayTarget('h3')
+                        : this.isH3PanelActive());
             },
             getDefaultSimplifyTargets() {
                 return ['map', 'isochrone', 'drawn_polygon', 'poi'];
+            },
+            getSimplifyAnalysisTargets() {
+                return ['h3', 'population', 'syntax'];
+            },
+            getAllowedSimplifyTargets() {
+                return [
+                    ...this.getDefaultSimplifyTargets(),
+                    ...this.getSimplifyAnalysisTargets(),
+                ];
+            },
+            extractSimplifyBaseTargets(targets = null) {
+                const source = Array.isArray(targets)
+                    ? targets
+                    : this.normalizeSimplifyTargets();
+                const analysisTargets = new Set(this.getSimplifyAnalysisTargets());
+                return source.filter((item) => !analysisTargets.has(String(item || '').trim().toLowerCase()));
+            },
+            resolveSimplifyAnalysisTargetForPanel(panelId = '', options = {}) {
+                const panel = String(panelId || '').trim().toLowerCase();
+                const openPoiGrid = !!(options && options.openPoiGrid);
+                const poiSubTab = openPoiGrid
+                    ? 'grid'
+                    : String(this.poiSubTab || '').trim().toLowerCase();
+                if (panel === 'population') return 'population';
+                if (panel === 'syntax') return 'syntax';
+                if (panel === 'poi' && poiSubTab === 'grid') return 'h3';
+                return '';
+            },
+            resetAnalysisDisplayTargetsForPanel(panelId = '', options = {}) {
+                const next = this.extractSimplifyBaseTargets().slice();
+                const analysisTarget = this.resolveSimplifyAnalysisTargetForPanel(panelId, options);
+                if (analysisTarget) next.push(analysisTarget);
+                this.h3SimplifyTargets = next;
+                this.h3SimplifyTargetsInitialized = true;
+                if (!options || options.apply !== false) {
+                    this.applySimplifyConfig();
+                }
+                return next;
             },
             hasSimplifyDisplayTarget(target) {
                 const key = String(target || '').trim().toLowerCase();
@@ -354,7 +395,7 @@
                 }
                 options.push(
                     { value: 'poi', label: 'POI' },
-                    { value: 'h3', label: '网格(H3)' },
+                    { value: 'h3', label: '网格' },
                     { value: 'population', label: '人口' },
                     { value: 'syntax', label: '路网' },
                 );
@@ -362,7 +403,7 @@
             },
             normalizeSimplifyTargets() {
                 const rawTargets = Array.isArray(this.h3SimplifyTargets) ? this.h3SimplifyTargets : [];
-                const allowed = new Set(['map', 'isochrone', 'drawn_polygon', 'poi', 'h3', 'population', 'syntax']);
+                const allowed = new Set(this.getAllowedSimplifyTargets());
                 const normalized = [];
                 const source = (!this.h3SimplifyTargetsInitialized && rawTargets.length === 0)
                     ? this.getDefaultSimplifyTargets()
@@ -370,9 +411,14 @@
                 source.forEach((item) => {
                     const key = String(item || '').trim().toLowerCase();
                     if (!allowed.has(key)) return;
+                    if (key === 'h3') {
+                        const populationIndex = normalized.indexOf('population');
+                        if (populationIndex >= 0) normalized.splice(populationIndex, 1);
+                    } else if (key === 'population') {
+                        const h3Index = normalized.indexOf('h3');
+                        if (h3Index >= 0) normalized.splice(h3Index, 1);
+                    }
                     if (normalized.indexOf(key) >= 0) return;
-                    if (key === 'h3' && normalized.includes('population')) return;
-                    if (key === 'population' && normalized.includes('h3')) return;
                     normalized.push(key);
                 });
                 const changed = (
@@ -398,23 +444,9 @@
             },
             onSimplifyTargetToggle(target, checked) {
                 const key = String(target || '').trim().toLowerCase();
-                const next = this.normalizeSimplifyTargets().slice();
-                const existingIndex = next.indexOf(key);
-                if (checked) {
-                    if (existingIndex < 0) next.push(key);
-                    if (key === 'h3') {
-                        const populationIndex = next.indexOf('population');
-                        if (populationIndex >= 0) next.splice(populationIndex, 1);
-                    }
-                    if (key === 'population') {
-                        const h3Index = next.indexOf('h3');
-                        if (h3Index >= 0) next.splice(h3Index, 1);
-                    }
-                } else if (existingIndex >= 0) {
-                    next.splice(existingIndex, 1);
-                }
-                this.h3SimplifyTargets = next;
-                this.applySimplifyConfig();
+                const allowed = new Set(this.getAllowedSimplifyTargets());
+                if (!allowed.has(key)) return;
+                this.enableSimplifyDisplayTarget(key, !!checked);
             },
             applySimplifyConfig() {
                 const targets = this.normalizeSimplifyTargets();
@@ -438,9 +470,9 @@
             },
             syncSimplifyResultLayerVisibility(targets) {
                 const normalizedTargets = Array.isArray(targets) ? targets : this.normalizeSimplifyTargets();
-                const showH3 = normalizedTargets.indexOf('h3') >= 0;
-                const showPopulation = normalizedTargets.indexOf('population') >= 0;
-                const showSyntax = normalizedTargets.indexOf('syntax') >= 0;
+                const showH3 = this.step === 2 && normalizedTargets.indexOf('h3') >= 0;
+                const showPopulation = this.step === 2 && normalizedTargets.indexOf('population') >= 0;
+                const showSyntax = this.step === 2 && normalizedTargets.indexOf('syntax') >= 0;
 
                 if (showPopulation) {
                     this.clearH3GridDisplayOnLeave();

@@ -21,8 +21,14 @@
                 const panelAllowsPoi = panel === STEP3_PANEL_IDS.POI
                     && poiTab !== 'analysis'
                     && poiTab !== 'grid';
+                const analysisDisplayActive = (typeof this.hasSimplifyDisplayTarget === 'function')
+                    && (
+                        this.hasSimplifyDisplayTarget('h3')
+                        || this.hasSimplifyDisplayTarget('population')
+                        || this.hasSimplifyDisplayTarget('syntax')
+                    );
                 const displayAllowsPoi = (typeof this.hasSimplifyDisplayTarget === 'function')
-                    ? this.hasSimplifyDisplayTarget('poi')
+                    ? (this.hasSimplifyDisplayTarget('poi') && !analysisDisplayActive)
                     : true;
                 return this.step === 2
                     && !this.poiSystemSuspendedForSyntax
@@ -39,18 +45,13 @@
                 if (typeof this.enableSimplifyDisplayTarget !== 'function') return;
                 const panel = String(panelId || '').trim().toLowerCase();
                 const openPoiGrid = !!(options && options.openPoiGrid);
-                const poiTab = openPoiGrid ? 'grid' : String(this.poiSubTab || '').trim().toLowerCase();
-                if (panel === STEP3_PANEL_IDS.POI) {
+                if (panel === STEP3_PANEL_IDS.POI && !openPoiGrid) {
                     this.enableSimplifyDisplayTarget('poi', true, { apply: false });
-                    if (poiTab === 'grid') {
-                        this.enableSimplifyDisplayTarget('h3', true, { apply: false });
-                        this.enableSimplifyDisplayTarget('population', false, { apply: false });
-                    }
-                } else if (panel === STEP3_PANEL_IDS.POPULATION) {
-                    this.enableSimplifyDisplayTarget('population', true, { apply: false });
-                    this.enableSimplifyDisplayTarget('h3', false, { apply: false });
-                } else if (panel === STEP3_PANEL_IDS.SYNTAX) {
-                    this.enableSimplifyDisplayTarget('syntax', true, { apply: false });
+                } else {
+                    this.enableSimplifyDisplayTarget('poi', false, { apply: false });
+                }
+                if (typeof this.resetAnalysisDisplayTargetsForPanel === 'function') {
+                    this.resetAnalysisDisplayTargetsForPanel(panel, { ...options, apply: false });
                 }
                 this.applySimplifyConfig();
             },

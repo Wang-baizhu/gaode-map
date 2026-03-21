@@ -104,8 +104,6 @@ function createAnalysisHistoryOrchestratorMethods() {
       const resolvedPolygon = Array.isArray(polygon) && polygon.length
         ? polygon
         : this.getIsochronePolygonPayload()
-      const h3Result = this.buildHistoryH3ResultSnapshot()
-      const roadResult = this.buildHistoryRoadResultSnapshot()
       const payload = {
         center: [this.selectedPoint.lng, this.selectedPoint.lat],
         polygon: resolvedPolygon,
@@ -118,8 +116,6 @@ function createAnalysisHistoryOrchestratorMethods() {
         mode: this.transportMode,
         time_min: parseInt(this.timeHorizon),
         source: this.normalizePoiSource(this.resultDataSource || this.poiDataSource, 'local'),
-        h3_result: h3Result,
-        road_result: roadResult,
       }
       setTimeout(() => {
         fetch('/api/v1/analysis/history/save', {

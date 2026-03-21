@@ -96,14 +96,6 @@ async def save_history_manually(payload: HistorySaveRequest):
             np["location"] = [nwx, nwy]
         s_pois.append(np)
 
-    s_h3_result = None
-    if isinstance(payload.h3_result, dict):
-        s_h3_result = _transform_geojson_coordinates(payload.h3_result, gcj02_to_wgs84)
-
-    s_road_result = None
-    if isinstance(payload.road_result, dict):
-        s_road_result = _transform_geojson_coordinates(payload.road_result, gcj02_to_wgs84)
-
     display_title = payload.location_name
     if not display_title and s_center:
         display_title = f"{s_center[0]:.4f},{s_center[1]:.4f}"
@@ -125,10 +117,6 @@ async def save_history_manually(payload: HistorySaveRequest):
         }
         if s_drawn_poly:
             params_payload["drawn_polygon"] = s_drawn_poly
-        if s_h3_result:
-            params_payload["h3_result"] = s_h3_result
-        if s_road_result:
-            params_payload["road_result"] = s_road_result
         history_id = history_repo.create_record(
             params_payload,
             s_poly, s_pois, desc
