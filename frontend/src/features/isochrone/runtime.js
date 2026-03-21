@@ -823,6 +823,10 @@ import { markRaw } from 'vue'
                             this.renderResult(geojson);
                             this.step = 2;
                             this.activeStep3Panel = 'poi';
+                            if (typeof this.resetAnalysisDisplayTargetsForPanel === 'function') {
+                                this.resetAnalysisDisplayTargetsForPanel('poi', { apply: false });
+                            }
+                            this.applySimplifyConfig();
                             this.poiStatus = '已按手绘范围计算等时圈';
                             return;
                         }
@@ -850,6 +854,10 @@ import { markRaw } from 'vue'
                         this.renderResult(geojson);
                         this.step = 2; // Enter result step
                         this.activeStep3Panel = 'poi';
+                        if (typeof this.resetAnalysisDisplayTargetsForPanel === 'function') {
+                            this.resetAnalysisDisplayTargetsForPanel('poi', { apply: false });
+                        }
+                        this.applySimplifyConfig();
 
                     } catch (e) {
                         console.error(e);

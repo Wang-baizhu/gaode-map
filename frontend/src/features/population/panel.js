@@ -132,10 +132,10 @@ function createAnalysisPopulationMethods() {
       return this.step === 2 && this.activeStep3Panel === 'population'
     },
     isPopulationDisplayActive() {
-      return this.step === 2 && (
-        this.isPopulationPanelActive()
-        || (typeof this.hasSimplifyDisplayTarget === 'function' && this.hasSimplifyDisplayTarget('population'))
-      )
+      return this.step === 2
+        && (typeof this.hasSimplifyDisplayTarget === 'function'
+          ? this.hasSimplifyDisplayTarget('population')
+          : this.isPopulationPanelActive())
     },
     setPopulationAnalysisView(view) {
       const nextView = ['density', 'sex', 'age'].includes(String(view || '').trim().toLowerCase())

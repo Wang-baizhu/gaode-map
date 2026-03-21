@@ -45,9 +45,9 @@ class HistorySaveRequest(BaseModel):
     source: Optional[Literal["gaode", "local"]] = Field(default="local", description="POI source for this analysis")
     h3_result: Optional[dict] = Field(
         default=None,
-        description="Optional H3 analysis snapshot payload (GCJ02 coordinates)",
+        description="Deprecated snapshot payload field; accepted for compatibility and ignored on save",
     )
     road_result: Optional[dict] = Field(
         default=None,
-        description="Optional road syntax snapshot payload (GCJ02 coordinates)",
+        description="Deprecated snapshot payload field; accepted for compatibility and ignored on save",
     )

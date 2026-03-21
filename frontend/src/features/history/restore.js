@@ -208,6 +208,10 @@
                 // H3/road snapshots are still restored into state for later manual switch.
                 if (this.activeStep3Panel !== 'poi') {
                     this.activeStep3Panel = 'poi';
+                    if (typeof this.resetAnalysisDisplayTargetsForPanel === 'function') {
+                        this.resetAnalysisDisplayTargetsForPanel('poi', { apply: false });
+                    }
+                    this.applySimplifyConfig();
                     await this.$nextTick();
                 }
 
@@ -281,6 +285,10 @@
                 this.step = 2;
                 this.sidebarView = 'wizard';
                 this.activeStep3Panel = 'poi';
+                if (typeof this.resetAnalysisDisplayTargetsForPanel === 'function') {
+                    this.resetAnalysisDisplayTargetsForPanel('poi', { apply: false });
+                }
+                this.applySimplifyConfig();
             },
             async _restoreHistoryPoisAsync(id, token, signal, poiCountHint = 0) {
                 const res = await fetch(`/api/v1/analysis/history/${id}/pois`, { signal });
@@ -327,6 +335,10 @@
                     this.step = 2;
                     this.sidebarView = 'wizard';
                     this.activeStep3Panel = 'poi';
+                    if (typeof this.resetAnalysisDisplayTargetsForPanel === 'function') {
+                        this.resetAnalysisDisplayTargetsForPanel('poi', { apply: false });
+                    }
+                    this.applySimplifyConfig();
                     this.poiStatus = '正在加载历史记录...';
                     await this.$nextTick();
 
