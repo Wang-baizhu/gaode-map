@@ -48,11 +48,7 @@ services:
       - valhalla
       - overpass
     command: >
-      sh -c "until [ -f /app/static/frontend/index.html ]; do
-      echo 'waiting for frontend build output at /app/static/frontend/index.html';
-      sleep 2;
-      done;
-      exec uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
+      sh -c "until [ -f /app/static/frontend/index.html ]; do echo 'waiting for frontend build output at /app/static/frontend/index.html'; sleep 2; done; exec uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
     volumes:
       - .:/app
       - ./data:/app/data
