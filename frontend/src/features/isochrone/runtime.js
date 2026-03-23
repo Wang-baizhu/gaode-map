@@ -772,6 +772,99 @@ import { markRaw } from 'vue'
                     );
                     return Array.isArray(ring) ? ring.slice() : [];
                 },
+                _prepareScopeAnalysisRun() {
+                    this.isCalculating = true;
+                    this.errorMessage = '';
+                    this.fetchProgress = 0;
+                    this.poiStatus = '';
+                    this.resetRoadSyntaxState();
+                    this.resetPopulationAnalysisState({ keepMeta: true });
+                    this.clearIsochroneDebugState();
+                },
+                _completeScopeAnalysis(geojson, options = {}) {
+                    this.clearH3Grid();
+                    this.scopeSource = String((options && options.scopeSource) || '').trim();
+                    this.renderResult(geojson);
+                    this.step = 2;
+                    this.activeStep3Panel = 'poi';
+                    if (typeof this.resetAnalysisDisplayTargetsForPanel === 'function') {
+                        this.resetAnalysisDisplayTargetsForPanel('poi', { apply: false });
+                    }
+                    this.applySimplifyConfig();
+                    this.poiStatus = String((options && options.poiStatus) || '');
+                },
+                _resolveCircleRadiusMeters() {
+                    const speedByMode = {
+                        walking: 5,
+                        bicycling: 15,
+                        driving: 30,
+                    };
+                    const mode = String(this.transportMode || 'walking').trim().toLowerCase();
+                    const speedKmh = Number(speedByMode[mode]) || speedByMode.walking;
+                    const timeMin = Math.max(0, parseInt(this.timeHorizon, 10) || 15);
+                    return (speedKmh * 1000 * timeMin) / 60;
+                },
+                _buildCircleScopeGeoJSON(center, radiusMeters) {
+                    const lng = Number(center && center.lng);
+                    const lat = Number(center && center.lat);
+                    const safeRadiusMeters = Number(radiusMeters);
+                    if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
+                    if (!Number.isFinite(safeRadiusMeters) || safeRadiusMeters <= 0) return null;
+
+                    const segments = 72;
+                    const metersPerLatDegree = 111320;
+                    const cosLat = Math.cos((lat * Math.PI) / 180);
+                    const metersPerLonDegree = Math.max(1e-6, metersPerLatDegree * Math.abs(cosLat));
+                    const ring = [];
+
+                    for (let i = 0; i <= segments; i += 1) {
+                        const angle = (Math.PI * 2 * i) / segments;
+                        const dxMeters = safeRadiusMeters * Math.cos(angle);
+                        const dyMeters = safeRadiusMeters * Math.sin(angle);
+                        ring.push([
+                            lng + (dxMeters / metersPerLonDegree),
+                            lat + (dyMeters / metersPerLatDegree),
+                        ]);
+                    }
+
+                    return {
+                        type: 'Feature',
+                        properties: {
+                            mode: 'circle',
+                            scope_kind: 'circle',
+                            center: [lng, lat],
+                            time_min: parseInt(this.timeHorizon, 10) || 15,
+                            transport_mode: this.transportMode || 'walking',
+                            radius_m: safeRadiusMeters,
+                        },
+                        geometry: {
+                            type: 'Polygon',
+                            coordinates: [ring],
+                        },
+                    };
+                },
+                async startCircleAnalysis() {
+                    if (this.isCalculating || this.drawScopeActive) return;
+                    if (this.isochroneScopeMode !== 'point' || !this.selectedPoint) return;
+
+                    this._prepareScopeAnalysisRun();
+                    try {
+                        const radiusMeters = this._resolveCircleRadiusMeters();
+                        const geojson = this._buildCircleScopeGeoJSON(this.selectedPoint, radiusMeters);
+                        if (!geojson) {
+                            throw new Error('圆形圈参数无效');
+                        }
+                        this._completeScopeAnalysis(geojson, {
+                            scopeSource: 'circle',
+                            poiStatus: `已生成约 ${Math.round(radiusMeters)} 米圆形范围`,
+                        });
+                    } catch (e) {
+                        console.error(e);
+                        this.errorMessage = "计算失败: " + e.message;
+                    } finally {
+                        this.isCalculating = false;
+                    }
+                },
                 async startAnalysis() {
                     if (this.isCalculating || this.drawScopeActive) return;
                     const useDrawnScope = this.isochroneScopeMode === 'area';
@@ -780,13 +873,7 @@ import { markRaw } from 'vue'
                         return;
                     }
                     if (!useDrawnScope && !this.selectedPoint) return;
-                    this.isCalculating = true;
-                    this.errorMessage = '';
-                    this.fetchProgress = 0;
-                    this.poiStatus = '';
-                    this.resetRoadSyntaxState();
-                    this.resetPopulationAnalysisState({ keepMeta: true });
-                    this.clearIsochroneDebugState();
+                    this._prepareScopeAnalysisRun();
 
                     try {
                         if (useDrawnScope) {
@@ -817,17 +904,10 @@ import { markRaw } from 'vue'
                             });
                             if (!res.ok) throw new Error("API 请求失败");
                             const geojson = await res.json();
-                            this.clearH3Grid();
-                            this.scopeSource = 'drawn_isochrone';
-                            this.lastIsochroneGeoJSON = geojson;
-                            this.renderResult(geojson);
-                            this.step = 2;
-                            this.activeStep3Panel = 'poi';
-                            if (typeof this.resetAnalysisDisplayTargetsForPanel === 'function') {
-                                this.resetAnalysisDisplayTargetsForPanel('poi', { apply: false });
-                            }
-                            this.applySimplifyConfig();
-                            this.poiStatus = '已按手绘范围计算等时圈';
+                            this._completeScopeAnalysis(geojson, {
+                                scopeSource: 'drawn_isochrone',
+                                poiStatus: '已按手绘范围计算等时圈',
+                            });
                             return;
                         }
 
@@ -847,17 +927,9 @@ import { markRaw } from 'vue'
 
                         if (!res.ok) throw new Error("API 请求失败");
                         const geojson = await res.json();
-
-                        this.clearH3Grid();
-                        this.scopeSource = 'isochrone';
-                        this.lastIsochroneGeoJSON = geojson;
-                        this.renderResult(geojson);
-                        this.step = 2; // Enter result step
-                        this.activeStep3Panel = 'poi';
-                        if (typeof this.resetAnalysisDisplayTargetsForPanel === 'function') {
-                            this.resetAnalysisDisplayTargetsForPanel('poi', { apply: false });
-                        }
-                        this.applySimplifyConfig();
+                        this._completeScopeAnalysis(geojson, {
+                            scopeSource: 'isochrone',
+                        });
 
                     } catch (e) {
                         console.error(e);
