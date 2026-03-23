@@ -217,10 +217,20 @@
                             :disabled="isCalculating || !hasDrawnScopePolygon()" @click="clearDrawnScopePolygon">
                             清除绘制区域
                         </button>
-                        <button class="btn-black"
-                            :disabled="(isochroneScopeMode === 'point' ? !selectedPoint : !hasDrawnScopePolygon()) || isCalculating || drawScopeActive"
+                        <button v-if="isochroneScopeMode === 'point'" class="btn-black"
+                            :disabled="!selectedPoint || isCalculating || drawScopeActive"
                             @click="startAnalysis">
-                            {{ isCalculating ? '处理中...' : (isochroneScopeMode === 'area' ? '下一步: 基于绘制范围生成等时圈' : '下一步: 生成等时圈') }}
+                            {{ isCalculating ? '处理中...' : '下一步: 生成等时圈' }}
+                        </button>
+                        <button v-if="isochroneScopeMode === 'point'" class="btn-outline" style="margin-top:8px;"
+                            :disabled="!selectedPoint || isCalculating || drawScopeActive"
+                            @click="startCircleAnalysis">
+                            {{ isCalculating ? '处理中...' : '下一步: 生成圆形圈' }}
+                        </button>
+                        <button v-if="isochroneScopeMode === 'area'" class="btn-black"
+                            :disabled="!hasDrawnScopePolygon() || isCalculating || drawScopeActive"
+                            @click="startAnalysis">
+                            {{ isCalculating ? '处理中...' : '下一步: 基于绘制范围生成等时圈' }}
                         </button>
                         <div v-if="errorMessage" class="error-msg">{{ errorMessage }}</div>
                         <div v-if="basemapSource === 'tianditu' && tdtDiag && tdtDiag.ok === false"
