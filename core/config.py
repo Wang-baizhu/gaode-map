@@ -144,6 +144,21 @@ class Settings(BaseSettings):
         validation_alias="POPULATION_PREVIEW_MAX_SIZE",
         description="Maximum preview PNG size for population raster outputs",
     )
+    nightlight_data_dir: str = Field(
+        "/mapdata/nightlight/processed",
+        validation_alias="NIGHTLIGHT_DATA_DIR",
+        description="Directory containing processed Black Marble GeoTIFF files and manifest",
+    )
+    nightlight_preview_max_size: int = Field(
+        2048,
+        validation_alias="NIGHTLIGHT_PREVIEW_MAX_SIZE",
+        description="Maximum preview PNG size for nightlight raster outputs",
+    )
+    nightlight_grid_max_cells: int = Field(
+        5000,
+        validation_alias="NIGHTLIGHT_GRID_MAX_CELLS",
+        description="Maximum number of nightlight grid cells returned per request",
+    )
 
     # ArcGIS HTTP bridge config
     arcgis_bridge_enabled: bool = Field(

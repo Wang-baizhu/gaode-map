@@ -22,6 +22,7 @@ function createH3Context(overrides = {}) {
     populationLayer: null,
     getDefaultSimplifyTargets: h3Methods.getDefaultSimplifyTargets,
     getSimplifyAnalysisTargets: h3Methods.getSimplifyAnalysisTargets,
+    getSimplifyGridAnalysisTargets: h3Methods.getSimplifyGridAnalysisTargets,
     getAllowedSimplifyTargets: h3Methods.getAllowedSimplifyTargets,
     extractSimplifyBaseTargets: h3Methods.extractSimplifyBaseTargets,
     resolveSimplifyAnalysisTargetForPanel: h3Methods.resolveSimplifyAnalysisTargetForPanel,
@@ -43,6 +44,12 @@ function createH3Context(overrides = {}) {
     },
     restorePopulationRasterDisplayOnEnter() {
       this.populationRestored = true
+    },
+    clearNightlightDisplayOnLeave() {
+      this.nightlightCleared = true
+    },
+    restoreNightlightDisplayOnEnter() {
+      this.nightlightRestored = true
     },
     resumeRoadSyntaxDisplay() {
       this.syntaxResumed = true
@@ -94,6 +101,7 @@ function createNavigationContext(overrides = {}) {
     updateDecisionCards() {},
     clearPoiKdeOverlay() {},
     ensurePopulationPanelEntryState() {},
+    ensureNightlightPanelEntryState() {},
     updatePopulationCharts() {},
     setRoadSyntaxMainTab(tab) {
       this.roadSyntaxMainTab = tab
@@ -145,6 +153,28 @@ test('syncSimplifyResultLayerVisibility restores population and syntax while hid
   assert.equal(ctx.h3Cleared, true)
   assert.equal(ctx.syntaxResumed, true)
   assert.equal(ctx.populationCleared, undefined)
+})
+
+test('selectStep3Panel switches to nightlight and activates its display target', () => {
+  const ctx = createNavigationContext({
+    activeStep3Panel: 'population',
+    h3SimplifyTargets: ['map', 'population'],
+  })
+
+  navigationMethods.selectStep3Panel.call(ctx, 'nightlight')
+
+  assert.equal(ctx.activeStep3Panel, 'nightlight')
+  assert.deepEqual(ctx.h3SimplifyTargets, ['map', 'nightlight'])
+})
+
+test('syncSimplifyResultLayerVisibility restores nightlight while hiding population and h3', () => {
+  const ctx = createH3Context()
+
+  h3Methods.syncSimplifyResultLayerVisibility.call(ctx, ['map', 'nightlight'])
+
+  assert.equal(ctx.nightlightRestored, true)
+  assert.equal(ctx.h3Cleared, true)
+  assert.equal(ctx.populationCleared, true)
 })
 
 test('shouldShowPoiOnCurrentPanel hides poi when an analysis layer is visible', () => {

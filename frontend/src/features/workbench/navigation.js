@@ -3,6 +3,7 @@
         H3: 'h3',
         H3_SETTINGS: 'h3_settings',
         POPULATION: 'population',
+        NIGHTLIGHT: 'nightlight',
         SYNTAX: 'syntax',
     });
 
@@ -25,6 +26,7 @@
                     && (
                         this.hasSimplifyDisplayTarget('h3')
                         || this.hasSimplifyDisplayTarget('population')
+                        || this.hasSimplifyDisplayTarget('nightlight')
                         || this.hasSimplifyDisplayTarget('syntax')
                     );
                 const displayAllowsPoi = (typeof this.hasSimplifyDisplayTarget === 'function')
@@ -129,6 +131,13 @@
                     this.clearPopulationRasterDisplayOnLeave();
                 }
                 if (
+                    previousPanel === STEP3_PANEL_IDS.NIGHTLIGHT
+                    && nextPanelId !== STEP3_PANEL_IDS.NIGHTLIGHT
+                    && !(typeof this.hasSimplifyDisplayTarget === 'function' && this.hasSimplifyDisplayTarget('nightlight'))
+                ) {
+                    this.clearNightlightDisplayOnLeave();
+                }
+                if (
                     previousPanel === STEP3_PANEL_IDS.POI
                     && previousPoiSubTab === 'grid'
                     && nextPanelId !== STEP3_PANEL_IDS.POI
@@ -169,6 +178,12 @@
                     this.$nextTick(() => {
                         if (typeof this.updatePopulationCharts === 'function') this.updatePopulationCharts();
                     });
+                    this.applySimplifyPointVisibility();
+                    return;
+                }
+                if (nextPanelId === STEP3_PANEL_IDS.NIGHTLIGHT) {
+                    this.ensureNightlightPanelEntryState();
+                    this.restoreNightlightDisplayOnEnter();
                     this.applySimplifyPointVisibility();
                     return;
                 }

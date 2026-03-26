@@ -40,7 +40,7 @@ function createAnalysisLifecycleHooks(options = {}) {
         if (overlay) overlay.style.display = 'none'
       }
     },
-    beforeUnmount() {
+      beforeUnmount() {
       document.removeEventListener('click', this.handleGlobalClick, true)
       this.detachAmapRuntimeErrorProbe()
       this.destroyPlaceSearch()
@@ -69,6 +69,7 @@ function createAnalysisLifecycleHooks(options = {}) {
       this.disposeH3Charts()
       this.disposePopulationCharts()
       this.clearPopulationRasterDisplayOnLeave()
+      this.clearNightlightDisplayOnLeave()
     },
     watch: {
       step(newStep, oldStep) {
@@ -111,8 +112,16 @@ function createAnalysisLifecycleHooks(options = {}) {
         if (oldPanel === 'population' && newPanel !== 'population' && !populationEnabled) {
           this.clearPopulationRasterDisplayOnLeave()
         }
+        const nightlightEnabled = (typeof this.hasSimplifyDisplayTarget === 'function')
+          && this.hasSimplifyDisplayTarget('nightlight')
+        if (oldPanel === 'nightlight' && newPanel !== 'nightlight' && !nightlightEnabled) {
+          this.clearNightlightDisplayOnLeave()
+        }
         if (newPanel === 'population') {
           this.ensurePopulationPanelEntryState()
+        }
+        if (newPanel === 'nightlight') {
+          this.ensureNightlightPanelEntryState()
         }
         this.$nextTick(() => {
           this.refreshPoiKdeOverlay()

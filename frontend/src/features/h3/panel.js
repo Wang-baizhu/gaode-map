@@ -231,7 +231,10 @@
                 return ['map', 'isochrone', 'drawn_polygon', 'poi'];
             },
             getSimplifyAnalysisTargets() {
-                return ['h3', 'population', 'syntax'];
+                return ['h3', 'population', 'nightlight', 'syntax'];
+            },
+            getSimplifyGridAnalysisTargets() {
+                return ['h3', 'population', 'nightlight'];
             },
             getAllowedSimplifyTargets() {
                 return [
@@ -253,6 +256,7 @@
                     ? 'grid'
                     : String(this.poiSubTab || '').trim().toLowerCase();
                 if (panel === 'population') return 'population';
+                if (panel === 'nightlight') return 'nightlight';
                 if (panel === 'syntax') return 'syntax';
                 if (panel === 'poi' && poiSubTab === 'grid') return 'h3';
                 return '';
@@ -284,12 +288,12 @@
                     next.splice(existingIndex, 1);
                 }
 
-                if (enabled && key === 'h3') {
-                    const populationIndex = next.indexOf('population');
-                    if (populationIndex >= 0) next.splice(populationIndex, 1);
-                } else if (enabled && key === 'population') {
-                    const h3Index = next.indexOf('h3');
-                    if (h3Index >= 0) next.splice(h3Index, 1);
+                if (enabled && this.getSimplifyGridAnalysisTargets().includes(key)) {
+                    this.getSimplifyGridAnalysisTargets().forEach((item) => {
+                        if (item === key) return;
+                        const idx = next.indexOf(item);
+                        if (idx >= 0) next.splice(idx, 1);
+                    });
                 }
 
                 this.h3SimplifyTargets = next;
@@ -397,6 +401,7 @@
                     { value: 'poi', label: 'POI' },
                     { value: 'h3', label: '网格' },
                     { value: 'population', label: '人口' },
+                    { value: 'nightlight', label: '夜光' },
                     { value: 'syntax', label: '路网' },
                 );
                 return options;
@@ -411,12 +416,12 @@
                 source.forEach((item) => {
                     const key = String(item || '').trim().toLowerCase();
                     if (!allowed.has(key)) return;
-                    if (key === 'h3') {
-                        const populationIndex = normalized.indexOf('population');
-                        if (populationIndex >= 0) normalized.splice(populationIndex, 1);
-                    } else if (key === 'population') {
-                        const h3Index = normalized.indexOf('h3');
-                        if (h3Index >= 0) normalized.splice(h3Index, 1);
+                    if (this.getSimplifyGridAnalysisTargets().includes(key)) {
+                        this.getSimplifyGridAnalysisTargets().forEach((item) => {
+                            if (item === key) return;
+                            const idx = normalized.indexOf(item);
+                            if (idx >= 0) normalized.splice(idx, 1);
+                        });
                     }
                     if (normalized.indexOf(key) >= 0) return;
                     normalized.push(key);
@@ -472,17 +477,25 @@
                 const normalizedTargets = Array.isArray(targets) ? targets : this.normalizeSimplifyTargets();
                 const showH3 = this.step === 2 && normalizedTargets.indexOf('h3') >= 0;
                 const showPopulation = this.step === 2 && normalizedTargets.indexOf('population') >= 0;
+                const showNightlight = this.step === 2 && normalizedTargets.indexOf('nightlight') >= 0;
                 const showSyntax = this.step === 2 && normalizedTargets.indexOf('syntax') >= 0;
 
                 if (showPopulation) {
                     this.clearH3GridDisplayOnLeave();
+                    this.clearNightlightDisplayOnLeave();
                     this.restorePopulationRasterDisplayOnEnter();
+                } else if (showNightlight) {
+                    this.clearH3GridDisplayOnLeave();
+                    this.clearPopulationRasterDisplayOnLeave();
+                    this.restoreNightlightDisplayOnEnter();
                 } else if (showH3) {
                     this.clearPopulationRasterDisplayOnLeave();
+                    this.clearNightlightDisplayOnLeave();
                     this.restoreH3GridDisplayOnEnter();
                 } else {
                     this.clearH3GridDisplayOnLeave();
                     this.clearPopulationRasterDisplayOnLeave();
+                    this.clearNightlightDisplayOnLeave();
                 }
 
                 if (showSyntax) {

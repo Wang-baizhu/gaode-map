@@ -8,6 +8,7 @@ import { createAnalysisHistoryListInitialState, createAnalysisHistoryListMethods
 import { createAnalysisHistoryInitialState, createAnalysisHistoryMethods } from '../../../features/history/restore'
 import { createAnalysisH3InitialState, createAnalysisH3Methods } from '../../../features/h3/panel'
 import { createAnalysisPopulationInitialState, createAnalysisPopulationMethods } from '../../../features/population/panel'
+import { createAnalysisNightlightInitialState, createAnalysisNightlightMethods } from '../../../features/nightlight/panel'
 import { createAnalysisExportInitialState, createAnalysisExportMethods } from '../../../features/export/export-bundle'
 import { createRoadSyntaxUiMethods } from '../../../features/road/ui'
 import { createRoadSyntaxControllerCoreMethods } from '../../../features/road/controller-core'
@@ -20,6 +21,7 @@ import { useAnalysisSessionStore, ANALYSIS_SESSION_STATE_KEYS } from '../../../s
 import { useAnalysisHistoryStore, ANALYSIS_HISTORY_STATE_KEYS } from '../../../stores/analysis/history'
 import { useAnalysisH3Store, ANALYSIS_H3_STATE_KEYS } from '../../../stores/analysis/h3'
 import { useAnalysisPopulationStore, ANALYSIS_POPULATION_STATE_KEYS } from '../../../stores/analysis/population'
+import { useAnalysisNightlightStore, ANALYSIS_NIGHTLIGHT_STATE_KEYS } from '../../../stores/analysis/nightlight'
 import { useAnalysisExportStore, ANALYSIS_EXPORT_STATE_KEYS } from '../../../stores/analysis/export'
 import { useAnalysisRoadStore, ANALYSIS_ROAD_STATE_KEYS } from '../../../stores/analysis/road'
 import { createStoreBackedComputed } from '../adapters/store-computed-bridge'
@@ -65,6 +67,8 @@ function createAnalysisBootstrapContext(options = {}) {
   const h3Methods = createAnalysisH3Methods()
   const buildAnalysisPopulationInitialState = () => createAnalysisPopulationInitialState()
   const populationMethods = createAnalysisPopulationMethods()
+  const buildAnalysisNightlightInitialState = () => createAnalysisNightlightInitialState()
+  const nightlightMethods = createAnalysisNightlightMethods()
   const buildAnalysisExportInitialState = () => createAnalysisExportInitialState()
   const exportMethods = createAnalysisExportMethods()
   const roadSyntaxUiMethods = createRoadSyntaxUiMethods(roadSyntaxConst)
@@ -107,6 +111,7 @@ function createAnalysisBootstrapContext(options = {}) {
     buildAnalysisHistoryInitialState,
     buildAnalysisH3InitialState,
     buildAnalysisPopulationInitialState,
+    buildAnalysisNightlightInitialState,
     buildAnalysisExportInitialState,
     buildRoadSyntaxInitialState,
   })
@@ -115,6 +120,7 @@ function createAnalysisBootstrapContext(options = {}) {
   const historyStore = useAnalysisHistoryStore(pinia)
   const h3Store = useAnalysisH3Store(pinia)
   const populationStore = useAnalysisPopulationStore(pinia)
+  const nightlightStore = useAnalysisNightlightStore(pinia)
   const exportStore = useAnalysisExportStore(pinia)
   const roadStore = useAnalysisRoadStore(pinia)
   const storeBackedComputed = createStoreBackedComputed([
@@ -122,6 +128,7 @@ function createAnalysisBootstrapContext(options = {}) {
     { store: historyStore, fieldKeys: ANALYSIS_HISTORY_STATE_KEYS },
     { store: h3Store, fieldKeys: ANALYSIS_H3_STATE_KEYS },
     { store: populationStore, fieldKeys: ANALYSIS_POPULATION_STATE_KEYS },
+    { store: nightlightStore, fieldKeys: ANALYSIS_NIGHTLIGHT_STATE_KEYS },
     { store: exportStore, fieldKeys: ANALYSIS_EXPORT_STATE_KEYS },
     { store: roadStore, fieldKeys: ANALYSIS_ROAD_STATE_KEYS },
   ])
@@ -142,6 +149,7 @@ function createAnalysisBootstrapContext(options = {}) {
       historyMethods,
       h3Methods,
       populationMethods,
+      nightlightMethods,
       exportMethods,
       roadSyntaxOverlayCommitMethods,
       roadSyntaxControllerCoreMethods,

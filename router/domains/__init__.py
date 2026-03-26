@@ -3,6 +3,7 @@ from .h3 import router as h3_router
 from .history import router as history_router
 from .isochrone import router as isochrone_router
 from .map import router as map_router
+from .nightlight import router as nightlight_router
 from .poi import router as poi_router
 from .population import router as population_router
 from .road import router as road_router
@@ -14,6 +15,7 @@ __all__ = [
     "history_router",
     "isochrone_router",
     "map_router",
+    "nightlight_router",
     "poi_router",
     "population_router",
     "road_router",

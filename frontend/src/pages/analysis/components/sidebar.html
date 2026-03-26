@@ -916,6 +916,52 @@
                                     </div>
                                 </div>
 
+                                <div class="panel poi-panel" v-show="activeStep3Panel === 'nightlight'">
+                                    <div class="poi-subpanel">
+                                        <div v-if="!nightlightGrid || !nightlightGrid.features || !nightlightGrid.features.length" class="panel-placeholder" style="margin-top:10px;">
+                                            先在步骤一生成分析范围。
+                                        </div>
+                                        <div v-if="nightlightMeta && getNightlightYearOptions().length" class="population-view-control-row">
+                                            <label class="population-inline-field">
+                                                <span>年份</span>
+                                                <select v-model="nightlightSelectedYear" @change="onNightlightYearChange" class="h3-params-select">
+                                                    <option v-for="item in getNightlightYearOptions()" :key="`nightlight-year-${item.year}`" :value="item.year">
+                                                        {{ item.label }}
+                                                    </option>
+                                                </select>
+                                            </label>
+                                        </div>
+                                        <div v-if="nightlightLayer && nightlightLayer.legend" class="population-legend-card" style="margin-top:10px;">
+                                            <div class="population-legend-title">
+                                                {{ nightlightLayer.legend.title }}
+                                                <span style="color:#6b7280; font-weight:400;">
+                                                    {{ nightlightLayer.legend.unit ? `（${nightlightLayer.legend.unit}）` : '' }}
+                                                </span>
+                                            </div>
+                                            <div class="population-legend-gradient" :style="getNightlightLegendGradientStyle()"></div>
+                                            <div class="population-legend-grid">
+                                                <div v-for="(item, idx) in nightlightLayer.legend.stops" :key="`nightlight-legend-${idx}`"
+                                                    class="population-legend-item">
+                                                    <span class="population-legend-swatch" :style="{ background:item.color }"></span>
+                                                    <span>{{ formatNightlightValue(item.value, 2) }}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div v-if="nightlightOverview" class="population-analysis-grid" style="margin-top:10px;">
+                                            <div v-for="row in getNightlightSummaryRows()" :key="`nightlight-card-${row.key}`" class="population-analysis-card">
+                                                <div class="population-analysis-card-label">{{ row.label }}</div>
+                                                <div class="population-analysis-card-value">{{ row.value }}</div>
+                                            </div>
+                                        </div>
+                                        <div v-if="nightlightStatus" class="status-text" style="margin-top:10px;">
+                                            {{ nightlightStatus }}
+                                        </div>
+                                        <div v-else-if="!nightlightOverview" class="panel-placeholder" style="margin-top:10px;">
+                                            {{ isComputingNightlight ? '正在自动计算夜光分析...' : '进入夜光面板后会自动计算并展示结果。' }}
+                                        </div>
+                                    </div>
+                                </div>
+
 
                                 <div class="panel" v-show="activeStep3Panel === 'syntax'">
                                     <h4>路网分析</h4>
