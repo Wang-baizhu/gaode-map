@@ -45,9 +45,8 @@ uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 cd /mnt/d/Coding/map_analyse/gaode-map
 docker compose up --build
 ```
-- 会启动后端热更新容器和 `frontend-builder` 监听构建服务
-- `frontend-builder` 会把 Vite 产物持续写入 `static/frontend/`
-- `app` 会等待 `static/frontend/index.html` 出现后再启动
+- 仅启动后端及其依赖服务，不再单独启动前端构建容器
+- 因为开发 Compose 会把项目目录挂进容器，启动前请先在宿主机执行一次 `npm run build`，确保 `static/frontend/` 已生成
 - `static/frontend/` 是部署产物，继续保持 `.gitignore`
 
 ## 4. 访问入口
@@ -72,7 +71,7 @@ docker compose up --build
 - 地图：`AMAP_WEB_SERVICE_KEY`、`AMAP_JS_API_KEY`、`AMAP_JS_SECURITY_CODE`、`TIANDITU_KEY`
 - 路网/等时圈：`DEPTHMAPX_CLI_PATH`、`OVERPASS_ENDPOINT`、`VALHALLA_BASE_URL`
 - 人口分析：`POPULATION_DATA_DIR`、`POPULATION_PREVIEW_MAX_SIZE`
-- 夜光分析：`NIGHTLIGHT_DATA_DIR`、`NIGHTLIGHT_PREVIEW_MAX_SIZE`、`NIGHTLIGHT_GRID_MAX_CELLS`
+- 夜光分析：`NIGHTLIGHT_DATA_DIR`、`NIGHTLIGHT_PREVIEW_MAX_SIZE`
 - 数据库：`DB_URL`（可选；未配置时走 SQLite）
 - 图表输出目录覆盖：`CHART_OUTPUT_DIR`（可选，默认 `runtime/generated_charts/`）
 

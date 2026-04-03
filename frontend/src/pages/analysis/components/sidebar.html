@@ -854,9 +854,6 @@
 
                                 <div class="panel poi-panel" v-show="activeStep3Panel === 'population'">
                                     <div class="poi-subpanel">
-                                        <div v-if="!populationGrid || !populationGrid.features || !populationGrid.features.length" class="panel-placeholder" style="margin-top:10px;">
-                                            先在步骤一生成分析范围。
-                                        </div>
                                         <div v-if="populationOverview" class="h3-subtabs population-view-tabs">
                                             <button type="button" class="h3-subtab-pill"
                                                 :class="{ active: populationAnalysisView === 'density' }"
@@ -918,9 +915,6 @@
 
                                 <div class="panel poi-panel" v-show="activeStep3Panel === 'nightlight'">
                                     <div class="poi-subpanel">
-                                        <div v-if="!nightlightGrid || !nightlightGrid.features || !nightlightGrid.features.length" class="panel-placeholder" style="margin-top:10px;">
-                                            先在步骤一生成分析范围。
-                                        </div>
                                         <div v-if="nightlightMeta && getNightlightYearOptions().length" class="population-view-control-row">
                                             <label class="population-inline-field">
                                                 <span>年份</span>
@@ -1190,4 +1184,5 @@
                     historyList.length }})
                 </button>
             </div>
+
         </aside>

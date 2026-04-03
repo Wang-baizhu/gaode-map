@@ -131,24 +131,23 @@ function createAnalysisNightlightMethods() {
     buildNightlightStyledFeatures() {
       const baseFeatures = ((this.nightlightGrid && this.nightlightGrid.features) || [])
       const cellMap = new Map(
-        (((this.nightlightLayer && this.nightlightLayer.cells) || []).map((cell) => [String(cell.cell_id || ''), cell]))
+        (((this.nightlightLayer && this.nightlightLayer.cells) || []).map((cell) => [String((cell && cell.cell_id) || ''), cell]))
       )
-      const usingAnalysisStyle = !!(this.nightlightLayer && Array.isArray(this.nightlightLayer.cells) && this.nightlightLayer.cells.length > 0)
       return baseFeatures.map((feature) => {
         const props = Object.assign({}, (feature && feature.properties) || {})
         const cell = cellMap.get(String(props.cell_id || ''))
         return {
           type: 'Feature',
           geometry: feature.geometry,
-          properties: Object.assign({}, props, usingAnalysisStyle && cell ? {
-            fillColor: String(cell.fill_color || '#1f2937'),
-            fillOpacity: toNumber(cell.fill_opacity, 0.24),
-            strokeColor: String(cell.stroke_color || '#ffffff'),
+          properties: Object.assign({}, props, cell ? {
+            fillColor: String(cell.fill_color || '#0f172a'),
+            fillOpacity: toNumber(cell.fill_opacity, 0.28),
+            strokeColor: String(cell.stroke_color || '#94a3b8'),
             strokeWeight: 0.8,
           } : {
-            fillColor: '#172554',
-            fillOpacity: 0.12,
-            strokeColor: '#bfdbfe',
+            fillColor: '#090b1f',
+            fillOpacity: 0.28,
+            strokeColor: '#94a3b8',
             strokeWeight: 0.8,
           }),
         }
@@ -156,33 +155,24 @@ function createAnalysisNightlightMethods() {
     },
     applyNightlightGridToMap() {
       if (!this.mapCore) return
-      const features = this.buildNightlightStyledFeatures()
       if (typeof this.mapCore.clearPopulationRasterOverlay === 'function') {
         this.mapCore.clearPopulationRasterOverlay()
       }
+      const features = this.buildNightlightStyledFeatures()
       if (!features.length) {
-        if (typeof this.mapCore.clearGridPolygons === 'function') this.mapCore.clearGridPolygons()
-      } else if (typeof this.mapCore.setGridFeatures === 'function') {
+        if (typeof this.mapCore.clearGridPolygons === 'function') {
+          this.mapCore.clearGridPolygons()
+        }
+        return
+      }
+      if (typeof this.mapCore.setGridFeatures === 'function') {
         this.mapCore.setGridFeatures(features, {
-          strokeColor: '#bfdbfe',
+          strokeColor: '#94a3b8',
           strokeWeight: 0.8,
-          fillColor: '#172554',
-          fillOpacity: 0.12,
+          fillColor: '#090b1f',
+          fillOpacity: 0.28,
           clickable: false,
           webglBatch: true,
-        })
-      }
-      if (
-        this.nightlightRaster
-        && this.nightlightRaster.image_url
-        && Array.isArray(this.nightlightRaster.bounds_gcj02)
-        && this.nightlightRaster.bounds_gcj02.length >= 2
-        && typeof this.mapCore.setPopulationRasterOverlay === 'function'
-      ) {
-        this.mapCore.setPopulationRasterOverlay({
-          imageUrl: this.nightlightRaster.image_url,
-          bounds: this.nightlightRaster.bounds_gcj02,
-          opacity: 0.78,
         })
       }
     },
@@ -307,10 +297,8 @@ function createAnalysisNightlightMethods() {
       try {
         await this.ensureNightlightBaseGrid(false)
         await this.fetchNightlightOverview()
-        await Promise.all([
-          this.fetchNightlightLayer(),
-          this.fetchNightlightRaster(),
-        ])
+        await this.fetchNightlightLayer()
+        await this.fetchNightlightRaster()
         this.nightlightStatus = `夜光分析完成：${this.getNightlightSelectedYearLabel()}`
         if (this.isNightlightDisplayActive()) {
           this.applyNightlightGridToMap()
@@ -325,7 +313,7 @@ function createAnalysisNightlightMethods() {
     async ensureNightlightPanelEntryState() {
       const rawRing = this.getIsochronePolygonRing()
       if (!rawRing) {
-        this.nightlightStatus = '先在步骤一生成分析范围。'
+        this.nightlightStatus = ''
         this.restoreNightlightDisplayOnEnter()
         return
       }

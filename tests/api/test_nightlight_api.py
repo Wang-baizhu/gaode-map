@@ -33,6 +33,14 @@ def test_nightlight_overview_grid_layer_and_raster_api(tmp_path):
     configure_nightlight_dir(tmp_path, year=2025)
     polygon = sample_gcj02_polygon()
 
+    population_grid_resp = asyncio.run(_request(
+        "POST",
+        "/api/v1/analysis/population/grid",
+        json={"polygon": polygon, "coord_type": "gcj02"},
+    ))
+    assert population_grid_resp.status_code == 200
+    population_grid = population_grid_resp.json()
+
     grid_resp = asyncio.run(_request(
         "POST",
         "/api/v1/analysis/nightlight/grid",
@@ -40,8 +48,13 @@ def test_nightlight_overview_grid_layer_and_raster_api(tmp_path):
     ))
     assert grid_resp.status_code == 200
     grid = grid_resp.json()
-    assert 0 < grid["cell_count"] <= 4
+    assert grid["cell_count"] > 0
     assert len(grid["features"]) == grid["cell_count"]
+    assert grid["cell_count"] == population_grid["cell_count"]
+    grid_ids = {str((feature.get("properties") or {}).get("cell_id") or "") for feature in grid["features"]}
+    population_ids = {str((feature.get("properties") or {}).get("cell_id") or "") for feature in population_grid["features"]}
+    assert "" not in grid_ids
+    assert grid_ids == population_ids
 
     overview_resp = asyncio.run(_request(
         "POST",
@@ -69,6 +82,9 @@ def test_nightlight_overview_grid_layer_and_raster_api(tmp_path):
     assert layer["selected"]["view"] == "radiance"
     assert layer["legend"]["unit"] == "nWatts/(cm^2 sr)"
     assert len(layer["cells"]) == grid["cell_count"]
+    layer_ids = {str((cell or {}).get("cell_id") or "") for cell in layer["cells"]}
+    assert layer_ids == grid_ids
+    assert any(float((cell or {}).get("value") or 0.0) > 0.0 for cell in layer["cells"])
 
     raster_resp = asyncio.run(_request(
         "POST",

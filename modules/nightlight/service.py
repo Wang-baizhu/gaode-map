@@ -13,11 +13,12 @@ from pathlib import Path
 from typing import Any, Dict, Sequence
 
 import numpy as np
-from shapely.geometry import MultiPolygon, Polygon, mapping
+from shapely.geometry import MultiPolygon, Polygon, box, mapping, shape
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import transform
 
 from core.config import settings
+from modules.population.service import get_population_grid
 from modules.providers.amap.utils.transform_posi import gcj02_to_wgs84, wgs84_to_gcj02
 
 logger = logging.getLogger(__name__)
@@ -26,7 +27,7 @@ RADIANCE_VIEW = "radiance"
 RADIANCE_VIEW_LABEL = "夜光辐亮"
 RADIANCE_UNIT = "nWatts/(cm^2 sr)"
 PREVIEW_STYLE_VERSION = "v1"
-GRID_STYLE_VERSION = "v1"
+GRID_STYLE_VERSION = "v2"
 MANIFEST_FILENAME = "manifest.json"
 DEFAULT_VARIABLE_NAME = "NearNadir_Composite_Snow_Free"
 PREVIEW_PALETTE = [
@@ -351,7 +352,7 @@ def _transform_corner(masked_transform, col: int, row: int) -> tuple[float, floa
     return masked_transform * (float(col), float(row))
 
 
-def _cell_polygon_gcj02(masked_transform, row_start: int, col_start: int, row_end: int, col_end: int) -> list[list[list[float]]]:
+def _cell_polygon_gcj02(masked_transform, row_start: float, col_start: float, row_end: float, col_end: float) -> list[list[list[float]]]:
     corners_wgs84 = [
         _transform_corner(masked_transform, col_start, row_start),
         _transform_corner(masked_transform, col_end, row_start),
@@ -365,7 +366,7 @@ def _cell_polygon_gcj02(masked_transform, row_start: int, col_start: int, row_en
     ]]
 
 
-def _cell_centroid_gcj02(masked_transform, row_start: int, col_start: int, row_end: int, col_end: int) -> list[float]:
+def _cell_centroid_gcj02(masked_transform, row_start: float, col_start: float, row_end: float, col_end: float) -> list[float]:
     center_col = col_start + ((col_end - col_start) / 2.0)
     center_row = row_start + ((row_end - row_start) / 2.0)
     lng, lat = masked_transform * (center_col, center_row)
@@ -373,47 +374,12 @@ def _cell_centroid_gcj02(masked_transform, row_start: int, col_start: int, row_e
     return [float(gcj_lng), float(gcj_lat)]
 
 
-def _build_cell_id(row_start: int, col_start: int, stride: int) -> str:
-    return f"nl_{int(row_start)}_{int(col_start)}_{int(stride)}"
-
-
-def _build_aggregated_cells(masked_array: np.ma.MaskedArray, masked_transform, max_cells: int) -> list[dict[str, Any]]:
-    values = np.ma.filled(masked_array, np.nan).astype(np.float64)
-    mask = np.ma.getmaskarray(masked_array)
-    valid = (~mask) & np.isfinite(values)
-    valid_count = int(np.sum(valid))
-    if valid_count <= 0:
-        return []
-    safe_values = np.maximum(values, 0.0)
-    stride = max(1, int(math.ceil(math.sqrt(valid_count / max(max_cells, 1)))))
-    height, width = safe_values.shape
-    cells: list[dict[str, Any]] = []
-    block_row = 0
-    for row_start in range(0, height, stride):
-        row_end = min(height, row_start + stride)
-        block_col = 0
-        for col_start in range(0, width, stride):
-            col_end = min(width, col_start + stride)
-            block_valid = valid[row_start:row_end, col_start:col_end]
-            if not np.any(block_valid):
-                block_col += 1
-                continue
-            block_values = safe_values[row_start:row_end, col_start:col_end][block_valid]
-            value = float(np.mean(block_values))
-            cell_id = _build_cell_id(row_start, col_start, stride)
-            cells.append(
-                {
-                    "cell_id": cell_id,
-                    "row": int(block_row),
-                    "col": int(block_col),
-                    "raw_value": _round_float(value, 6),
-                    "centroid_gcj02": _cell_centroid_gcj02(masked_transform, row_start, col_start, row_end, col_end),
-                    "geometry_gcj02": _cell_polygon_gcj02(masked_transform, row_start, col_start, row_end, col_end),
-                }
-            )
-            block_col += 1
-        block_row += 1
-    return cells
+def _grid_bounds(masked_transform, width: int, height: int) -> tuple[float, float, float, float]:
+    west = float(masked_transform.c)
+    north = float(masked_transform.f)
+    east = west + (float(masked_transform.a) * float(width))
+    south = north + (float(masked_transform.e) * float(height))
+    return west, south, east, north
 
 
 def _palette_color(ratio: float) -> tuple[int, int, int]:
@@ -544,13 +510,13 @@ def _build_layer_cells(grid_cells: list[dict[str, Any]], unit: str) -> tuple[lis
         raw_value = max(0.0, float(cell["raw_value"]))
         normalized = 0.0 if max_value <= min_value else max(0.0, min(1.0, (raw_value - min_value) / span))
         color = _palette_color(normalized if raw_value > 0 else 0.0)
-        opacity = 0.12 + (0.52 * normalized) if raw_value > 0 else 0.08
+        opacity = 0.28 + (0.40 * normalized)
         cells.append(
             {
                 "cell_id": str(cell["cell_id"]),
                 "value": _round_float(raw_value, 3),
                 "fill_color": f"#{color[0]:02x}{color[1]:02x}{color[2]:02x}",
-                "stroke_color": "#ffffff",
+                "stroke_color": "#94a3b8" if raw_value <= 0 else "#ffffff",
                 "fill_opacity": _round_float(opacity, 3),
                 "label": f"{RADIANCE_VIEW_LABEL} {_round_float(raw_value, 2)} {unit}",
             }
@@ -566,6 +532,105 @@ def _selected_descriptor(year: int, unit: str) -> Dict[str, Any]:
         "view_label": RADIANCE_VIEW_LABEL,
         "unit": unit,
     }
+
+
+def _load_population_grid_features(polygon: list, coord_type: str) -> list[dict[str, Any]]:
+    payload = get_population_grid(polygon, coord_type)
+    features = []
+    for raw_feature in payload.get("features") or []:
+        if not isinstance(raw_feature, dict):
+            continue
+        geometry = raw_feature.get("geometry") or {}
+        if str(geometry.get("type") or "") != "Polygon":
+            continue
+        props = raw_feature.get("properties") or {}
+        cell_id = str(props.get("cell_id") or "").strip()
+        if not cell_id:
+            continue
+        try:
+            geom_gcj02 = shape(geometry)
+        except Exception:
+            continue
+        if geom_gcj02.is_empty:
+            continue
+        geom_wgs84 = _convert_geometry(geom_gcj02, gcj02_to_wgs84).buffer(0)
+        if geom_wgs84.is_empty:
+            continue
+        features.append(
+            {
+                "feature": raw_feature,
+                "properties": props,
+                "cell_id": cell_id,
+                "geometry_wgs84": geom_wgs84,
+            }
+        )
+    return features
+
+
+def _aggregate_clip_to_population_cells(
+    clip: Dict[str, Any],
+    population_features: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not population_features:
+        return []
+
+    masked_array = clip.get("array")
+    if masked_array is None:
+        return []
+    masked_transform = clip.get("transform")
+    if masked_transform is None:
+        return []
+
+    values = np.ma.filled(masked_array, np.nan).astype(np.float64)
+    mask = np.ma.getmaskarray(masked_array)
+    valid = (~mask) & np.isfinite(values)
+    height, width = values.shape
+    inverse_transform = ~masked_transform
+
+    rows = []
+    for item in population_features:
+        geom_wgs84 = item.get("geometry_wgs84")
+        pixel_count = 0
+        mean_value = 0.0
+        if geom_wgs84 is not None and not geom_wgs84.is_empty and width > 0 and height > 0:
+            geom_pixel = transform(
+                lambda x, y, z=None: inverse_transform * (x, y),
+                geom_wgs84,
+            ).buffer(0)
+            if not geom_pixel.is_empty:
+                minx, miny, maxx, maxy = geom_pixel.bounds
+                row_start = max(0, int(math.floor(min(miny, maxy))))
+                row_stop = min(height, int(math.ceil(max(miny, maxy))))
+                col_start = max(0, int(math.floor(min(minx, maxx))))
+                col_stop = min(width, int(math.ceil(max(minx, maxx))))
+                weighted_sum = 0.0
+                total_weight = 0.0
+                if row_stop > row_start and col_stop > col_start:
+                    for row in range(row_start, row_stop):
+                        for col in range(col_start, col_stop):
+                            if not bool(valid[row, col]):
+                                continue
+                            overlap_area = float(geom_pixel.intersection(box(col, row, col + 1, row + 1)).area)
+                            if overlap_area <= 1e-9:
+                                continue
+                            weighted_sum += max(float(values[row, col]), 0.0) * overlap_area
+                            total_weight += overlap_area
+                            pixel_count += 1
+                if total_weight > 1e-9:
+                    mean_value = weighted_sum / total_weight
+        props = item["properties"]
+        rows.append(
+            {
+                "cell_id": item["cell_id"],
+                "row": int(props.get("row", -1)),
+                "col": int(props.get("col", -1)),
+                "raw_value": _round_float(mean_value, 6),
+                "valid_pixel_count": pixel_count,
+                "centroid_gcj02": list(props.get("centroid_gcj02") or []),
+                "geometry_gcj02": ((item["feature"].get("geometry") or {}).get("coordinates") or []),
+            }
+        )
+    return rows
 
 
 def build_nightlight_meta_payload() -> Dict[str, Any]:
@@ -604,28 +669,8 @@ def get_nightlight_grid(polygon: list, coord_type: str = "gcj02", year: int | No
             "cell_count": 0,
             "features": [],
         }
-    raw_cells = _build_aggregated_cells(
-        clip["array"],
-        clip["transform"],
-        int(settings.nightlight_grid_max_cells or 5000),
-    )
-    features = []
-    for cell in raw_cells:
-        features.append(
-            {
-                "type": "Feature",
-                "geometry": {
-                    "type": "Polygon",
-                    "coordinates": cell["geometry_gcj02"],
-                },
-                "properties": {
-                    "cell_id": cell["cell_id"],
-                    "row": cell["row"],
-                    "col": cell["col"],
-                    "centroid_gcj02": cell["centroid_gcj02"],
-                },
-            }
-        )
+    population_features = _load_population_grid_features(polygon, coord_type)
+    features = [copy.deepcopy(item["feature"]) for item in population_features]
     return {
         "scope_id": scope_id,
         "year": int(dataset["year"]),
@@ -658,11 +703,8 @@ def get_nightlight_layer(
             "cells": [],
         }
     summary = _summarize_values(clip["array"])
-    raw_cells = _build_aggregated_cells(
-        clip["array"],
-        clip["transform"],
-        int(settings.nightlight_grid_max_cells or 5000),
-    )
+    population_features = _load_population_grid_features(polygon, coord_type)
+    raw_cells = _aggregate_clip_to_population_cells(clip, population_features)
     cells, legend = _build_layer_cells(raw_cells, str(dataset["unit"]))
     return {
         "scope_id": resolved_scope_id,

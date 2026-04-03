@@ -266,6 +266,27 @@ label {
     animation: history-refresh-spin 0.9s linear infinite;
 }
 
+.history-shortcut-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 30px;
+    padding: 0 12px;
+    border: 1px solid #d8dee9;
+    border-radius: 999px;
+    background: #f8fafc;
+    color: #334155;
+    font-size: 12px;
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.history-shortcut-btn:hover {
+    color: #0f172a;
+    background: #eef2f7;
+    text-decoration: none;
+}
+
 @keyframes history-refresh-spin {
     from {
         transform: rotate(0deg);

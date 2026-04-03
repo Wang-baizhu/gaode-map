@@ -57,3 +57,8 @@ dependencies = [
     "aiohttp>=3.9.0",
     "cryptography",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]

@@ -154,11 +154,6 @@ class Settings(BaseSettings):
         validation_alias="NIGHTLIGHT_PREVIEW_MAX_SIZE",
         description="Maximum preview PNG size for nightlight raster outputs",
     )
-    nightlight_grid_max_cells: int = Field(
-        5000,
-        validation_alias="NIGHTLIGHT_GRID_MAX_CELLS",
-        description="Maximum number of nightlight grid cells returned per request",
-    )
 
     # ArcGIS HTTP bridge config
     arcgis_bridge_enabled: bool = Field(
