@@ -7,8 +7,18 @@ from typing import Any
 
 from core.config import settings
 
+from .analysis import build_gradient_layer_cells, build_hotspot_layer_cells
 from .aggregate import aggregate_clip_to_target_cells
-from .common import RADIANCE_VIEW, RADIANCE_VIEW_LABEL, build_scope_id, to_wgs84_geometry
+from .common import (
+    GRADIENT_VIEW,
+    GRADIENT_VIEW_LABEL,
+    HOTSPOT_VIEW,
+    HOTSPOT_VIEW_LABEL,
+    RADIANCE_VIEW,
+    RADIANCE_VIEW_LABEL,
+    build_scope_id,
+    to_wgs84_geometry,
+)
 from .dataset import load_manifest, load_or_compute_clip, resolve_dataset
 from .render import (
     bounds_gcj02_from_transform,
@@ -55,13 +65,26 @@ def _empty_grid_payload(scope_id: str, year: int) -> dict[str, Any]:
     }
 
 
-def _empty_layer_payload(scope_id: str, year: int, unit: str) -> dict[str, Any]:
+def _empty_layer_payload(
+    scope_id: str,
+    year: int,
+    unit: str,
+    view: str = RADIANCE_VIEW,
+    view_label: str = RADIANCE_VIEW_LABEL,
+) -> dict[str, Any]:
+    if view == HOTSPOT_VIEW:
+        _, legend, _ = build_hotspot_layer_cells([], unit)
+    elif view == GRADIENT_VIEW:
+        _, legend, _ = build_gradient_layer_cells([], unit)
+    else:
+        legend = build_legend(RADIANCE_VIEW_LABEL, 0.0, 0.0, unit)
     return {
         "scope_id": scope_id,
         "year": int(year),
-        "selected": selected_descriptor(int(year), unit),
+        "selected": selected_descriptor(int(year), unit, view=view, view_label=view_label),
         "summary": default_summary(),
-        "legend": build_legend(RADIANCE_VIEW_LABEL, 0.0, 0.0, unit),
+        "analysis": {},
+        "legend": legend,
         "cells": [],
     }
 
@@ -117,20 +140,44 @@ def get_nightlight_layer(
     view: str = RADIANCE_VIEW,
 ) -> dict[str, Any]:
     safe_view = str(view or RADIANCE_VIEW).strip().lower()
-    if safe_view != RADIANCE_VIEW:
+    if safe_view not in {RADIANCE_VIEW, HOTSPOT_VIEW, GRADIENT_VIEW}:
         raise ValueError(f"unsupported nightlight view: {view}")
     dataset, resolved_scope_id, clip = _resolve_context(polygon, coord_type, year, scope_id=scope_id)
+    if safe_view == HOTSPOT_VIEW:
+        view_label = HOTSPOT_VIEW_LABEL
+    elif safe_view == GRADIENT_VIEW:
+        view_label = GRADIENT_VIEW_LABEL
+    else:
+        view_label = RADIANCE_VIEW_LABEL
     if clip.empty:
-        return _empty_layer_payload(resolved_scope_id, int(dataset.year), str(dataset.unit))
+        return _empty_layer_payload(
+            resolved_scope_id,
+            int(dataset.year),
+            str(dataset.unit),
+            view=safe_view,
+            view_label=view_label,
+        )
 
     target_cells = load_target_cells(polygon, coord_type)
     aggregated_cells = aggregate_clip_to_target_cells(clip, target_cells)
-    cells, legend = build_layer_cells(aggregated_cells, str(dataset.unit))
+    if safe_view == HOTSPOT_VIEW:
+        cells, legend, analysis = build_hotspot_layer_cells(aggregated_cells, str(dataset.unit))
+    elif safe_view == GRADIENT_VIEW:
+        cells, legend, analysis = build_gradient_layer_cells(aggregated_cells, str(dataset.unit))
+    else:
+        cells, legend = build_layer_cells(aggregated_cells, str(dataset.unit))
+        analysis = {}
     return {
         "scope_id": resolved_scope_id,
         "year": int(dataset.year),
-        "selected": selected_descriptor(int(dataset.year), str(dataset.unit)),
+        "selected": selected_descriptor(
+            int(dataset.year),
+            str(dataset.unit),
+            view=safe_view,
+            view_label=view_label,
+        ),
         "summary": summarize_masked_values(clip.array),
+        "analysis": analysis,
         "legend": legend,
         "cells": cells,
     }

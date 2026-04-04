@@ -25,7 +25,7 @@ class NightlightRasterRequest(NightlightBaseRequest):
 
 class NightlightLayerRequest(NightlightBaseRequest):
     scope_id: Optional[str] = Field(None, description="Optional scope cache key from grid/overview")
-    view: Literal["radiance"] = Field("radiance")
+    view: Literal["radiance", "hotspot", "gradient"] = Field("radiance")
 
 
 class NightlightYearOption(BaseModel):
@@ -78,6 +78,22 @@ class NightlightSelectedDescriptor(BaseModel):
     unit: str = "nWatts/(cm^2 sr)"
 
 
+class NightlightLayerAnalysis(BaseModel):
+    core_hotspot_count: int = 0
+    secondary_hotspot_count: int = 0
+    emerging_hotspot_count: int = 0
+    transition_count: int = 0
+    low_light_count: int = 0
+    hotspot_cell_ratio: float = 0.0
+    peak_radiance: float = 0.0
+    peak_cell_id: Optional[str] = None
+    max_distance_km: float = 0.0
+    core_band_count: int = 0
+    middle_band_count: int = 0
+    fringe_band_count: int = 0
+    peak_to_edge_ratio: float = 0.0
+
+
 class NightlightGridResponse(BaseModel):
     scope_id: str
     year: int
@@ -90,6 +106,8 @@ class NightlightLayerCell(BaseModel):
     value: float = 0.0
     valid_pixel_count: int = 0
     has_data: bool = False
+    class_key: Optional[str] = None
+    class_label: Optional[str] = None
     fill_color: str = "#0f172a"
     stroke_color: str = "#1f2937"
     fill_opacity: float = 0.0
@@ -101,6 +119,7 @@ class NightlightLayerResponse(BaseModel):
     year: int
     selected: NightlightSelectedDescriptor
     summary: NightlightOverviewSummary
+    analysis: NightlightLayerAnalysis = Field(default_factory=NightlightLayerAnalysis)
     legend: NightlightLegend
     cells: List[NightlightLayerCell] = Field(default_factory=list)
 

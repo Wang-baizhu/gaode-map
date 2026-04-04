@@ -117,6 +117,46 @@ def test_nightlight_grid_layer_and_raster_alignment(tmp_path):
     assert layer["legend"]["stops"][-1]["color"] == "#ffffff"
 
 
+def test_nightlight_hotspot_layer_builds_categorical_classes(tmp_path):
+    configure_nightlight_dir(tmp_path, year=2025)
+
+    polygon = sample_gcj02_polygon()
+    grid = get_nightlight_grid(polygon, "gcj02", 2025)
+    layer = get_nightlight_layer(polygon, "gcj02", scope_id=grid["scope_id"], year=2025, view="hotspot")
+
+    assert layer["selected"]["view"] == "hotspot"
+    assert layer["selected"]["view_label"] == "热点分级"
+    assert layer["legend"]["kind"] == "categorical"
+    assert len(layer["cells"]) == grid["cell_count"]
+    assert layer["analysis"]["core_hotspot_count"] == 2
+    assert layer["analysis"]["secondary_hotspot_count"] == 2
+    assert layer["analysis"]["emerging_hotspot_count"] == 3
+    assert abs(float(layer["analysis"]["hotspot_cell_ratio"]) - 0.4375) < 1e-6
+    assert float(layer["analysis"]["peak_radiance"]) == 16.0
+    assert all(cell.get("class_key") in {"core_hotspot", "secondary_hotspot", "emerging_hotspot", "transition", "low_light"} for cell in layer["cells"])
+    assert any(str(cell["label"]).startswith("核心热点") for cell in layer["cells"])
+
+
+def test_nightlight_gradient_layer_builds_decay_bands(tmp_path):
+    configure_nightlight_dir(tmp_path, year=2025)
+
+    polygon = sample_gcj02_polygon()
+    grid = get_nightlight_grid(polygon, "gcj02", 2025)
+    layer = get_nightlight_layer(polygon, "gcj02", scope_id=grid["scope_id"], year=2025, view="gradient")
+
+    assert layer["selected"]["view"] == "gradient"
+    assert layer["selected"]["view_label"] == "梯度/衰减"
+    assert layer["legend"]["kind"] == "categorical"
+    assert len(layer["cells"]) == grid["cell_count"]
+    assert float(layer["analysis"]["peak_radiance"]) == 16.0
+    assert float(layer["analysis"]["max_distance_km"]) > 0.0
+    assert float(layer["analysis"]["peak_to_edge_ratio"]) > 1.0
+    assert int(layer["analysis"]["core_band_count"]) >= 1
+    assert int(layer["analysis"]["fringe_band_count"]) >= 1
+    assert all(cell.get("class_key") in {"core_peak", "inner_spread", "middle_decay", "outer_decay", "fringe_dark"} for cell in layer["cells"])
+    assert any("衰减" in str(cell["label"]) for cell in layer["cells"])
+
+
 def test_nightlight_clip_aggregation_maps_one_large_pixel_to_multiple_population_cells():
     clip = NightlightClip(
         array=np.ma.array(np.array([[10.0]], dtype=np.float64), mask=np.array([[False]], dtype=bool)),

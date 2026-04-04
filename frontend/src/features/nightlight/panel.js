@@ -18,11 +18,14 @@ function createAnalysisNightlightInitialState() {
     isComputingNightlight: false,
     isLoadingNightlightMeta: false,
     isLoadingNightlightGrid: false,
+    nightlightLayerAbortController: null,
+    nightlightLayerRequestSeq: 0,
     nightlightStatus: '',
     nightlightScopeId: '',
     nightlightMeta: meta,
     nightlightMetaLoaded: false,
     nightlightSelectedYear: Number(meta.default_year || 2025),
+    nightlightAnalysisView: 'radiance',
     nightlightOverview: null,
     nightlightGrid: null,
     nightlightGridCount: 0,
@@ -51,6 +54,36 @@ function createAnalysisNightlightMethods() {
     },
     formatNightlightPercent(value) {
       return `${(toNumber(value, 0) * 100).toFixed(1)}%`
+    },
+    getNightlightViewOptions() {
+      return [
+        { value: 'radiance', label: '辐亮' },
+        { value: 'hotspot', label: '热点分级' },
+        { value: 'gradient', label: '梯度衰减' },
+      ]
+    },
+    setNightlightAnalysisView(view) {
+      const nextView = ['radiance', 'hotspot', 'gradient'].includes(String(view || '').trim().toLowerCase())
+        ? String(view || '').trim().toLowerCase()
+        : 'radiance'
+      const currentLayerView = String((this.nightlightLayer && this.nightlightLayer.view) || '').trim().toLowerCase()
+      if (this.nightlightAnalysisView === nextView && this.nightlightLayer && currentLayerView === nextView) return
+      this.nightlightAnalysisView = nextView
+      if (!this.nightlightOverview) return
+      this.fetchNightlightLayer(nextView).catch((err) => {
+        if (err && err.name === 'AbortError') return
+        console.error(err)
+        this.nightlightStatus = '夜光图层切换失败: ' + (err && err.message ? err.message : String(err))
+      })
+    },
+    cancelNightlightLayerRequest() {
+      if (this.nightlightLayerAbortController) {
+        try {
+          this.nightlightLayerAbortController.abort()
+        } catch (_) {}
+        this.nightlightLayerAbortController = null
+      }
+      this.nightlightLayerRequestSeq = Number(this.nightlightLayerRequestSeq || 0) + 1
     },
     getNightlightYearOptions() {
       return Array.isArray(this.nightlightMeta && this.nightlightMeta.available_years)
@@ -102,6 +135,7 @@ function createAnalysisNightlightMethods() {
     resetNightlightAnalysisState(options = {}) {
       const keepMeta = !!(options && options.keepMeta)
       const keepYear = !!(options && options.keepYear)
+      this.cancelNightlightLayerRequest()
       this.isComputingNightlight = false
       this.isLoadingNightlightGrid = false
       this.nightlightStatus = ''
@@ -118,6 +152,7 @@ function createAnalysisNightlightMethods() {
       if (!keepYear) {
         this.nightlightSelectedYear = Number((this.nightlightMeta && this.nightlightMeta.default_year) || 2025)
       }
+      this.nightlightAnalysisView = 'radiance'
       this.clearNightlightDisplayOnLeave()
     },
     clearNightlightDisplayOnLeave() {
@@ -133,21 +168,31 @@ function createAnalysisNightlightMethods() {
     },
     buildNightlightStyledFeatures() {
       const baseFeatures = ((this.nightlightGrid && this.nightlightGrid.features) || [])
+      const safeView = String(this.nightlightAnalysisView || 'radiance').trim().toLowerCase()
       const cellMap = new Map(
         (((this.nightlightLayer && this.nightlightLayer.cells) || []).map((cell) => [String((cell && cell.cell_id) || ''), cell]))
       )
       return baseFeatures.map((feature) => {
         const props = Object.assign({}, (feature && feature.properties) || {})
         const cell = cellMap.get(String(props.cell_id || ''))
+        const baseOpacity = toNumber(cell && cell.fill_opacity, 0.28)
+        const hasData = !!(cell && cell.has_data)
+        const effectiveOpacity = safeView === 'radiance' && hasData
+          ? Math.min(0.82, Math.max(0.44, baseOpacity + 0.16))
+          : baseOpacity
         return {
           type: 'Feature',
           geometry: feature.geometry,
           properties: Object.assign({}, props, cell ? {
+            nightlightClassKey: cell.class_key ? String(cell.class_key) : '',
+            nightlightClassLabel: cell.class_label ? String(cell.class_label) : '',
             fillColor: String(cell.fill_color || '#0f172a'),
-            fillOpacity: toNumber(cell.fill_opacity, 0.28),
+            fillOpacity: effectiveOpacity,
             strokeColor: String(cell.stroke_color || '#94a3b8'),
             strokeWeight: 0.8,
           } : {
+            nightlightClassKey: '',
+            nightlightClassLabel: '',
             fillColor: '#090b1f',
             fillOpacity: 0.28,
             strokeColor: '#94a3b8',
@@ -155,6 +200,106 @@ function createAnalysisNightlightMethods() {
           }),
         }
       })
+    },
+    buildNightlightBoundaryConfig() {
+      const safeView = String(this.nightlightAnalysisView || 'radiance').trim().toLowerCase()
+      if (safeView === 'hotspot') {
+        return {
+          nightlightBoundaryField: 'nightlightClassKey',
+          nightlightBoundaryOrder: ['core_hotspot', 'secondary_hotspot', 'emerging_hotspot'],
+          nightlightBoundaryStyleMap: {
+            core_hotspot: {
+              strokeStyle: 'solid',
+              strokeWeight: 6,
+              strokeOpacity: 0.96,
+              strokeColor: '#fff7bc',
+              haloWeight: 9,
+              haloColor: '#ffffff',
+              haloOpacity: 0.96,
+              zIndex: 270,
+            },
+            secondary_hotspot: {
+              strokeStyle: 'solid',
+              strokeWeight: 4.5,
+              strokeOpacity: 0.94,
+              strokeColor: '#fde047',
+              haloWeight: 6,
+              haloColor: '#fffbeb',
+              haloOpacity: 0.9,
+              zIndex: 269,
+            },
+            emerging_hotspot: {
+              strokeStyle: 'solid',
+              strokeWeight: 3.2,
+              strokeOpacity: 0.94,
+              strokeColor: '#f59e0b',
+              haloWeight: 4,
+              haloColor: '#fff7ed',
+              haloOpacity: 0.82,
+              zIndex: 268,
+            },
+          },
+        }
+      }
+      if (safeView === 'gradient') {
+        return {
+          nightlightBoundaryField: 'nightlightClassKey',
+          nightlightBoundaryOrder: ['core_peak', 'inner_spread', 'middle_decay', 'outer_decay', 'fringe_dark'],
+          nightlightBoundaryStyleMap: {
+            core_peak: {
+              strokeStyle: 'solid',
+              strokeWeight: 5.2,
+              strokeOpacity: 0.96,
+              strokeColor: '#fff7bc',
+              haloWeight: 7,
+              haloColor: '#ffffff',
+              haloOpacity: 0.92,
+              zIndex: 272,
+            },
+            inner_spread: {
+              strokeStyle: 'solid',
+              strokeWeight: 4.3,
+              strokeOpacity: 0.94,
+              strokeColor: '#fde047',
+              haloWeight: 5,
+              haloColor: '#fef9c3',
+              haloOpacity: 0.86,
+              zIndex: 271,
+            },
+            middle_decay: {
+              strokeStyle: 'solid',
+              strokeWeight: 3.5,
+              strokeOpacity: 0.92,
+              strokeColor: '#f59e0b',
+              haloWeight: 4,
+              haloColor: '#fffbeb',
+              haloOpacity: 0.72,
+              zIndex: 270,
+            },
+            outer_decay: {
+              strokeStyle: 'solid',
+              strokeWeight: 2.8,
+              strokeOpacity: 0.9,
+              strokeColor: '#c2410c',
+              haloWeight: 3,
+              haloColor: '#ffedd5',
+              haloOpacity: 0.62,
+              zIndex: 269,
+            },
+            fringe_dark: {
+              strokeStyle: 'solid',
+              strokeWeight: 2.1,
+              strokeOpacity: 0.82,
+              strokeColor: '#475569',
+              haloWeight: 2,
+              haloColor: '#cbd5e1',
+              haloOpacity: 0.46,
+              zIndex: 268,
+            },
+          },
+        }
+      }
+      return {}
     },
     applyNightlightGridToMap() {
       if (!this.mapCore) return
@@ -169,14 +314,14 @@ function createAnalysisNightlightMethods() {
         return
       }
       if (typeof this.mapCore.setGridFeatures === 'function') {
-        this.mapCore.setGridFeatures(features, {
+        this.mapCore.setGridFeatures(features, Object.assign({
           strokeColor: '#94a3b8',
           strokeWeight: 0.8,
           fillColor: '#090b1f',
           fillOpacity: 0.28,
           clickable: false,
           webglBatch: true,
-        })
+        }, this.buildNightlightBoundaryConfig()))
       }
     },
     restoreNightlightDisplayOnEnter() {
@@ -246,30 +391,54 @@ function createAnalysisNightlightMethods() {
       this.nightlightScopeId = String(data.scope_id || this.nightlightScopeId || '')
       return data
     },
-    async fetchNightlightLayer() {
+    async fetchNightlightLayer(view = this.nightlightAnalysisView) {
       const polygon = this.getIsochronePolygonPayload()
-      const res = await fetch('/api/v1/analysis/nightlight/layer', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          polygon,
-          coord_type: 'gcj02',
-          year: Number(this.nightlightSelectedYear || 0) || null,
-          scope_id: this.nightlightScopeId || null,
-          view: 'radiance',
-        }),
-      })
-      if (!res.ok) {
-        let detail = ''
-        try {
-          detail = await res.text()
-        } catch (_) {}
-        throw new Error(detail || '夜光图层生成失败')
+      const safeView = ['radiance', 'hotspot', 'gradient'].includes(String(view || '').trim().toLowerCase())
+        ? String(view || '').trim().toLowerCase()
+        : 'radiance'
+      this.cancelNightlightLayerRequest()
+      const requestSeq = Number(this.nightlightLayerRequestSeq || 0) + 1
+      this.nightlightLayerRequestSeq = requestSeq
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null
+      if (controller) {
+        this.nightlightLayerAbortController = controller
       }
-      const data = await res.json()
-      this.nightlightLayer = data
-      this.nightlightScopeId = String(data.scope_id || this.nightlightScopeId || '')
-      return data
+      try {
+        const res = await fetch('/api/v1/analysis/nightlight/layer', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            polygon,
+            coord_type: 'gcj02',
+            year: Number(this.nightlightSelectedYear || 0) || null,
+            scope_id: this.nightlightScopeId || null,
+            view: safeView,
+          }),
+          signal: controller ? controller.signal : undefined,
+        })
+        if (!res.ok) {
+          let detail = ''
+          try {
+            detail = await res.text()
+          } catch (_) {}
+          throw new Error(detail || '夜光图层生成失败')
+        }
+        const data = await res.json()
+        if (requestSeq !== Number(this.nightlightLayerRequestSeq || 0)) {
+          return this.nightlightLayer
+        }
+        this.nightlightAnalysisView = safeView
+        this.nightlightLayer = data
+        this.nightlightScopeId = String(data.scope_id || this.nightlightScopeId || '')
+        if (this.isNightlightDisplayActive()) {
+          this.applyNightlightGridToMap()
+        }
+        return data
+      } finally {
+        if (this.nightlightLayerAbortController === controller) {
+          this.nightlightLayerAbortController = null
+        }
+      }
     },
     async fetchNightlightRaster() {
       const polygon = this.getIsochronePolygonPayload()
@@ -303,7 +472,8 @@ function createAnalysisNightlightMethods() {
       try {
         await this.ensureNightlightBaseGrid(false)
         await this.fetchNightlightOverview()
-        await this.fetchNightlightLayer()
+        this.nightlightAnalysisView = 'radiance'
+        await this.fetchNightlightLayer('radiance')
         await this.fetchNightlightRaster()
         this.nightlightStatus = `夜光分析完成：${this.getNightlightSelectedYearLabel()}`
         if (this.isNightlightDisplayActive()) {
@@ -344,9 +514,11 @@ function createAnalysisNightlightMethods() {
       if (!options.some((item) => Number(item.year) === year)) {
         this.nightlightSelectedYear = Number((this.nightlightMeta && this.nightlightMeta.default_year) || 2025)
       }
+      this.cancelNightlightLayerRequest()
       this.nightlightOverview = null
       this.nightlightGrid = null
       this.nightlightGridCount = 0
+      this.nightlightAnalysisView = 'radiance'
       this.nightlightLayer = null
       this.nightlightRaster = null
       this.nightlightScopeId = ''
@@ -356,6 +528,24 @@ function createAnalysisNightlightMethods() {
       const summary = (this.nightlightOverview && this.nightlightOverview.summary)
         || (this.nightlightLayer && this.nightlightLayer.summary)
         || {}
+      const analysis = (this.nightlightLayer && this.nightlightLayer.analysis) || {}
+      const safeView = String(this.nightlightAnalysisView || 'radiance')
+      if (safeView === 'hotspot') {
+        return [
+          { key: 'core_hotspot_count', label: '核心热点格数', value: `${Math.round(toNumber(analysis.core_hotspot_count, 0))}` },
+          { key: 'secondary_hotspot_count', label: '高亮热点格数', value: `${Math.round(toNumber(analysis.secondary_hotspot_count, 0))}` },
+          { key: 'hotspot_cell_ratio', label: '热点格子占比', value: this.formatNightlightPercent(analysis.hotspot_cell_ratio) },
+          { key: 'peak_radiance', label: '峰值辐亮', value: this.formatNightlightValue(analysis.peak_radiance, 2) },
+        ]
+      }
+      if (safeView === 'gradient') {
+        return [
+          { key: 'peak_radiance', label: '峰值辐亮', value: this.formatNightlightValue(analysis.peak_radiance, 2) },
+          { key: 'max_distance_km', label: '最大衰减半径', value: `${toNumber(analysis.max_distance_km, 0).toFixed(2)} km` },
+          { key: 'core_band_count', label: '核心带格数', value: `${Math.round(toNumber(analysis.core_band_count, 0))}` },
+          { key: 'peak_to_edge_ratio', label: '峰边比', value: `${toNumber(analysis.peak_to_edge_ratio, 0).toFixed(2)}x` },
+        ]
+      }
       return [
         { key: 'total_radiance', label: '总辐亮', value: this.formatNightlightValue(summary.total_radiance, 1) },
         { key: 'mean_radiance', label: '平均辐亮', value: this.formatNightlightValue(summary.mean_radiance, 2) },
@@ -372,6 +562,12 @@ function createAnalysisNightlightMethods() {
       return {
         background: `linear-gradient(90deg, ${stops.length ? stops.join(', ') : '#0f172a 0%, #fde047 100%'})`,
       }
+    },
+    getNightlightLegendNote() {
+      const safeView = String(this.nightlightAnalysisView || 'radiance').trim().toLowerCase()
+      if (safeView === 'hotspot') return '地图轮廓仅表示核心/高亮/次级热点带边界。'
+      if (safeView === 'gradient') return '地图线表示 5 档梯度衰减分带边界。'
+      return ''
     },
   }
 }

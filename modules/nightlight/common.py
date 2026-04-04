@@ -14,6 +14,10 @@ from core.spatial import (
 
 RADIANCE_VIEW = "radiance"
 RADIANCE_VIEW_LABEL = "夜光辐亮"
+HOTSPOT_VIEW = "hotspot"
+HOTSPOT_VIEW_LABEL = "热点分级"
+GRADIENT_VIEW = "gradient"
+GRADIENT_VIEW_LABEL = "梯度衰减"
 RADIANCE_UNIT = "nWatts/(cm^2 sr)"
 PREVIEW_STYLE_VERSION = "v1"
 GRID_STYLE_VERSION = "v2"

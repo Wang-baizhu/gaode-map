@@ -156,12 +156,12 @@ def build_layer_cells(
     return cells, build_legend(RADIANCE_VIEW_LABEL, min_value, max_value, unit)
 
 
-def selected_descriptor(year: int, unit: str) -> dict[str, Any]:
+def selected_descriptor(year: int, unit: str, view: str = RADIANCE_VIEW, view_label: str = RADIANCE_VIEW_LABEL) -> dict[str, Any]:
     return {
         "year": int(year),
         "year_label": year_label(year),
-        "view": RADIANCE_VIEW,
-        "view_label": RADIANCE_VIEW_LABEL,
+        "view": str(view),
+        "view_label": str(view_label),
         "unit": unit,
     }
 
