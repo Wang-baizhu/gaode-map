@@ -21,6 +21,42 @@ if [[ -n "$tracked_forbidden" ]]; then
   fail=1
 fi
 
+echo "[check] forbidden runtime files must not exist in worktree"
+runtime_forbidden="$(
+  find . \
+    -path './.git' -prune -o \
+    -path './.venv' -prune -o \
+    \( \
+      -type d -name '__pycache__' -o \
+      -type d -name '.pytest_cache' -o \
+      -type d -name '.playwright-cli' -o \
+      -type f -name '*.pyc' -o \
+      -type f -name '*.bak' \
+    \) -print
+)"
+if [[ -n "$runtime_forbidden" ]]; then
+  writable_runtime_forbidden=""
+  readonly_runtime_forbidden=""
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    if [[ -w "$path" || ( -d "$path" && -w "$path" ) ]]; then
+      writable_runtime_forbidden+="$path"$'\n'
+    else
+      readonly_runtime_forbidden+="$path"$'\n'
+    fi
+  done <<< "$runtime_forbidden"
+  if [[ -n "$writable_runtime_forbidden" ]]; then
+    echo "Forbidden runtime files found:"
+    echo "$writable_runtime_forbidden"
+    fail=1
+  fi
+  if [[ -n "$readonly_runtime_forbidden" ]]; then
+    echo "Warning: forbidden runtime files exist but are not writable by current user:"
+    echo "$readonly_runtime_forbidden"
+    echo "Please clean them with elevated privileges if needed."
+  fi
+fi
+
 echo "[check] deprecated dirs must not exist"
 for dir in \
   modules/analysis \
@@ -63,6 +99,39 @@ if [[ -n "$legacy_import_hits" ]]; then
   echo "Legacy imports still referenced:"
   echo "$legacy_import_hits"
   fail=1
+fi
+
+echo "[check] hotspot file size thresholds"
+while IFS='|' read -r path limit; do
+  [[ -f "$path" ]] || continue
+  line_count="$(wc -l < "$path")"
+  line_count="${line_count//[[:space:]]/}"
+  if (( line_count > limit )); then
+    echo "Hotspot file exceeds threshold: $path ($line_count > $limit)"
+    fail=1
+  fi
+done <<'EOF'
+router/domains/isochrone.py|120
+modules/population/facade.py|500
+modules/export/builder.py|750
+modules/road/core.py|900
+modules/h3/analysis.py|320
+store/history_repo.py|220
+router/domains/road.py|120
+main.py|180
+EOF
+
+echo "[check] history router must delegate via service"
+if [[ -f "modules/history/service.py" ]]; then
+  history_router_direct_repo_calls="$(
+    rg -n "history_repo\\.(create_record|get_list|get_detail|get_pois|delete_record)\\(" \
+      router/domains/history.py || true
+  )"
+  if [[ -n "$history_router_direct_repo_calls" ]]; then
+    echo "History router bypasses service layer:"
+    echo "$history_router_direct_repo_calls"
+    fail=1
+  fi
 fi
 
 if [[ "$fail" -ne 0 ]]; then

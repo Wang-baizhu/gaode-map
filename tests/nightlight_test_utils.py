@@ -6,7 +6,7 @@ import rasterio
 from rasterio.transform import from_origin
 
 from core.config import settings
-from modules.nightlight import service as nightlight_service
+from modules.nightlight.dataset import clear_clip_cache
 from modules.population import service as population_service
 from modules.population.registry import age_band_keys
 from modules.providers.amap.utils.transform_posi import wgs84_to_gcj02
@@ -136,6 +136,6 @@ def configure_nightlight_dir(tmp_path: Path, year: int = 2025) -> Path:
     settings.nightlight_data_dir = str(data_dir)
     settings.nightlight_preview_max_size = 512
     settings.population_data_dir = str(population_dir)
-    nightlight_service._CLIP_CACHE.clear()
+    clear_clip_cache()
     population_service._IN_MEMORY_JSON_CACHE.clear()
     return data_dir

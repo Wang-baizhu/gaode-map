@@ -12,16 +12,17 @@ from modules.export import (
     estimate_request_size_bytes,
 )
 from modules.h3.analysis_schemas import H3ExportRequest
-from modules.h3.arcgis_bridge import run_arcgis_h3_export
 
 router = APIRouter()
 
 
 @router.post("/api/v1/analysis/h3/export")
 async def export_h3_analysis(payload: H3ExportRequest):
+    import router.app as app_module
+
     try:
         export_result = await asyncio.to_thread(
-            run_arcgis_h3_export,
+            app_module.run_arcgis_h3_export,
             export_format=payload.format,
             include_poi=payload.include_poi,
             style_mode=payload.style_mode,

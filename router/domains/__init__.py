@@ -1,3 +1,4 @@
+from .charting import router as charting_router
 from .export import router as export_router
 from .h3 import router as h3_router
 from .history import router as history_router
@@ -11,6 +12,7 @@ from .system import router as system_router
 
 __all__ = [
     "export_router",
+    "charting_router",
     "h3_router",
     "history_router",
     "isochrone_router",

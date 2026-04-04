@@ -9,8 +9,9 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from core.config import settings  # noqa: E402
+from modules.nightlight.aggregate import aggregate_clip_to_target_cells  # noqa: E402
+from modules.nightlight.types import NightlightClip, TargetGridCell  # noqa: E402
 from modules.nightlight.service import (  # noqa: E402
-    _aggregate_clip_to_population_cells,
     build_nightlight_meta_payload,
     get_nightlight_grid,
     get_nightlight_layer,
@@ -26,7 +27,7 @@ from nightlight_test_utils import (  # noqa: E402
 )
 
 
-def _population_feature(cell_id: str, row: int, col: int, minx: float, miny: float, maxx: float, maxy: float):
+def _target_cell(cell_id: str, row: int, col: int, minx: float, miny: float, maxx: float, maxy: float):
     ring = [
         [minx, maxy],
         [maxx, maxy],
@@ -34,22 +35,27 @@ def _population_feature(cell_id: str, row: int, col: int, minx: float, miny: flo
         [minx, miny],
         [minx, maxy],
     ]
-    return {
-        "feature": {
+    return TargetGridCell(
+        cell_id=cell_id,
+        row=row,
+        col=col,
+        centroid_gcj02=[(minx + maxx) / 2.0, (miny + maxy) / 2.0],
+        geometry_gcj02=[ring],
+        geometry_wgs84=box(minx, miny, maxx, maxy),
+        feature={
             "type": "Feature",
             "geometry": {
                 "type": "Polygon",
                 "coordinates": [ring],
             },
+            "properties": {
+                "row": row,
+                "col": col,
+                "centroid_gcj02": [(minx + maxx) / 2.0, (miny + maxy) / 2.0],
+                "cell_id": cell_id,
+            },
         },
-        "properties": {
-            "row": row,
-            "col": col,
-            "centroid_gcj02": [(minx + maxx) / 2.0, (miny + maxy) / 2.0],
-        },
-        "cell_id": cell_id,
-        "geometry_wgs84": box(minx, miny, maxx, maxy),
-    }
+    )
 
 
 def test_nightlight_meta_and_overview_summary(tmp_path):
@@ -97,42 +103,46 @@ def test_nightlight_grid_layer_and_raster_alignment(tmp_path):
 
 
 def test_nightlight_clip_aggregation_maps_one_large_pixel_to_multiple_population_cells():
-    clip = {
-        "array": np.ma.array(np.array([[10.0]], dtype=np.float64), mask=np.array([[False]], dtype=bool)),
-        "transform": from_origin(0.0, 1.0, 1.0, 1.0),
-    }
+    clip = NightlightClip(
+        array=np.ma.array(np.array([[10.0]], dtype=np.float64), mask=np.array([[False]], dtype=bool)),
+        transform=from_origin(0.0, 1.0, 1.0, 1.0),
+        width=1,
+        height=1,
+    )
     features = [
-        _population_feature("nl_0_0", 0, 0, 0.0, 0.5, 0.5, 1.0),
-        _population_feature("nl_0_1", 0, 1, 0.5, 0.5, 1.0, 1.0),
-        _population_feature("nl_1_0", 1, 0, 0.0, 0.0, 0.5, 0.5),
-        _population_feature("nl_1_1", 1, 1, 0.5, 0.0, 1.0, 0.5),
+        _target_cell("nl_0_0", 0, 0, 0.0, 0.5, 0.5, 1.0),
+        _target_cell("nl_0_1", 0, 1, 0.5, 0.5, 1.0, 1.0),
+        _target_cell("nl_1_0", 1, 0, 0.0, 0.0, 0.5, 0.5),
+        _target_cell("nl_1_1", 1, 1, 0.5, 0.0, 1.0, 0.5),
     ]
 
-    rows = _aggregate_clip_to_population_cells(clip, features)
+    rows = aggregate_clip_to_target_cells(clip, features)
 
     assert len(rows) == 4
-    assert all(float(row["raw_value"]) > 0.0 for row in rows)
-    assert all(float(row["raw_value"]) == 10.0 for row in rows)
-    assert all(int(row["valid_pixel_count"]) == 1 for row in rows)
+    assert all(float(row.raw_value) > 0.0 for row in rows)
+    assert all(float(row.raw_value) == 10.0 for row in rows)
+    assert all(int(row.valid_pixel_count) == 1 for row in rows)
 
 
 def test_nightlight_clip_aggregation_uses_area_weighted_mean():
-    clip = {
-        "array": np.ma.array(np.array([[10.0, 20.0]], dtype=np.float64), mask=np.array([[False, False]], dtype=bool)),
-        "transform": from_origin(0.0, 1.0, 1.0, 1.0),
-    }
+    clip = NightlightClip(
+        array=np.ma.array(np.array([[10.0, 20.0]], dtype=np.float64), mask=np.array([[False, False]], dtype=bool)),
+        transform=from_origin(0.0, 1.0, 1.0, 1.0),
+        width=2,
+        height=1,
+    )
     features = [
-        _population_feature("weighted", 0, 0, 0.25, 0.0, 1.25, 1.0),
-        _population_feature("outside", 0, 1, 2.0, 0.0, 2.2, 1.0),
+        _target_cell("weighted", 0, 0, 0.25, 0.0, 1.25, 1.0),
+        _target_cell("outside", 0, 1, 2.0, 0.0, 2.2, 1.0),
     ]
 
-    rows = _aggregate_clip_to_population_cells(clip, features)
-    row_map = {str(row["cell_id"]): row for row in rows}
+    rows = aggregate_clip_to_target_cells(clip, features)
+    row_map = {str(row.cell_id): row for row in rows}
 
-    assert abs(float(row_map["weighted"]["raw_value"]) - 12.5) < 1e-6
-    assert int(row_map["weighted"]["valid_pixel_count"]) == 2
-    assert float(row_map["outside"]["raw_value"]) == 0.0
-    assert int(row_map["outside"]["valid_pixel_count"]) == 0
+    assert abs(float(row_map["weighted"].raw_value) - 12.5) < 1e-6
+    assert int(row_map["weighted"].valid_pixel_count) == 2
+    assert float(row_map["outside"].raw_value) == 0.0
+    assert int(row_map["outside"].valid_pixel_count) == 0
 
 
 def test_nightlight_grid_omits_cells_outside_valid_coverage(tmp_path):
