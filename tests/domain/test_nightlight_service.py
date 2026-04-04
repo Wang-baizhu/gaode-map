@@ -19,6 +19,7 @@ from modules.nightlight.service import (  # noqa: E402
     get_nightlight_raster_preview,
 )
 from modules.population.service import get_population_grid  # noqa: E402
+from modules.providers.amap.utils.transform_posi import wgs84_to_gcj02  # noqa: E402
 from nightlight_test_utils import (  # noqa: E402
     configure_nightlight_dir,
     sample_gcj02_polygon,
@@ -56,6 +57,18 @@ def _target_cell(cell_id: str, row: int, col: int, minx: float, miny: float, max
             },
         },
     )
+
+
+def _sample_irregular_gcj02_polygon():
+    ring_wgs84 = [
+        [121.462, 31.248],
+        [121.487, 31.248],
+        [121.498, 31.236],
+        [121.495, 31.214],
+        [121.468, 31.218],
+        [121.462, 31.248],
+    ]
+    return [list(wgs84_to_gcj02(lng, lat)) for lng, lat in ring_wgs84]
 
 
 def test_nightlight_meta_and_overview_summary(tmp_path):
@@ -100,6 +113,8 @@ def test_nightlight_grid_layer_and_raster_alignment(tmp_path):
     assert raster["image_url"].startswith("data:image/png;base64,")
     assert len(raster["bounds_gcj02"]) == 2
     assert raster["legend"]["unit"] == "nWatts/(cm^2 sr)"
+    assert layer["legend"]["stops"][0]["color"] == "#000000"
+    assert layer["legend"]["stops"][-1]["color"] == "#ffffff"
 
 
 def test_nightlight_clip_aggregation_maps_one_large_pixel_to_multiple_population_cells():
@@ -172,8 +187,34 @@ def test_nightlight_grid_omits_cells_outside_valid_coverage(tmp_path):
     assert grid["cell_count"] == len(layer["cells"])
     positive_count = sum(1 for cell in layer["cells"] if float(cell["value"]) > 0.0)
     zero_count = sum(1 for cell in layer["cells"] if float(cell["value"]) <= 0.0)
+    no_data_count = sum(1 for cell in layer["cells"] if not bool(cell.get("has_data")))
     assert positive_count == 1
     assert zero_count == 15
+    assert no_data_count == 15
+    no_data_cells = [cell for cell in layer["cells"] if not bool(cell.get("has_data"))]
+    assert all(int(cell.get("valid_pixel_count") or 0) == 0 for cell in no_data_cells)
+    assert all(str(cell.get("label") or "") == "无有效夜光像素" for cell in no_data_cells)
+    assert all(str(cell.get("fill_color") or "") == "#94a3b8" for cell in no_data_cells)
+    assert all(str(cell.get("stroke_color") or "") == "#64748b" for cell in no_data_cells)
+
+
+def test_nightlight_layer_keeps_edge_intersecting_cells_when_pixels_touch_polygon(tmp_path):
+    configure_nightlight_dir(tmp_path, year=2025)
+    polygon = _sample_irregular_gcj02_polygon()
+
+    grid = get_nightlight_grid(polygon, "gcj02", 2025)
+    layer = get_nightlight_layer(polygon, "gcj02", scope_id=grid["scope_id"], year=2025)
+
+    assert grid["cell_count"] == len(layer["cells"])
+    assert grid["cell_count"] > 0
+    no_data_cells = [cell for cell in layer["cells"] if not bool(cell.get("has_data"))]
+    assert no_data_cells == []
+    edge_like_cells = [
+        cell for cell in layer["cells"]
+        if 0 < int(cell.get("valid_pixel_count") or 0) < 4
+    ]
+    assert edge_like_cells
+    assert all(float(cell["value"]) > 0.0 for cell in edge_like_cells)
 
 
 def test_nightlight_unavailable_year_raises_value_error(tmp_path):

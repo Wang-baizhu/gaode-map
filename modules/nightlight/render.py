@@ -110,7 +110,8 @@ def build_layer_cells(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if not aggregated_cells:
         return [], build_legend(RADIANCE_VIEW_LABEL, 0.0, 0.0, unit)
-    values = np.asarray([max(0.0, float(cell.raw_value)) for cell in aggregated_cells], dtype=np.float64)
+    data_cells = [cell for cell in aggregated_cells if int(cell.valid_pixel_count) > 0]
+    values = np.asarray([max(0.0, float(cell.raw_value)) for cell in data_cells], dtype=np.float64)
     positive = values[values > 0]
     if positive.size:
         min_value = float(np.percentile(positive, 5))
@@ -125,18 +126,31 @@ def build_layer_cells(
     span = max(max_value - min_value, 1e-9)
     cells = []
     for cell in aggregated_cells:
+        valid_pixel_count = int(max(0, int(cell.valid_pixel_count)))
+        has_data = valid_pixel_count > 0
         raw_value = max(0.0, float(cell.raw_value))
-        normalized = 0.0 if max_value <= min_value else max(0.0, min(1.0, (raw_value - min_value) / span))
-        color = _palette_color(normalized if raw_value > 0 else 0.0)
-        opacity = 0.28 + (0.40 * normalized)
+        if has_data:
+            normalized = 0.0 if max_value <= min_value else max(0.0, min(1.0, (raw_value - min_value) / span))
+            color = _palette_color(normalized if raw_value > 0 else 0.0)
+            opacity = 0.28 + (0.40 * normalized)
+            fill_color = f"#{color[0]:02x}{color[1]:02x}{color[2]:02x}"
+            stroke_color = "#94a3b8" if raw_value <= 0 else "#ffffff"
+            label = f"{RADIANCE_VIEW_LABEL} {round_float(raw_value, 2)} {unit}"
+        else:
+            fill_color = "#94a3b8"
+            stroke_color = "#64748b"
+            opacity = 0.16
+            label = "无有效夜光像素"
         cells.append(
             {
                 "cell_id": str(cell.cell_id),
                 "value": round_float(raw_value, 3),
-                "fill_color": f"#{color[0]:02x}{color[1]:02x}{color[2]:02x}",
-                "stroke_color": "#94a3b8" if raw_value <= 0 else "#ffffff",
+                "valid_pixel_count": valid_pixel_count,
+                "has_data": has_data,
+                "fill_color": fill_color,
+                "stroke_color": stroke_color,
                 "fill_opacity": round_float(opacity, 3),
-                "label": f"{RADIANCE_VIEW_LABEL} {round_float(raw_value, 2)} {unit}",
+                "label": label,
             }
         )
     return cells, build_legend(RADIANCE_VIEW_LABEL, min_value, max_value, unit)

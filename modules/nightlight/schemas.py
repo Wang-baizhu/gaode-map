@@ -88,6 +88,8 @@ class NightlightGridResponse(BaseModel):
 class NightlightLayerCell(BaseModel):
     cell_id: str
     value: float = 0.0
+    valid_pixel_count: int = 0
+    has_data: bool = False
     fill_color: str = "#0f172a"
     stroke_color: str = "#1f2937"
     fill_opacity: float = 0.0

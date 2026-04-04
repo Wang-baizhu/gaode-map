@@ -20,12 +20,12 @@ GRID_STYLE_VERSION = "v2"
 MANIFEST_FILENAME = "manifest.json"
 DEFAULT_VARIABLE_NAME = "NearNadir_Composite_Snow_Free"
 PREVIEW_PALETTE = [
-    (9, 11, 31),
-    (35, 57, 91),
-    (47, 104, 141),
-    (96, 165, 250),
-    (250, 204, 21),
-    (249, 115, 22),
+    (0, 0, 0),
+    (46, 20, 0),
+    (120, 56, 0),
+    (224, 124, 0),
+    (255, 214, 64),
+    (255, 255, 255),
 ]
 
 

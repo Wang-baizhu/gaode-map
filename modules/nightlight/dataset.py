@@ -138,6 +138,7 @@ def mask_dataset(dataset_path: Path, geom_wgs84: BaseGeometry) -> NightlightClip
             masked, masked_transform = mask(
                 src,
                 [mapping(geom_wgs84)],
+                all_touched=True,
                 crop=True,
                 filled=False,
             )

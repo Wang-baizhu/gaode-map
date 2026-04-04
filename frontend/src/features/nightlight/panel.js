@@ -121,6 +121,9 @@ function createAnalysisNightlightMethods() {
       this.clearNightlightDisplayOnLeave()
     },
     clearNightlightDisplayOnLeave() {
+      if (this.mapCore && typeof this.mapCore.setAnalysisBackdropMode === 'function') {
+        this.mapCore.setAnalysisBackdropMode('')
+      }
       if (this.mapCore && typeof this.mapCore.clearGridPolygons === 'function') {
         this.mapCore.clearGridPolygons()
       }
@@ -178,6 +181,9 @@ function createAnalysisNightlightMethods() {
     },
     restoreNightlightDisplayOnEnter() {
       if (!this.isNightlightDisplayActive()) return
+      if (this.mapCore && typeof this.mapCore.setAnalysisBackdropMode === 'function') {
+        this.mapCore.setAnalysisBackdropMode('nightlight')
+      }
       this.applyNightlightGridToMap()
     },
     async ensureNightlightBaseGrid(force = false) {

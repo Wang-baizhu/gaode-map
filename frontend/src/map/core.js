@@ -78,6 +78,7 @@ import { MapUtils } from './utils'
         this._blankTileLayer = null;
         this.tiandituMap = null;
         this.lastBasemapError = null;
+        this.analysisBackdropMode = '';
     }
 
     MapCore.prototype.initMap = function () {
@@ -210,6 +211,31 @@ import { MapUtils } from './utils'
         }
         if (typeof document === 'undefined') return null;
         return document.getElementById(this.containerId);
+    };
+
+    MapCore.prototype._applyAnalysisBackdrop = function () {
+        var container = this._getMapContainerNode();
+        if (!container) return;
+        if (!container.dataset.defaultBackgroundColor) {
+            container.dataset.defaultBackgroundColor = container.style.backgroundColor || '';
+        }
+        if (!container.dataset.defaultBackgroundImage) {
+            container.dataset.defaultBackgroundImage = container.style.backgroundImage || '';
+        }
+
+        if (this.analysisBackdropMode === 'nightlight') {
+            container.style.backgroundColor = '#0f172a';
+            container.style.backgroundImage = 'radial-gradient(circle at 50% 45%, rgba(250, 204, 21, 0.08) 0%, rgba(15, 23, 42, 0.88) 38%, rgba(15, 23, 42, 0.98) 68%)';
+            return;
+        }
+
+        container.style.backgroundColor = container.dataset.defaultBackgroundColor || '';
+        container.style.backgroundImage = container.dataset.defaultBackgroundImage || '';
+    };
+
+    MapCore.prototype.setAnalysisBackdropMode = function (mode) {
+        this.analysisBackdropMode = String(mode || '').trim().toLowerCase();
+        this._applyAnalysisBackdrop();
     };
 
     MapCore.prototype._normalizePopulationClipPolygon = function (clipPolygon) {
@@ -1012,6 +1038,8 @@ import { MapUtils } from './utils'
         if (this.basemapSource === 'amap' && this.map.setFeatures) {
             this.map.setFeatures(this.basemapMuted ? [] : ['bg', 'point', 'road', 'building']);
         }
+
+        this._applyAnalysisBackdrop();
     };
 
     MapCore.prototype._resolveLocaApi = function () {
