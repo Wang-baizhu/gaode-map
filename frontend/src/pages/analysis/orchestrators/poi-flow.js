@@ -129,6 +129,7 @@ function createAnalysisPoiFlowOrchestratorMethods() {
 
         setTimeout(() => {
           this.activeStep3Panel = 'poi'
+          this.lastNonAgentStep3Panel = 'poi'
           if (typeof this.resetAnalysisDisplayTargetsForPanel === 'function') {
             this.resetAnalysisDisplayTargetsForPanel('poi', { apply: false })
           }

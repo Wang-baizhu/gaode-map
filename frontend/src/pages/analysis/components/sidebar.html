@@ -10,8 +10,8 @@
                 <div v-if="sidebarView === 'history'" class="step-header-nav history-header-nav">
                     <div class="history-header-slot left">
                         <button class="btn-text-back"
-                            @click="isSelectionMode ? toggleSelectionMode(false) : backToHome()" style="margin:0;">
-                            {{ isSelectionMode ? '取消' : '← 返回主页' }}
+                            @click="backFromHistory()" style="margin:0;">
+                            {{ getHistoryBackButtonLabel() }}
                         </button>
                     </div>
                     <h3 class="history-header-title">历史记录</h3>
@@ -35,7 +35,6 @@
             </div>
 
             <div class="sidebar-content">
-
                 <!-- Start Screen -->
                 <div v-show="sidebarView === 'start'" class="home-menu">
                     <div class="home-card" @click="confirmNavigation(() => resetAnalysis())">
@@ -255,7 +254,7 @@
                     <div v-show="step === 2" class="wizard-step wizard-step-step3">
                         <div class="step-header-nav">
                             <h3>2. 结果分析</h3>
-                            <span class="count-badge" style="margin-left:10px;">
+                            <span v-if="activeStep3Panel !== 'agent'" class="count-badge" style="margin-left:10px;">
                                 数据源 {{ getPoiSourceLabel(resultDataSource) }}
                             </span>
                         </div>
@@ -271,11 +270,126 @@
                                     @dragstart="onStep3DragStart(index, $event)"
                                     @dragover="onStep3DragOver(index, $event)" @drop="onStep3Drop(index)"
                                     @dragend="onStep3DragEnd">
-                                    {{ item.label }}
+                                    <span>{{ item.label }}</span>
+                                    <span
+                                        v-if="item.id === 'agent' && getRunningAgentSessionCount() > 0"
+                                        class="agent-nav-running-badge">
+                                        {{ getAgentRunningBadgeText() }}
+                                    </span>
                                 </div>
                             </div>
 
-                            <div class="panel-area panel-area-fill">
+                                <div class="panel-area panel-area-fill">
+                                    <div class="panel agent-panel agent-sidebar-panel" v-show="activeStep3Panel === 'agent'" @click="closeAgentSessionMenu">
+                                        <button type="button" class="agent-sidebar-new-btn" @click="startNewAgentChat">
+                                            <svg class="agent-sidebar-new-icon" viewBox="0 0 24 24" aria-hidden="true">
+                                                <path d="M12 20h9"/>
+                                                <path d="M16.5 3.5a2.12 2.12 0 1 1 3 3L7 19l-4 1 1-4z"/>
+                                                <path d="M15 5l3 3"/>
+                                            </svg>
+                                            <span class="agent-sidebar-new-title">新聊天</span>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            class="agent-sidebar-new-btn agent-sidebar-tool-btn"
+                                            :class="{ active: agentWorkspaceView === 'tools' }"
+                                            @click="openAgentToolsPanel">
+                                            <svg class="agent-sidebar-new-icon" viewBox="0 0 24 24" aria-hidden="true">
+                                                <path d="M4 7h16"/>
+                                                <path d="M4 12h16"/>
+                                                <path d="M4 17h16"/>
+                                            </svg>
+                                            <span class="agent-sidebar-new-title">工具</span>
+                                            <span v-if="agentToolsLoading" class="agent-sidebar-tool-loading">加载中</span>
+                                        </button>
+
+                                    <div class="agent-sidebar-section">
+                                        <div class="agent-sidebar-section-label">历史</div>
+                                        <div class="agent-sidebar-history" @click="closeAgentSessionMenu" @scroll.passive="closeAgentSessionMenu">
+                                            <template v-if="getAgentHistorySessions().length">
+                                                <div
+                                                    v-for="group in getAgentRangeSessionGroups()"
+                                                    :key="`agent-history-group-${group.id}`"
+                                                    class="agent-sidebar-history-group">
+                                                    <div class="agent-sidebar-history-folder">
+                                                        <span class="agent-sidebar-history-folder-icon"></span>
+                                                        <span>{{ group.title }}</span>
+                                                        <span class="agent-sidebar-history-folder-count">{{ group.count }}</span>
+                                                    </div>
+                                                    <div v-if="group.sessions.length" class="agent-sidebar-history-group-list">
+                                                        <div
+                                                            v-for="session in group.sessions"
+                                                            :key="session.id"
+                                                            class="agent-sidebar-history-item"
+                                                            :class="{
+                                                                active: activeAgentSessionId === session.id,
+                                                                'is-loading': agentSessionDetailLoadingId === session.id,
+                                                                'menu-open': agentSessionMenuId === session.id
+                                                            }"
+                                                            @click.stop>
+                                                            <button
+                                                                type="button"
+                                                                class="agent-sidebar-history-main"
+                                                                @click="activateAgentSession(session.id)">
+                                                                <div class="agent-sidebar-history-head">
+                                                                    <div class="agent-sidebar-history-title">{{ getAgentSessionTitle(session) }}</div>
+                                                                    <span v-if="isAgentSessionRunning(session.id)" class="agent-sidebar-history-running">执行中</span>
+                                                                    <span v-if="session.isPinned" class="agent-sidebar-history-pin">置顶</span>
+                                                                </div>
+                                                                <div class="agent-sidebar-history-preview">{{ getAgentSessionPreview(session) }}</div>
+                                                            </button>
+                                                            <div class="agent-sidebar-history-actions">
+                                                                <button
+                                                                    type="button"
+                                                                    class="agent-sidebar-history-menu-btn"
+                                                                    :title="agentSessionMenuId === session.id ? '关闭操作菜单' : '打开操作菜单'"
+                                                                    @click="toggleAgentSessionMenu(session.id, $event)">
+                                                                    <span></span>
+                                                                    <span></span>
+                                                                    <span></span>
+                                                                </button>
+                                                                <div
+                                                                    v-if="agentSessionMenuId === session.id"
+                                                                    class="agent-sidebar-history-menu"
+                                                                    @click.stop>
+                                                                    <button type="button" @click="openAgentRenameDialog(session.id, $event)">重命名</button>
+                                                                    <button type="button" @click="toggleAgentSessionPinned(session.id, $event)">
+                                                                        {{ session.isPinned ? '取消置顶' : '置顶' }}
+                                                                    </button>
+                                                                    <button type="button" class="is-danger" @click="deleteAgentSession(session.id, $event)">删除</button>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <div v-else class="agent-sidebar-history-empty">
+                                                        {{ group.emptyText }}
+                                                    </div>
+                                                </div>
+                                            </template>
+                                            <div v-else class="agent-sidebar-history-empty">
+                                                暂无历史对话
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div v-if="agentRenameDialogOpen" class="agent-rename-dialog-mask" @click="closeAgentRenameDialog">
+                                        <div class="agent-rename-dialog" @click.stop>
+                                            <div class="agent-rename-dialog-title">重命名对话</div>
+                                            <input
+                                                v-model="agentRenameInput"
+                                                type="text"
+                                                class="agent-rename-dialog-input"
+                                                maxlength="60"
+                                                placeholder="请输入对话名称"
+                                                @keydown.enter.prevent="submitAgentRename">
+                                            <div class="agent-rename-dialog-actions">
+                                                <button type="button" class="agent-rename-btn agent-rename-btn-secondary" @click="closeAgentRenameDialog">取消</button>
+                                                <button type="button" class="agent-rename-btn agent-rename-btn-primary" @click="submitAgentRename">确定</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
                                 <div class="panel poi-panel" v-show="activeStep3Panel === 'poi'">
                                     <div class="poi-panel-topbar">
                                         <div class="h3-subtabs h3-stage-tabs poi-stage-tabs">
@@ -1169,7 +1283,6 @@
                                         </span>
                                     </div>
                                 </div>
-
                             </div>
                         </div>
                     </div>

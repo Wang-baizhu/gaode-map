@@ -6,7 +6,7 @@ Type mapping utilities for Gaode POI requests.
 
 import json
 from pathlib import Path
-from typing import Dict, List, Tuple, cast
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 
 _TYPE_MAP_PATH = Path(__file__).resolve().parents[4] / "share" / "type_map.json"
@@ -21,12 +21,17 @@ _ALL_ITEMS = [
     for group in _TYPE_CONFIG.get("groups", [])
     for item in group.get("items", [])
 ]
-_LABEL_TO_INFO: Dict[str, Dict[str, str]] = {
+_LABEL_TO_INFO: Dict[str, Dict[str, Any]] = {
     item["label"]: item for item in _ALL_ITEMS if item.get("label")
 }
-_ID_TO_INFO: Dict[str, Dict[str, str]] = {
+_ID_TO_INFO: Dict[str, Dict[str, Any]] = {
     item["id"]: item for item in _ALL_ITEMS if item.get("id")
 }
+_ALIAS_TO_INFO: Dict[str, Dict[str, Any]] = {}
+for item in _ALL_ITEMS:
+    for alias in item.get("aliases", []) or []:
+        if alias:
+            _ALIAS_TO_INFO[str(alias)] = item
 
 
 def _build_typecode_to_point_type(items: List[Dict[str, str]]) -> Dict[str, str]:
@@ -59,6 +64,39 @@ def list_place_types() -> List[str]:
     return [item["label"] for item in _ALL_ITEMS if item.get("label")]
 
 
+def resolve_type_info(place_type: str) -> Optional[Dict[str, Any]]:
+    """
+    Resolve user-facing type text to the canonical type-map item.
+    """
+    normalized = place_type.strip() if place_type else ""
+    if not normalized:
+        return None
+    return _LABEL_TO_INFO.get(normalized) or _ID_TO_INFO.get(normalized) or _ALIAS_TO_INFO.get(normalized)
+
+
+def infer_type_info_from_text(text: str) -> Optional[Dict[str, Any]]:
+    """
+    Infer a configured place type from a natural-language user request.
+    Prefer longer labels/aliases to avoid short generic labels winning first.
+    """
+    normalized = str(text or "").strip()
+    if not normalized:
+        return None
+    candidates: List[Tuple[str, Dict[str, Any]]] = []
+    for item in _ALL_ITEMS:
+        label = str(item.get("label") or "").strip()
+        if label:
+            candidates.append((label, item))
+        for alias in item.get("aliases", []) or []:
+            alias_text = str(alias or "").strip()
+            if alias_text:
+                candidates.append((alias_text, item))
+    for token, item in sorted(candidates, key=lambda entry: len(entry[0]), reverse=True):
+        if token and token in normalized:
+            return item
+    return None
+
+
 def get_type_info(place_type: str) -> Tuple[str, str, str]:
     """
     Map user input to Gaode search parameters.
@@ -67,7 +105,7 @@ def get_type_info(place_type: str) -> Tuple[str, str, str]:
         (types, keywords, point_type)
     """
     normalized = place_type.strip() if place_type else ""
-    info = _LABEL_TO_INFO.get(normalized) or _ID_TO_INFO.get(normalized)
+    info = resolve_type_info(normalized)
     if info:
         return info.get("types", ""), info.get("keywords", ""), info.get("point_type", "")
     if normalized:

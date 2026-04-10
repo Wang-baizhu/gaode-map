@@ -15,7 +15,7 @@
 - `frontend/`：前端源码（Vite 构建）
 - `static/frontend/`：前端构建产物（由 Vite 输出）
 - `runtime/`：运行时数据（图表、临时文件）
-- `scripts/check_repo_hygiene.sh`：仓库卫生检查
+- `../scripts/check_repo_hygiene.sh`：仓库卫生检查
 - `tests/`：`api` / `domain` / `integration` / `e2e`
 
 ## 3. 本地启动
@@ -27,7 +27,7 @@ uv sync
 # 或: pip install -r requirements.txt
 ```
 - `uv sync` 负责安装/同步依赖
-- 测试执行统一使用 `bash scripts/run_pytest.sh ...`，避免在 WSL/沙箱环境下依赖 `uv run pytest`
+- 测试执行统一使用 `bash ../scripts/run_pytest.sh ...`，避免在 WSL/沙箱环境下依赖 `uv run pytest`
 
 ### 3.2 前端构建
 ```bash
@@ -87,14 +87,14 @@ docker compose up --build
 ## 7. 测试与仓库卫生
 ```bash
 cd /mnt/d/Coding/map_analyse/gaode-map
-bash scripts/run_pytest.sh
-bash scripts/run_pytest.sh tests/domain/test_poi_query_limit.py
-bash scripts/run_pytest.sh tests/domain
-bash scripts/check_repo_hygiene.sh
+bash ../scripts/run_pytest.sh
+bash ../scripts/run_pytest.sh tests/domain/test_poi_query_limit.py
+bash ../scripts/run_pytest.sh tests/domain
+bash ../scripts/check_repo_hygiene.sh
 ```
 - 当前仓库默认通过 `pytest.ini` 使用 `-q -s -p no:cacheprovider`
-- `scripts/run_pytest.sh` 会为每次运行设置独立的 Linux 临时目录和 `--basetemp`，减少 WSL/沙箱环境下的 capture 临时文件问题
-- `scripts/run_pytest.sh` 默认设置 `PYTHONDONTWRITEBYTECODE=1`，避免测试运行污染仓库内 `__pycache__/` 和 `*.pyc`
+- `../scripts/run_pytest.sh` 会为每次运行设置独立的 Linux 临时目录和 `--basetemp`，减少 WSL/沙箱环境下的 capture 临时文件问题
+- `../scripts/run_pytest.sh` 默认设置 `PYTHONDONTWRITEBYTECODE=1`，避免测试运行污染仓库内 `__pycache__/` 和 `*.pyc`
 
 ## 8. 维护约束
 - `router/*` 只保留 HTTP 边界、依赖注入和响应编排；采样、几何裁剪、坐标转换、缓存键生成等逻辑统一下沉到 `modules/*` 或 `core/*`。
@@ -103,7 +103,7 @@ bash scripts/check_repo_hygiene.sh
 - `modules/road/core.py` 只保留 facade 编排；Depthmap 命令、指标统计、GeoJSON/WebGL 序列化、进度状态分别维护在 `depthmap.py`、`metrics.py`、`serialize.py`、`progress.py`。
 - `modules/h3/analysis.py` 只保留 facade 编排；类别规则、统计计算、ArcGIS 桥接封装分别维护在 `category_rules.py`、`stats.py`、`arcgis_facade.py`。
 - `modules/history/service.py` 是 history 业务规则入口；`store/history_repo.py` 只保留 CRUD/查询，不再承载覆盖、去重和坐标恢复策略。
-- 仓库卫生检查会校验热点文件体量阈值与运行时垃圾文件，提交前执行 `bash scripts/check_repo_hygiene.sh`。
+- 仓库卫生检查会校验热点文件体量阈值与运行时垃圾文件，提交前执行 `bash ../scripts/check_repo_hygiene.sh`。
 
 ## 9. Docker
 ```bash

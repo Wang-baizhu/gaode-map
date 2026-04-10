@@ -8,6 +8,7 @@ from modules.isochrone.service import (
 )
 from modules.road.core import analyze_road_syntax
 from router.domains import (
+    agent_router,
     charting_router,
     export_router,
     h3_router,
@@ -23,6 +24,7 @@ from router.domains import (
 
 router = APIRouter()
 router.include_router(system_router)
+router.include_router(agent_router)
 router.include_router(charting_router)
 router.include_router(map_router)
 router.include_router(poi_router)

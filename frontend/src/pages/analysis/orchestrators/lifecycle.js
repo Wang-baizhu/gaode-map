@@ -70,6 +70,9 @@ function createAnalysisLifecycleHooks(options = {}) {
       this.disposePopulationCharts()
       this.clearPopulationRasterDisplayOnLeave()
       this.clearNightlightDisplayOnLeave()
+      if (typeof this.destroyAllAgentRuns === 'function') {
+        this.destroyAllAgentRuns()
+      }
     },
     watch: {
       step(newStep, oldStep) {

@@ -208,6 +208,7 @@
                 // H3/road snapshots are still restored into state for later manual switch.
                 if (this.activeStep3Panel !== 'poi') {
                     this.activeStep3Panel = 'poi';
+                    this.lastNonAgentStep3Panel = 'poi';
                     if (typeof this.resetAnalysisDisplayTargetsForPanel === 'function') {
                         this.resetAnalysisDisplayTargetsForPanel('poi', { apply: false });
                     }
@@ -286,6 +287,7 @@
                 this.step = 2;
                 this.sidebarView = 'wizard';
                 this.activeStep3Panel = 'poi';
+                this.lastNonAgentStep3Panel = 'poi';
                 if (typeof this.resetAnalysisDisplayTargetsForPanel === 'function') {
                     this.resetAnalysisDisplayTargetsForPanel('poi', { apply: false });
                 }
@@ -336,6 +338,7 @@
                     this.step = 2;
                     this.sidebarView = 'wizard';
                     this.activeStep3Panel = 'poi';
+                    this.lastNonAgentStep3Panel = 'poi';
                     if (typeof this.resetAnalysisDisplayTargetsForPanel === 'function') {
                         this.resetAnalysisDisplayTargetsForPanel('poi', { apply: false });
                     }

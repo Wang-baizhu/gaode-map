@@ -135,7 +135,9 @@ function createAnalysisNightlightMethods() {
     resetNightlightAnalysisState(options = {}) {
       const keepMeta = !!(options && options.keepMeta)
       const keepYear = !!(options && options.keepYear)
-      this.cancelNightlightLayerRequest()
+      if (typeof this.cancelNightlightLayerRequest === 'function') {
+        this.cancelNightlightLayerRequest()
+      }
       this.isComputingNightlight = false
       this.isLoadingNightlightGrid = false
       this.nightlightStatus = ''

@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 export const ANALYSIS_SESSION_STATE_KEYS = Object.freeze([
   'step',
   'sidebarView',
+  'historyReturnContext',
   'selectedPoint',
   'transportMode',
   'timeHorizon',
@@ -24,6 +25,7 @@ export function createAnalysisSessionInitialState() {
   return {
     step: 1,
     sidebarView: 'start',
+    historyReturnContext: null,
     selectedPoint: null,
     transportMode: 'walking',
     timeHorizon: 15,

@@ -1386,6 +1386,10 @@
                         derived_stats: this.h3DerivedStats || {},
                         metric_view: String(this.h3MetricView || ''),
                         structure_fill_mode: String(this.h3StructureFillMode || ''),
+                        target_category: String(this.h3TargetCategory || ''),
+                        target_category_label: (typeof this._getH3CategoryLabel === 'function')
+                            ? String(this._getH3CategoryLabel(this.h3TargetCategory) || '')
+                            : '',
                         top_n: Number(this.h3DecisionTopN || 0) || 0,
                     };
                     const regressionView = (typeof this.roadSyntaxRegressionView === 'function')
@@ -1396,6 +1400,24 @@
                         metric: String(this.roadSyntaxMetric || ''),
                         main_tab: String(this.roadSyntaxMainTab || ''),
                         regression: regressionView || {},
+                    };
+                    result.population = {
+                        summary_rows: (typeof this.getPopulationSummaryRows === 'function')
+                            ? this.getPopulationSummaryRows()
+                            : [],
+                        analysis_view: String(this.populationAnalysisView || ''),
+                        age_distribution: ((this.populationOverview && this.populationOverview.age_distribution) || []),
+                        layer_summary: (this.populationLayer && this.populationLayer.summary) || {},
+                    };
+                    result.nightlight = {
+                        summary_rows: (typeof this.getNightlightSummaryRows === 'function')
+                            ? this.getNightlightSummaryRows()
+                            : [],
+                        analysis_view: String(this.nightlightAnalysisView || ''),
+                        analysis: (this.nightlightLayer && this.nightlightLayer.analysis) || {},
+                        legend_note: (typeof this.getNightlightLegendNote === 'function')
+                            ? this.getNightlightLegendNote()
+                            : '',
                     };
                 } catch (err) {
                     console.warn('build frontend analysis payload failed', err);

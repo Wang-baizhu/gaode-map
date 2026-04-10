@@ -73,6 +73,63 @@ class Settings(BaseSettings):
         description="天地图 Web 瓦片服务 Key（tk）",
     )
 
+    # AI Agent provider 配置
+    ai_enabled: bool = Field(
+        False,
+        validation_alias="AI_ENABLED",
+        description="是否启用 LLM provider（未启用时 Agent tool loop 不可用）",
+    )
+    ai_provider: Literal["deepseek"] = Field(
+        "deepseek",
+        validation_alias="AI_PROVIDER",
+        description="Agent 使用的 AI provider 类型",
+    )
+    ai_base_url: str = Field(
+        "",
+        validation_alias="AI_BASE_URL",
+        description="LLM provider API 基础地址，例如 https://api.deepseek.com/v1",
+    )
+    ai_api_key: str = Field(
+        "",
+        validation_alias="AI_API_KEY",
+        description="LLM provider API Key",
+    )
+    ai_model: str = Field(
+        "",
+        validation_alias="AI_MODEL",
+        description="Agent 使用的模型名，例如 deepseek-chat",
+    )
+    ai_thinking_enabled: bool = Field(
+        True,
+        validation_alias="AI_THINKING_ENABLED",
+        description="是否为 DeepSeek chat completions 启用 thinking mode 并流式展示 reasoning_content",
+    )
+    ai_timeout_s: int = Field(
+        60,
+        validation_alias="AI_TIMEOUT_S",
+        description="AI provider 请求超时时间（秒）",
+    )
+    ai_max_context_turns: int = Field(
+        12,
+        validation_alias="AI_MAX_CONTEXT_TURNS",
+        description="发送给 LLM tool loop 的最大历史轮次数",
+    )
+    ai_max_tool_steps: int = Field(
+        8,
+        validation_alias="AI_MAX_TOOL_STEPS",
+        description="LLM tool-calling loop 最大工具步数",
+    )
+    ai_max_tool_errors: int = Field(
+        2,
+        validation_alias="AI_MAX_TOOL_ERRORS",
+        description="LLM tool-calling loop 连续工具错误上限",
+    )
+    ai_max_replans: int = Field(
+        2,
+        validation_alias="AI_MAX_REPLANS",
+        description="Agent 在审计未通过时允许重新规划的最大次数",
+    )
+
     # 本地历史数据查询服务配置
     local_query_base_url: str = Field(
         "http://127.0.0.1:8001",

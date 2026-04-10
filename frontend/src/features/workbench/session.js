@@ -28,7 +28,6 @@
                 this.resetPopulationAnalysisState({ keepMeta: true });
                 this.resetNightlightAnalysisState({ keepMeta: true, keepYear: true });
                 this.clearIsochroneDebugState();
-
                 this.clearPoiOverlayLayers({
                     reason: 'clear_analysis_layers',
                     clearManager: true,
@@ -65,6 +64,7 @@
                 this.sidebarView = 'wizard';
                 this.selectedPoint = null;
                 this.errorMessage = '';
+                this.lastNonAgentStep3Panel = 'poi';
                 if (this.marker) {
                     this.safeMapSet(this.marker, null);
                     this.marker = null;
@@ -75,6 +75,18 @@
                 }
                 this.applySimplifyConfig();
             },
+            openAgentWorkspace() {
+                this.sidebarView = 'wizard';
+                this.step = 2;
+                if (typeof this.selectStep3Panel === 'function') {
+                    this.selectStep3Panel('agent');
+                } else {
+                    this.activeStep3Panel = 'agent';
+                    if (typeof this.ensureAgentPanelReady === 'function') {
+                        this.ensureAgentPanelReady();
+                    }
+                }
+            },
             saveAndRestart() {
                 this.destroyPlaceSearch();
                 this.stopScopeDrawing();
@@ -82,6 +94,7 @@
                 this.clearIsochroneDebugState();
                 this.step = 1;
                 this.activeStep3Panel = 'poi';
+                this.lastNonAgentStep3Panel = 'poi';
                 this.isochroneScopeMode = 'point';
                 this.h3SimplifyMenuOpen = false;
                 this.h3SimplifyTargets = typeof this.getDefaultSimplifyTargets === 'function'
