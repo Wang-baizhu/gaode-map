@@ -1,100 +1,24 @@
 from __future__ import annotations
 
 import asyncio
-import threading
 import time
 import uuid
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
-from modules.road.core import analyze_road_syntax
+from modules.road.progress import get_road_syntax_progress, update_road_syntax_progress
 from modules.road.schemas import RoadSyntaxRequest, RoadSyntaxResponse
 
 router = APIRouter()
 
-ROAD_SYNTAX_PROGRESS_LOCK = threading.Lock()
-ROAD_SYNTAX_PROGRESS: Dict[str, Dict[str, Any]] = {}
-ROAD_SYNTAX_PROGRESS_TTL_SEC = 3600
-
-
-def _cleanup_road_syntax_progress(now_ts: Optional[float] = None) -> None:
-    now_value = float(now_ts if now_ts is not None else time.time())
-    stale_ids: List[str] = []
-    for run_id, item in ROAD_SYNTAX_PROGRESS.items():
-        updated_at = float(item.get("updated_at") or 0.0)
-        if (now_value - updated_at) > float(ROAD_SYNTAX_PROGRESS_TTL_SEC):
-            stale_ids.append(run_id)
-    for run_id in stale_ids:
-        ROAD_SYNTAX_PROGRESS.pop(run_id, None)
-
-
-def _update_road_syntax_progress(
-    run_id: str,
-    *,
-    status: str = "running",
-    stage: str = "",
-    message: str = "",
-    step: Optional[int] = None,
-    total: Optional[int] = None,
-    extra: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    now_ts = float(time.time())
-    run_key = str(run_id or "").strip()
-    if not run_key:
-        run_key = uuid.uuid4().hex
-    with ROAD_SYNTAX_PROGRESS_LOCK:
-        _cleanup_road_syntax_progress(now_ts)
-        existing = ROAD_SYNTAX_PROGRESS.get(run_key) or {}
-        started_at = float(existing.get("started_at") or now_ts)
-        step_value: Optional[int] = None
-        total_value: Optional[int] = None
-        try:
-            if step is not None:
-                step_value = int(step)
-        except (TypeError, ValueError):
-            step_value = None
-        try:
-            if total is not None:
-                total_value = int(total)
-        except (TypeError, ValueError):
-            total_value = None
-        payload = {
-            "run_id": run_key,
-            "status": str(status or "running"),
-            "stage": str(stage or ""),
-            "message": str(message or ""),
-            "step": step_value,
-            "total": total_value,
-            "started_at": started_at,
-            "updated_at": now_ts,
-            "elapsed_sec": round(max(0.0, now_ts - started_at), 1),
-            "extra": dict(extra or {}),
-        }
-        ROAD_SYNTAX_PROGRESS[run_key] = payload
-        return dict(payload)
-
-
-def _get_road_syntax_progress(run_id: str) -> Optional[Dict[str, Any]]:
-    run_key = str(run_id or "").strip()
-    if not run_key:
-        return None
-    now_ts = float(time.time())
-    with ROAD_SYNTAX_PROGRESS_LOCK:
-        _cleanup_road_syntax_progress(now_ts)
-        payload = ROAD_SYNTAX_PROGRESS.get(run_key)
-        if not payload:
-            return None
-        data = dict(payload)
-        started_at = float(data.get("started_at") or now_ts)
-        data["elapsed_sec"] = round(max(0.0, now_ts - started_at), 1)
-        return data
-
 
 @router.post("/api/v1/analysis/road-syntax", response_model=RoadSyntaxResponse)
 async def analyze_road_syntax_api(payload: RoadSyntaxRequest):
+    import router.app as app_module
+
     run_id = str(payload.run_id or "").strip() or uuid.uuid4().hex
-    _update_road_syntax_progress(
+    update_road_syntax_progress(
         run_id,
         status="running",
         stage="queued",
@@ -105,7 +29,7 @@ async def analyze_road_syntax_api(payload: RoadSyntaxRequest):
     )
 
     def _progress_callback(snapshot: Dict[str, Any]) -> None:
-        _update_road_syntax_progress(
+        update_road_syntax_progress(
             run_id,
             status="running",
             stage=str(snapshot.get("stage") or ""),
@@ -117,7 +41,7 @@ async def analyze_road_syntax_api(payload: RoadSyntaxRequest):
 
     try:
         result = await asyncio.to_thread(
-            analyze_road_syntax,
+            app_module.analyze_road_syntax,
             polygon=payload.polygon,
             coord_type=payload.coord_type,
             mode=payload.mode,
@@ -138,7 +62,7 @@ async def analyze_road_syntax_api(payload: RoadSyntaxRequest):
             progress_callback=_progress_callback,
         )
     except RuntimeError as exc:
-        _update_road_syntax_progress(
+        update_road_syntax_progress(
             run_id,
             status="failed",
             stage="failed",
@@ -146,7 +70,7 @@ async def analyze_road_syntax_api(payload: RoadSyntaxRequest):
             extra={},
         )
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    _update_road_syntax_progress(
+    update_road_syntax_progress(
         run_id,
         status="success",
         stage="completed",
@@ -160,7 +84,7 @@ async def analyze_road_syntax_api(payload: RoadSyntaxRequest):
 
 @router.get("/api/v1/analysis/road-syntax/progress")
 async def get_road_syntax_progress(run_id: str = Query(..., description="Road syntax run id")):
-    payload = _get_road_syntax_progress(run_id)
+    payload = get_road_syntax_progress(run_id)
     if not payload:
         now_ts = float(time.time())
         return {
@@ -178,4 +102,3 @@ async def get_road_syntax_progress(run_id: str = Query(..., description="Road sy
             },
         }
     return payload
-

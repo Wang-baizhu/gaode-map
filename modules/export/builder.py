@@ -1,16 +1,32 @@
 from __future__ import annotations
 
-import base64
-import csv
 import hashlib
-import json
 from datetime import datetime
-from io import BytesIO, StringIO
+from io import BytesIO
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from modules.h3.arcgis_bridge import run_arcgis_h3_export
 
+from .encoders import (
+    build_csv_bytes as _build_csv_bytes,
+    build_frontend_chart_files as _build_frontend_chart_files_from_payload,
+    build_h3_summary_rows as _build_h3_summary_rows,
+    build_poi_category_summary as _build_poi_category_summary,
+    build_poi_csv as _build_poi_csv,
+    build_summary_rows as _build_summary_rows,
+    decode_png_base64 as _decode_png_base64,
+    extract_frontend_panel_png as _extract_frontend_panel_png_from_payload,
+    pois_to_features as _pois_to_features,
+)
+from .normalize import (
+    encode_json_bytes as _encode_json_bytes,
+    json_safe_dict as _json_safe_dict,
+    json_safe_value as _json_safe_value,
+    normalize_feature as _normalize_feature,
+    normalize_feature_list as _normalize_feature_list,
+    normalize_poi_rows as _normalize_poi_rows,
+)
 from .schemas import (
     ALLOWED_EXPORT_PARTS,
     H3_PROFESSIONAL_PARTS,
@@ -19,7 +35,6 @@ from .schemas import (
 
 REQUEST_SIZE_LIMIT_BYTES = 64 * 1024 * 1024
 ZIP_SIZE_LIMIT_BYTES = 128 * 1024 * 1024
-PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 
 class AnalysisExportError(RuntimeError):
@@ -123,6 +138,14 @@ _AI_PANEL_PART_META: Dict[str, Dict[str, str]] = {
     "road_integration_panel_json": {"domain": "road", "panel_id": "road_integration_panel", "focus": "integration"},
     "road_intelligibility_panel_json": {"domain": "road", "panel_id": "road_intelligibility_panel", "focus": "intelligibility"},
 }
+
+
+def _build_frontend_chart_files(payload: AnalysisExportBundleRequest) -> Tuple[List[Tuple[str, bytes]], List[str]]:
+    return _build_frontend_chart_files_from_payload(payload.frontend_charts, _FRONTEND_CHART_FILE_PATHS)
+
+
+def _extract_frontend_panel_png(panel_id: str, payload: AnalysisExportBundleRequest) -> bytes | None:
+    return _extract_frontend_panel_png_from_payload(panel_id, payload.frontend_panels)
 
 
 def estimate_request_size_bytes(payload: AnalysisExportBundleRequest) -> int:
@@ -608,24 +631,6 @@ def _build_ai_context_markdown(payload: AnalysisExportBundleRequest) -> str:
     return "\n".join(lines)
 
 
-def _build_poi_category_summary(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    bucket: Dict[str, int] = {}
-    for row in rows or []:
-        key = str(row.get("category") or row.get("type") or "未分类")
-        key = key.strip() or "未分类"
-        bucket[key] = int(bucket.get(key, 0)) + 1
-    total = max(1, len(rows or []))
-    ranked = sorted(bucket.items(), key=lambda item: item[1], reverse=True)
-    return [
-        {
-            "category": name,
-            "count": count,
-            "ratio": round(count / total, 6),
-        }
-        for name, count in ranked
-    ]
-
-
 def _pick_first_numeric(source: Dict[str, Any], keys: Sequence[str]) -> Optional[float]:
     if not isinstance(source, dict):
         return None
@@ -704,333 +709,3 @@ def _extract_road_features(payload: AnalysisExportBundleRequest) -> List[Dict[st
         candidates = roads.get("features") if isinstance(roads.get("features"), list) else []
         features = _normalize_feature_list(candidates, allowed_geometry_types={"LineString", "MultiLineString"})
     return features
-
-
-def _normalize_feature_list(
-    features: Sequence[Dict[str, Any]],
-    *,
-    allowed_geometry_types: Optional[set[str]] = None,
-) -> List[Dict[str, Any]]:
-    result: List[Dict[str, Any]] = []
-    for item in features or []:
-        feature = _normalize_feature(item, allowed_geometry_types=allowed_geometry_types)
-        if feature:
-            result.append(feature)
-    return result
-
-
-def _normalize_feature(
-    raw: Any,
-    *,
-    allowed_geometry_types: Optional[set[str]] = None,
-) -> Optional[Dict[str, Any]]:
-    if not isinstance(raw, dict):
-        return None
-    if str(raw.get("type") or "") != "Feature":
-        return None
-    geometry = _normalize_geometry(raw.get("geometry"))
-    if not geometry:
-        return None
-    if allowed_geometry_types and geometry.get("type") not in allowed_geometry_types:
-        return None
-    properties = _json_safe_dict(raw.get("properties") if isinstance(raw.get("properties"), dict) else {})
-    return {
-        "type": "Feature",
-        "geometry": geometry,
-        "properties": properties,
-    }
-
-
-def _normalize_geometry(raw: Any) -> Optional[Dict[str, Any]]:
-    if not isinstance(raw, dict):
-        return None
-    geom_type = str(raw.get("type") or "")
-    coords = raw.get("coordinates")
-
-    if geom_type == "Point":
-        point = _normalize_position(coords)
-        if not point:
-            return None
-        return {"type": "Point", "coordinates": point}
-
-    if geom_type == "LineString":
-        line = _normalize_line(coords)
-        if not line:
-            return None
-        return {"type": "LineString", "coordinates": line}
-
-    if geom_type == "MultiLineString":
-        lines: List[List[List[float]]] = []
-        for item in coords if isinstance(coords, list) else []:
-            line = _normalize_line(item)
-            if line:
-                lines.append(line)
-        if not lines:
-            return None
-        return {"type": "MultiLineString", "coordinates": lines}
-
-    if geom_type == "Polygon":
-        polygon = _normalize_polygon(coords)
-        if not polygon:
-            return None
-        return {"type": "Polygon", "coordinates": polygon}
-
-    if geom_type == "MultiPolygon":
-        polygons: List[List[List[List[float]]]] = []
-        for item in coords if isinstance(coords, list) else []:
-            polygon = _normalize_polygon(item)
-            if polygon:
-                polygons.append(polygon)
-        if not polygons:
-            return None
-        return {"type": "MultiPolygon", "coordinates": polygons}
-
-    return None
-
-
-def _normalize_position(raw: Any) -> Optional[List[float]]:
-    if not isinstance(raw, (list, tuple)) or len(raw) < 2:
-        return None
-    try:
-        lng = float(raw[0])
-        lat = float(raw[1])
-    except (TypeError, ValueError):
-        return None
-    if not (lng == lng and lat == lat):
-        return None
-    return [lng, lat]
-
-
-def _normalize_line(raw: Any) -> Optional[List[List[float]]]:
-    if not isinstance(raw, list):
-        return None
-    points: List[List[float]] = []
-    for item in raw:
-        point = _normalize_position(item)
-        if point:
-            points.append(point)
-    if len(points) < 2:
-        return None
-    return points
-
-
-def _normalize_ring(raw: Any) -> Optional[List[List[float]]]:
-    line = _normalize_line(raw)
-    if not line or len(line) < 3:
-        return None
-    first = line[0]
-    last = line[-1]
-    if first[0] != last[0] or first[1] != last[1]:
-        line.append([first[0], first[1]])
-    if len(line) < 4:
-        return None
-    return line
-
-
-def _normalize_polygon(raw: Any) -> Optional[List[List[List[float]]]]:
-    if not isinstance(raw, list):
-        return None
-    rings: List[List[List[float]]] = []
-    for item in raw:
-        ring = _normalize_ring(item)
-        if ring:
-            rings.append(ring)
-    if not rings:
-        return None
-    return rings
-
-
-def _normalize_poi_rows(source: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    rows: List[Dict[str, Any]] = []
-    for item in source or []:
-        if not isinstance(item, dict):
-            continue
-        location = item.get("location")
-        point = _normalize_position(location)
-        if not point:
-            continue
-        rows.append(
-            {
-                "id": str(item.get("id") or ""),
-                "name": str(item.get("name") or ""),
-                "type": str(item.get("type") or ""),
-                "category": str(item.get("category") or item.get("category_name") or ""),
-                "lng": point[0],
-                "lat": point[1],
-                "address": str(item.get("address") or ""),
-                "distance": _normalize_optional_float(item.get("distance")),
-                "source": str(item.get("source") or ""),
-            }
-        )
-    return rows
-
-
-def _build_poi_csv(rows: Sequence[Dict[str, Any]]) -> bytes:
-    headers = ["id", "name", "type", "category", "lng", "lat", "address", "distance", "source"]
-    return _build_csv_bytes(rows, headers=headers)
-
-
-def _build_h3_summary_rows(features: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    rows: List[Dict[str, Any]] = []
-    for feature in features or []:
-        props = feature.get("properties") if isinstance(feature, dict) else {}
-        if not isinstance(props, dict):
-            props = {}
-        rows.append(
-            {
-                "h3_id": str(props.get("h3_id") or ""),
-                "poi_count": _normalize_optional_int(props.get("poi_count")),
-                "density_poi_per_km2": _normalize_optional_float(props.get("density_poi_per_km2")),
-                "local_entropy": _normalize_optional_float(props.get("local_entropy")),
-                "neighbor_mean_density": _normalize_optional_float(props.get("neighbor_mean_density")),
-                "neighbor_mean_entropy": _normalize_optional_float(props.get("neighbor_mean_entropy")),
-                "neighbor_count": _normalize_optional_int(props.get("neighbor_count")),
-                "gi_star_z_score": _normalize_optional_float(props.get("gi_star_z_score")),
-                "lisa_i": _normalize_optional_float(props.get("lisa_i")),
-                "category_counts": json.dumps(_json_safe_dict(props.get("category_counts") or {}), ensure_ascii=False),
-            }
-        )
-    return rows
-
-
-def _build_summary_rows(summary: Dict[str, Any]) -> List[Dict[str, str]]:
-    rows: List[Dict[str, str]] = []
-    for key in sorted(summary.keys()):
-        value = summary.get(key)
-        if isinstance(value, (dict, list)):
-            value_text = json.dumps(_json_safe_value(value), ensure_ascii=False)
-        else:
-            value_text = "" if value is None else str(value)
-        rows.append({"key": str(key), "value": value_text})
-    return rows
-
-
-def _build_csv_bytes(rows: Sequence[Dict[str, Any]], *, headers: List[str]) -> bytes:
-    stream = StringIO()
-    writer = csv.DictWriter(stream, fieldnames=headers, lineterminator="\n")
-    writer.writeheader()
-    for row in rows:
-        writer.writerow({key: row.get(key, "") for key in headers})
-    return stream.getvalue().encode("utf-8")
-
-
-def _build_frontend_chart_files(payload: AnalysisExportBundleRequest) -> Tuple[List[Tuple[str, bytes]], List[str]]:
-    chart_files: List[Tuple[str, bytes]] = []
-    skipped_chart_ids: List[str] = []
-    seen_ids: set[str] = set()
-    for item in payload.frontend_charts or []:
-        chart_id = str(getattr(item, "chart_id", "") or "").strip()
-        if not chart_id or chart_id in seen_ids:
-            continue
-        seen_ids.add(chart_id)
-        path = _FRONTEND_CHART_FILE_PATHS.get(chart_id)
-        if not path:
-            continue
-        png_bytes = _decode_png_base64(getattr(item, "png_base64", None))
-        if not png_bytes:
-            skipped_chart_ids.append(chart_id)
-            continue
-        chart_files.append((path, png_bytes))
-    return chart_files, skipped_chart_ids
-
-
-def _extract_frontend_panel_png(panel_id: str, payload: AnalysisExportBundleRequest) -> Optional[bytes]:
-    target_id = str(panel_id or "").strip()
-    if not target_id:
-        return None
-    for item in payload.frontend_panels or []:
-        current_id = str(getattr(item, "panel_id", "") or "").strip()
-        if current_id != target_id:
-            continue
-        png_bytes = _decode_png_base64(getattr(item, "png_base64", None))
-        if png_bytes:
-            return png_bytes
-        return None
-    return None
-
-
-def _decode_png_base64(raw: Optional[str]) -> Optional[bytes]:
-    text = str(raw or "").strip()
-    if not text:
-        return None
-    if text.startswith("data:"):
-        marker = "base64,"
-        idx = text.find(marker)
-        if idx < 0:
-            return None
-        prefix = text[: idx + len(marker)].lower()
-        if "image/png" not in prefix:
-            return None
-        text = text[idx + len(marker) :]
-
-    try:
-        data = base64.b64decode(text, validate=True)
-    except Exception:
-        return None
-
-    if not data.startswith(PNG_MAGIC):
-        return None
-    return data
-
-
-def _pois_to_features(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    features: List[Dict[str, Any]] = []
-    for row in rows or []:
-        features.append(
-            {
-                "type": "Feature",
-                "geometry": {
-                    "type": "Point",
-                    "coordinates": [row["lng"], row["lat"]],
-                },
-                "properties": {
-                    "id": row.get("id", ""),
-                    "name": row.get("name", ""),
-                    "type": row.get("type", ""),
-                    "category": row.get("category", ""),
-                    "address": row.get("address", ""),
-                    "distance": row.get("distance", ""),
-                    "source": row.get("source", ""),
-                },
-            }
-        )
-    return features
-
-
-def _json_safe_value(value: Any) -> Any:
-    if value is None:
-        return None
-    if isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, dict):
-        return {str(k): _json_safe_value(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_safe_value(v) for v in value]
-    return str(value)
-
-
-def _json_safe_dict(value: Any) -> Dict[str, Any]:
-    if not isinstance(value, dict):
-        return {}
-    return {str(k): _json_safe_value(v) for k, v in value.items()}
-
-
-def _normalize_optional_float(value: Any) -> Any:
-    try:
-        num = float(value)
-    except (TypeError, ValueError):
-        return ""
-    if num != num:
-        return ""
-    return num
-
-
-def _normalize_optional_int(value: Any) -> Any:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return ""
-
-
-def _encode_json_bytes(value: Any) -> bytes:
-    return json.dumps(_json_safe_value(value), ensure_ascii=False, indent=2).encode("utf-8")

@@ -30,6 +30,8 @@ services:
       - CITY_BOUNDARY_DIR=${CITY_BOUNDARY_DIR:-/mapdata/boundaries}
       - POPULATION_DATA_DIR=${POPULATION_DATA_DIR:-/mapdata/population}
       - POPULATION_PREVIEW_MAX_SIZE=${POPULATION_PREVIEW_MAX_SIZE:-2048}
+      - NIGHTLIGHT_DATA_DIR=${NIGHTLIGHT_DATA_DIR:-/mapdata/nightlight/processed}
+      - NIGHTLIGHT_PREVIEW_MAX_SIZE=${NIGHTLIGHT_PREVIEW_MAX_SIZE:-2048}
       - PYTHONUNBUFFERED=1
     depends_on:
       - search
@@ -40,6 +42,7 @@ services:
       - ./data:/app/data
       - "${CITY_BOUNDARY_HOST_DIR:-D:/MapData/boundaries}:/mapdata/boundaries:ro"
       - "${POPULATION_DATA_HOST_DIR:-E:/PeopleData}:/mapdata/population:ro"
+      - "${NIGHTLIGHT_DATA_HOST_DIR:-E:/NightlightData}:/mapdata/nightlight:ro"
     restart: unless-stopped
 
   valhalla:

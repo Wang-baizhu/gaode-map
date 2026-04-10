@@ -8,9 +8,9 @@
 - 运行时图表产物目录：`runtime/generated_charts/`
 
 ## 2. 目录（核心）
-- `core/`：配置、异常、通用模型
+- `core/`：配置、异常、通用模型；跨业务域共享空间工具集中在 `core/spatial.py`
 - `router/`：HTTP 路由聚合（按 domain 拆分）
-- `modules/`：业务域实现（`poi`/`h3`/`road`/`isochrone`/`export`/`providers`）
+- `modules/`：业务域实现（`poi`/`population`/`nightlight`/`h3`/`road`/`isochrone`/`export`/`providers`）
 - `store/`：数据库与仓储
 - `frontend/`：前端源码（Vite 构建）
 - `static/frontend/`：前端构建产物（由 Vite 输出）
@@ -26,6 +26,8 @@ cd /mnt/d/Coding/map_analyse/gaode-map
 uv sync
 # 或: pip install -r requirements.txt
 ```
+- `uv sync` 负责安装/同步依赖
+- 测试执行统一使用 `bash scripts/run_pytest.sh ...`，避免在 WSL/沙箱环境下依赖 `uv run pytest`
 
 ### 3.2 前端构建
 ```bash
@@ -45,9 +47,8 @@ uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 cd /mnt/d/Coding/map_analyse/gaode-map
 docker compose up --build
 ```
-- 会启动后端热更新容器和 `frontend-builder` 监听构建服务
-- `frontend-builder` 会把 Vite 产物持续写入 `static/frontend/`
-- `app` 会等待 `static/frontend/index.html` 出现后再启动
+- 仅启动后端及其依赖服务，不再单独启动前端构建容器
+- 因为开发 Compose 会把项目目录挂进容器，启动前请先在宿主机执行一次 `npm run build`，确保 `static/frontend/` 已生成
 - `static/frontend/` 是部署产物，继续保持 `.gitignore`
 
 ## 4. 访问入口
@@ -72,22 +73,39 @@ docker compose up --build
 - 地图：`AMAP_WEB_SERVICE_KEY`、`AMAP_JS_API_KEY`、`AMAP_JS_SECURITY_CODE`、`TIANDITU_KEY`
 - 路网/等时圈：`DEPTHMAPX_CLI_PATH`、`OVERPASS_ENDPOINT`、`VALHALLA_BASE_URL`
 - 人口分析：`POPULATION_DATA_DIR`、`POPULATION_PREVIEW_MAX_SIZE`
+- 夜光分析：`NIGHTLIGHT_DATA_DIR`、`NIGHTLIGHT_PREVIEW_MAX_SIZE`
 - 数据库：`DB_URL`（可选；未配置时走 SQLite）
 - 图表输出目录覆盖：`CHART_OUTPUT_DIR`（可选，默认 `runtime/generated_charts/`）
 
 ### 人口数据目录
 - Docker 启动时，默认把宿主机 `E:/PeopleData` 挂到容器内 `/mapdata/population`
+- Docker 启动时，默认把宿主机 `E:/NightlightData` 挂到容器内 `/mapdata/nightlight`
 - 可通过 `POPULATION_DATA_HOST_DIR` 覆盖宿主机目录
 - 容器内应用读取目录由 `POPULATION_DATA_DIR` 控制，默认 `/mapdata/population`
+- 夜光处理后目录由 `NIGHTLIGHT_DATA_DIR` 控制，默认 `/mapdata/nightlight/processed`
 
 ## 7. 测试与仓库卫生
 ```bash
 cd /mnt/d/Coding/map_analyse/gaode-map
-uv run pytest -q
+bash scripts/run_pytest.sh
+bash scripts/run_pytest.sh tests/domain/test_poi_query_limit.py
+bash scripts/run_pytest.sh tests/domain
 bash scripts/check_repo_hygiene.sh
 ```
+- 当前仓库默认通过 `pytest.ini` 使用 `-q -s -p no:cacheprovider`
+- `scripts/run_pytest.sh` 会为每次运行设置独立的 Linux 临时目录和 `--basetemp`，减少 WSL/沙箱环境下的 capture 临时文件问题
+- `scripts/run_pytest.sh` 默认设置 `PYTHONDONTWRITEBYTECODE=1`，避免测试运行污染仓库内 `__pycache__/` 和 `*.pyc`
 
-## 8. Docker
+## 8. 维护约束
+- `router/*` 只保留 HTTP 边界、依赖注入和响应编排；采样、几何裁剪、坐标转换、缓存键生成等逻辑统一下沉到 `modules/*` 或 `core/*`。
+- 共享空间逻辑统一收敛到 `core/spatial.py`，不要在 `population`、`nightlight`、`road`、`isochrone`、`poi` 中复制 polygon/坐标处理变体。
+- 空间业务新增代码优先落到 `facade`、`dataset`、`render`、`aggregate`、`bridge`、`cache`、`geometry`、`overpass` 等现有子职责文件，不继续扩写热点单文件。
+- `modules/road/core.py` 只保留 facade 编排；Depthmap 命令、指标统计、GeoJSON/WebGL 序列化、进度状态分别维护在 `depthmap.py`、`metrics.py`、`serialize.py`、`progress.py`。
+- `modules/h3/analysis.py` 只保留 facade 编排；类别规则、统计计算、ArcGIS 桥接封装分别维护在 `category_rules.py`、`stats.py`、`arcgis_facade.py`。
+- `modules/history/service.py` 是 history 业务规则入口；`store/history_repo.py` 只保留 CRUD/查询，不再承载覆盖、去重和坐标恢复策略。
+- 仓库卫生检查会校验热点文件体量阈值与运行时垃圾文件，提交前执行 `bash scripts/check_repo_hygiene.sh`。
+
+## 9. Docker
 ```bash
 cd /mnt/d/Coding/map_analyse/gaode-map
 docker compose -f docker-compose.prod.yml up -d --build
@@ -95,7 +113,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 - 生产镜像会在 Docker 多阶段构建中自动执行前端 `npm ci` 和 `npm run build`
 - 运行容器直接加载镜像内的 `static/frontend/`，不依赖宿主机预先打包
 
-### 8.1 构建产物约定
+### 9.1 构建产物约定
 - `frontend/` 存放 Vue + Vite 源码
 - `static/frontend/` 存放部署产物，由 Vite 输出
 - 部署产物不应提交到仓库；本地缺失时可通过 `npm run build` 或 Docker 构建重新生成

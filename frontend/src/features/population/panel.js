@@ -953,7 +953,7 @@ function createAnalysisPopulationMethods() {
     async ensurePopulationPanelEntryState() {
       const rawRing = this.getIsochronePolygonRing()
       if (!rawRing) {
-        this.populationStatus = '先在步骤一生成分析范围。'
+        this.populationStatus = ''
         this.restorePopulationRasterDisplayOnEnter()
         return
       }

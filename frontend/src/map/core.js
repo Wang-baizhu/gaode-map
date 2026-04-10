@@ -78,6 +78,7 @@ import { MapUtils } from './utils'
         this._blankTileLayer = null;
         this.tiandituMap = null;
         this.lastBasemapError = null;
+        this.analysisBackdropMode = '';
     }
 
     MapCore.prototype.initMap = function () {
@@ -210,6 +211,31 @@ import { MapUtils } from './utils'
         }
         if (typeof document === 'undefined') return null;
         return document.getElementById(this.containerId);
+    };
+
+    MapCore.prototype._applyAnalysisBackdrop = function () {
+        var container = this._getMapContainerNode();
+        if (!container) return;
+        if (!container.dataset.defaultBackgroundColor) {
+            container.dataset.defaultBackgroundColor = container.style.backgroundColor || '';
+        }
+        if (!container.dataset.defaultBackgroundImage) {
+            container.dataset.defaultBackgroundImage = container.style.backgroundImage || '';
+        }
+
+        if (this.analysisBackdropMode === 'nightlight') {
+            container.style.backgroundColor = '#162033';
+            container.style.backgroundImage = 'radial-gradient(circle at 52% 42%, rgba(251, 191, 36, 0.1) 0%, rgba(35, 49, 74, 0.82) 28%, rgba(22, 32, 51, 0.94) 62%, rgba(10, 15, 27, 1) 100%)';
+            return;
+        }
+
+        container.style.backgroundColor = container.dataset.defaultBackgroundColor || '';
+        container.style.backgroundImage = container.dataset.defaultBackgroundImage || '';
+    };
+
+    MapCore.prototype.setAnalysisBackdropMode = function (mode) {
+        this.analysisBackdropMode = String(mode || '').trim().toLowerCase();
+        this._applyAnalysisBackdrop();
     };
 
     MapCore.prototype._normalizePopulationClipPolygon = function (clipPolygon) {
@@ -1012,6 +1038,8 @@ import { MapUtils } from './utils'
         if (this.basemapSource === 'amap' && this.map.setFeatures) {
             this.map.setFeatures(this.basemapMuted ? [] : ['bg', 'point', 'road', 'building']);
         }
+
+        this._applyAnalysisBackdrop();
     };
 
     MapCore.prototype._resolveLocaApi = function () {
@@ -1480,6 +1508,86 @@ import { MapUtils } from './utils'
         };
     };
 
+    MapCore.prototype._getNightlightBoundaryBucket = function (props, fieldName, styleMap) {
+        var p = props || {};
+        var safeField = String(fieldName || '').trim();
+        if (!safeField) return null;
+        var subtype = String(p[safeField] || '').trim();
+        if (!subtype) return null;
+        var styleSpec = styleMap && styleMap[subtype];
+        if (!styleSpec) return null;
+        return {
+            key: 'nightlight:' + safeField + ':' + subtype,
+            subtype: subtype,
+            color: styleSpec.strokeColor || styleSpec.color || '#f8fafc'
+        };
+    };
+
+    MapCore.prototype._extractNightlightOuterEdges = function (features, fieldName, subtypeKey, styleMap) {
+        var edgeOwners = {};
+        var self = this;
+        var normalizedSubtype = String(subtypeKey || '').trim();
+        var candidateCells = {};
+        var seenCellIds = {};
+        (features || []).forEach(function (feature, featureIdx) {
+            if (!feature || !feature.geometry || feature.geometry.type !== 'Polygon') return;
+            var rings = feature.geometry.coordinates || [];
+            var path = rings[0];
+            if (!Array.isArray(path) || path.length < 3) return;
+            var props = feature.properties || {};
+            var bucket = self._getNightlightBoundaryBucket(props, fieldName, styleMap);
+            if (!bucket) return;
+            if (normalizedSubtype && String(bucket.subtype || '') !== normalizedSubtype) return;
+
+            var candidateKey = String(props.h3_id || props.cell_id || '');
+            if (!candidateKey) candidateKey = '__idx_' + String(featureIdx);
+            if (seenCellIds[candidateKey]) return;
+            seenCellIds[candidateKey] = 1;
+            candidateCells[candidateKey] = 1;
+
+            var points = path.slice();
+            var firstNorm = self._normalizeEdgePoint(points[0], 7);
+            var lastNorm = self._normalizeEdgePoint(points[points.length - 1], 7);
+            if (
+                firstNorm && lastNorm
+                && firstNorm[0] === lastNorm[0]
+                && firstNorm[1] === lastNorm[1]
+            ) {
+                points = points.slice(0, points.length - 1);
+            }
+            if (!Array.isArray(points) || points.length < 3) return;
+
+            var seenKeys = {};
+            for (var idx = 0; idx < points.length; idx += 1) {
+                var nextIdx = (idx + 1) % points.length;
+                var p1 = self._normalizeEdgePoint(points[idx], 7);
+                var p2 = self._normalizeEdgePoint(points[nextIdx], 7);
+                if (!p1 || !p2) continue;
+                if (p1[0] === p2[0] && p1[1] === p2[1]) continue;
+                var key = self._buildEdgeKey(p1, p2);
+                if (!key || seenKeys[key]) continue;
+                seenKeys[key] = true;
+                var bucketEdgeKey = bucket.key + '::' + key;
+                if (!edgeOwners[bucketEdgeKey]) edgeOwners[bucketEdgeKey] = [];
+                edgeOwners[bucketEdgeKey].push({
+                    path: [p1, p2],
+                    color: bucket.color,
+                    subtype: bucket.subtype,
+                });
+            }
+        });
+
+        var outerEdges = [];
+        Object.keys(edgeOwners).forEach(function (key) {
+            var owners = edgeOwners[key] || [];
+            if (owners.length === 1) outerEdges.push(owners[0]);
+        });
+        return {
+            edges: outerEdges,
+            candidateCount: Object.keys(candidateCells).length
+        };
+    };
+
     MapCore.prototype._renderStructureBoundaryEdges = function (edgeSegments, styleSpec) {
         var self = this;
         var spec = styleSpec || {};
@@ -1733,6 +1841,10 @@ import { MapUtils } from './utils'
         var showStructureLisaSymbols = !!cfg.structureLisaSymbolMode;
         var structureBoundaryLineStyleMap = cfg.structureBoundaryLineStyleMap || {};
         var structureBoundaryDebug = !!cfg.structureBoundaryDebug;
+        var nightlightBoundaryField = String(cfg.nightlightBoundaryField || '').trim();
+        var nightlightBoundaryStyleMap = cfg.nightlightBoundaryStyleMap || {};
+        var nightlightBoundaryOrder = Array.isArray(cfg.nightlightBoundaryOrder) ? cfg.nightlightBoundaryOrder : [];
+        var nightlightBoundaryDebug = !!cfg.nightlightBoundaryDebug;
         var useWebglBatch = cfg.webglBatch !== false && this.gridWebglPreferred;
         var renderedByWebgl = false;
         var boundaryRenderStats = {
@@ -1742,6 +1854,7 @@ import { MapUtils } from './utils'
             lisaOuterEdges: { HH: 0, LL: 0, HL: 0, LH: 0 },
             lisaOuterRings: { HH: 0, LL: 0, HL: 0, LH: 0 },
             lisaSymbols: 0,
+            nightlightRings: {},
         };
 
         this.clearGridPolygons();
@@ -1854,6 +1967,36 @@ import { MapUtils } from './utils'
                     }
                 }
             }
+        }
+
+        if (nightlightBoundaryField && nightlightBoundaryOrder.length && nightlightBoundaryStyleMap) {
+            nightlightBoundaryOrder.forEach(function (subtypeKey) {
+                var extraction = self._extractNightlightOuterEdges(
+                    features,
+                    nightlightBoundaryField,
+                    subtypeKey,
+                    nightlightBoundaryStyleMap
+                );
+                var rings = self._buildClosedRingsFromEdges(extraction.edges || []);
+                boundaryRenderStats.nightlightRings[subtypeKey] = {
+                    candidateCount: Number(extraction.candidateCount || 0),
+                    edgeCount: Array.isArray(extraction.edges) ? extraction.edges.length : 0,
+                    ringCount: rings.length,
+                };
+                if (nightlightBoundaryDebug && typeof console !== 'undefined' && console.info) {
+                    console.info(
+                        '[MapCore] Nightlight rings (' + subtypeKey + '):',
+                        rings.length,
+                        'edges:',
+                        boundaryRenderStats.nightlightRings[subtypeKey].edgeCount,
+                        'candidates:',
+                        boundaryRenderStats.nightlightRings[subtypeKey].candidateCount
+                    );
+                }
+                if (!rings.length) return;
+                var lineSpec = Object.assign({}, nightlightBoundaryStyleMap[subtypeKey] || {});
+                self._renderStructureBoundaryRings(rings, lineSpec);
+            });
         }
 
         this.updateFitView();
