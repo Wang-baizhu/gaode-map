@@ -1,7 +1,349 @@
 
+        <!-- Middle: Main Workspace -->
+        <main class="main-content" :class="{ 'main-content-agent-mode': isAgentWorkspaceActive() }">
+            <div v-show="isAgentWorkspaceActive()" class="agent-main-stage">
+                <div class="agent-app-main">
+                    <div v-if="agentWorkspaceView === 'tools'" class="agent-tools-workspace">
+                        <div class="agent-tools-header">
+                            <div>
+                                <div class="agent-tools-eyebrow">Agent Tool Registry</div>
+                                <h2 class="agent-tools-title">工具</h2>
+                                <p class="agent-tools-subtitle">这里展示当前后端 Agent tool registry 中可用的只读元数据，不在工具库内直接执行工具。</p>
+                            </div>
+                            <button type="button" class="agent-tools-back-btn" @click="backToAgentChat">返回聊天</button>
+                        </div>
 
-        <!-- Middle: Map -->
-        <main class="main-content">
+                        <div v-if="agentToolsLoading && !agentTools.length" class="agent-tools-state">
+                            正在加载工具库...
+                        </div>
+                        <div v-else-if="agentToolsError" class="agent-tools-state is-error">
+                            <div>{{ agentToolsError }}</div>
+                            <button type="button" class="agent-tools-retry-btn" @click="loadAgentTools(true)">重试</button>
+                        </div>
+                        <div v-else-if="!agentTools.length" class="agent-tools-state">
+                            暂无可展示工具
+                        </div>
+                        <div v-else class="agent-tools-groups">
+                            <section v-for="group in getGroupedAgentTools()" :key="group.key" class="agent-tools-group">
+                                <div class="agent-tools-group-head">
+                                    <div>
+                                        <div class="agent-tools-group-title">{{ group.label }}</div>
+                                        <div class="agent-tools-group-desc">{{ group.description }}</div>
+                                    </div>
+                                </div>
+                                <div class="agent-tools-subgroups">
+                                    <div v-for="subgroup in group.subgroups" :key="`${group.key}-${subgroup.key}`" class="agent-tools-subgroup">
+                                        <div class="agent-tools-subgroup-title">{{ subgroup.label }}</div>
+                                        <div class="agent-tools-grid">
+                                            <article v-for="tool in subgroup.tools" :key="tool.name" class="agent-tool-card">
+                                                <div class="agent-tool-card-head">
+                                                    <div>
+                                                        <div class="agent-tool-name">{{ tool.name }}</div>
+                                                        <div class="agent-tool-description">{{ tool.description || '暂无说明' }}</div>
+                                                    </div>
+                                                    <div class="agent-tool-badges">
+                                                        <span v-if="tool.uiTier === 'scenario'" class="agent-tool-badge is-primary">Planner 优先</span>
+                                                        <span v-if="tool.defaultPolicyKey" class="agent-tool-badge">{{ tool.defaultPolicyKey }}</span>
+                                                        <span class="agent-tool-readonly" :class="{ 'is-write': !tool.readonly }">
+                                                            {{ tool.readonly ? '只读' : '会写入' }}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                                <div class="agent-tool-meta">
+                                                    <span>{{ getAgentToolLabel(tool.uiTier) }}</span>
+                                                    <span>{{ getAgentToolLabel(tool.capabilityType) }}</span>
+                                                    <span>类别 {{ getAgentToolLabel(tool.category) }}</span>
+                                                    <span>成本 {{ getAgentToolLabel(tool.costLevel) }}</span>
+                                                    <span>风险 {{ getAgentToolLabel(tool.riskLevel) }}</span>
+                                                </div>
+                                                <div class="agent-tool-docs">
+                                                    <div class="agent-tool-doc-row">
+                                                        <div class="agent-tool-artifact-title">适用场景</div>
+                                                        <div v-if="tool.applicableScenarios.length" class="agent-tool-tags">
+                                                            <span v-for="item in tool.applicableScenarios" :key="`${tool.name}-scene-${item}`">{{ item }}</span>
+                                                        </div>
+                                                        <div v-else class="agent-tool-empty">无</div>
+                                                    </div>
+                                                    <div class="agent-tool-doc-row">
+                                                        <div class="agent-tool-artifact-title">输入参数</div>
+                                                        <div v-if="getAgentToolSchemaFields(tool.inputSchema).length" class="agent-tool-tags">
+                                                            <span v-for="item in getAgentToolSchemaFields(tool.inputSchema)" :key="`${tool.name}-input-${item}`">{{ item }}</span>
+                                                        </div>
+                                                        <div v-else class="agent-tool-empty">无参数</div>
+                                                    </div>
+                                                    <div class="agent-tool-doc-row">
+                                                        <div class="agent-tool-artifact-title">输出结果</div>
+                                                        <div v-if="tool.produces.length" class="agent-tool-tags">
+                                                            <span v-for="item in tool.produces" :key="`${tool.name}-produces-${item}`">{{ item }}</span>
+                                                        </div>
+                                                        <div v-else class="agent-tool-empty">无</div>
+                                                    </div>
+                                                    <div class="agent-tool-doc-row">
+                                                        <div class="agent-tool-artifact-title">证据链字段</div>
+                                                        <div v-if="tool.evidenceContract.length" class="agent-tool-tags">
+                                                            <span v-for="item in tool.evidenceContract" :key="`${tool.name}-evidence-${item}`">{{ item }}</span>
+                                                        </div>
+                                                        <div v-else class="agent-tool-empty">无</div>
+                                                    </div>
+                                                    <div class="agent-tool-doc-row">
+                                                        <div class="agent-tool-artifact-title">注意事项</div>
+                                                        <div v-if="tool.cautions.length" class="agent-tool-cautions">
+                                                            {{ tool.cautions.join('；') }}
+                                                        </div>
+                                                        <div v-else class="agent-tool-empty">无</div>
+                                                    </div>
+                                                </div>
+                                            </article>
+                                        </div>
+                                    </div>
+                                </div>
+                            </section>
+                        </div>
+                    </div>
+                    <div
+                        v-else
+                        class="agent-app-center"
+                        :class="{
+                            'is-empty': !agentHasConversationContent() && !agentLoading && !agentSessionHydrating,
+                            'has-thread': agentHasConversationContent() || agentLoading || agentSessionHydrating
+                        }">
+                        <div v-if="!agentHasConversationContent() && !agentLoading && !agentSessionHydrating" class="agent-hero">
+                            <div class="agent-hero-title">我们先从哪里开始呢？</div>
+                            <div class="agent-hero-subtitle">先说问题，Agent 会调用已有工具和分析能力直接处理。</div>
+                        </div>
+
+                        <div v-if="agentHasConversationContent() || agentLoading || agentSessionHydrating" class="agent-thread-shell">
+                            <div ref="agentChatBody" class="agent-chat-body agent-chat-body-main">
+                                <div v-if="agentSessionHydrating" class="agent-session-skeleton" aria-hidden="true">
+                                    <div class="agent-session-skeleton-row is-user">
+                                        <div class="agent-session-skeleton-bubble is-user"></div>
+                                    </div>
+                                    <div class="agent-session-skeleton-row is-assistant">
+                                        <div class="agent-session-skeleton-bubble is-assistant is-wide"></div>
+                                    </div>
+                                    <div class="agent-session-skeleton-row is-assistant">
+                                        <div class="agent-session-skeleton-card">
+                                            <div class="agent-session-skeleton-line short"></div>
+                                            <div class="agent-session-skeleton-line"></div>
+                                            <div class="agent-session-skeleton-line"></div>
+                                            <div class="agent-session-skeleton-line medium"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <template v-else>
+                                <div v-for="(message, index) in getAgentMessagesBeforeThinking()" :key="`agent-message-main-before-${index}`" class="agent-message-row" :class="`is-${message.role}`">
+                                    <div class="agent-message-bubble" :class="`is-${message.role}`">
+                                        {{ message.content }}
+                                    </div>
+                                </div>
+
+                                <div v-if="agentShouldRenderThinkingBlock()" class="agent-message-row is-assistant">
+                                    <div
+                                        class="agent-message-bubble is-assistant agent-thinking-bubble"
+                                        :class="{ 'is-debug-open': agentThinkingExpanded }">
+                                        <div class="agent-thinking-head">
+                                            <div class="agent-thinking-status">
+                                                <span class="agent-thinking-dot" :class="{ 'is-running': agentLoading }"></span>
+                                                <span>{{ getAgentThinkingStatusLabel() }}</span>
+                                                <span v-if="getAgentThinkingElapsedLabel()" class="agent-thinking-elapsed">{{ getAgentThinkingElapsedLabel() }}</span>
+                                            </div>
+                                            <button
+                                                v-if="agentThinkingTimeline.length || agentReasoningBlocks.length || agentExecutionTrace.length || agentResearchNotes.length"
+                                                type="button"
+                                                class="agent-thinking-toggle"
+                                                @click="toggleAgentThinkingExpanded">
+                                                {{ agentThinkingExpanded ? '收起过程' : '查看过程' }}
+                                            </button>
+                                        </div>
+
+                                        <div v-if="agentThinkingExpanded && getAgentVisibleReasoningBlocks().length" class="agent-reasoning-panel">
+                                            <div
+                                                v-for="block in getAgentVisibleReasoningBlocks()"
+                                                :key="`agent-reasoning-${block.id}`"
+                                                class="agent-reasoning-block"
+                                                :class="`is-${block.state || 'active'}`">
+                                                <div class="agent-reasoning-title">{{ block.title || '模型思考' }}</div>
+                                                <pre v-if="block.content" class="agent-reasoning-content">{{ block.content }}</pre>
+                                                <div v-else class="agent-reasoning-placeholder">等待模型输出思考过程...</div>
+                                            </div>
+                                        </div>
+
+                                        <div v-if="agentThinkingExpanded" class="agent-thinking-steps">
+                                            <div
+                                                v-for="stepItem in getAgentVisibleProcessSteps()"
+                                                :key="`agent-visible-process-${stepItem.id}`"
+                                                class="agent-thinking-current"
+                                                :class="`is-${stepItem.state}`">
+                                                <div class="agent-thinking-item-title">{{ stepItem.title }}</div>
+                                                <div v-if="stepItem.detail" class="agent-thinking-item-detail">{{ stepItem.detail }}</div>
+                                                <div v-if="stepItem.items && stepItem.items.length" class="agent-thinking-item-list">
+                                                    <div
+                                                        v-for="(subItem, subIndex) in stepItem.items.slice(0, 3)"
+                                                        :key="`${stepItem.id}-current-item-${subIndex}`"
+                                                        class="agent-thinking-item-meta">
+                                                        {{ subItem }}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div v-for="(message, index) in getAgentMessagesAfterThinking()" :key="`agent-message-main-after-${index}`" class="agent-message-row" :class="`is-${message.role}`">
+                                    <div class="agent-message-bubble" :class="`is-${message.role}`">
+                                        {{ message.content }}
+                                    </div>
+                                </div>
+
+                                <div v-if="agentClarificationQuestion" class="agent-message-row is-assistant">
+                                    <div class="agent-message-bubble is-assistant agent-message-bubble-note">
+                                        {{ agentClarificationQuestion }}
+                                    </div>
+                                </div>
+
+                                <div v-else-if="agentRiskPrompt" class="agent-message-row is-assistant">
+                                    <div class="agent-message-bubble is-assistant agent-message-bubble-note">
+                                        <div>{{ agentRiskPrompt }}</div>
+                                    </div>
+                                </div>
+
+                                <div v-else-if="agentError" class="agent-message-row is-assistant">
+                                    <div class="agent-message-bubble is-assistant agent-message-bubble-error">
+                                        {{ agentError }}
+                                    </div>
+                                </div>
+
+                                <div v-if="agentCards.length" class="agent-message-row is-assistant">
+                                    <div class="agent-message-bubble is-assistant agent-card-bubble">
+                                        <div v-for="(card, index) in agentCards" :key="`agent-main-card-${index}`" class="agent-card">
+                                            <div class="agent-card-type">{{ card.type }}</div>
+                                            <div class="agent-card-title">{{ card.title }}</div>
+                                            <div class="agent-card-content">{{ card.content }}</div>
+                                            <ul v-if="card.items && card.items.length" class="agent-card-items">
+                                                <li v-for="(item, itemIndex) in card.items" :key="getAgentCardItemKey(item, itemIndex)">
+                                                    <button
+                                                        v-if="isAgentCardActionItem(item)"
+                                                        type="button"
+                                                        class="agent-card-item-btn"
+                                                        @click="onAgentCardItemClick(item)">
+                                                        {{ getAgentCardItemText(item) }}
+                                                    </button>
+                                                    <span v-else>{{ getAgentCardItemText(item) }}</span>
+                                                </li>
+                                            </ul>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div v-if="agentNextSuggestions.length || agentCitations.length" class="agent-meta-inline">
+                                    <div v-if="agentResearchNotes.length" class="agent-meta-group">
+                                        <div class="agent-meta-title">研究笔记</div>
+                                        <ul class="agent-meta-list">
+                                            <li v-for="(item, index) in agentResearchNotes" :key="`agent-main-note-${index}`">{{ item }}</li>
+                                        </ul>
+                                    </div>
+                                    <div v-if="agentNextSuggestions.length" class="agent-meta-group">
+                                        <div class="agent-meta-title">下一步建议</div>
+                                        <ul class="agent-meta-list">
+                                            <li v-for="(item, index) in agentNextSuggestions" :key="`agent-main-next-${index}`">{{ item }}</li>
+                                        </ul>
+                                    </div>
+                                    <div v-if="agentCitations.length" class="agent-meta-group">
+                                        <div class="agent-meta-title">引用</div>
+                                        <ul class="agent-meta-list">
+                                            <li v-for="(item, index) in agentCitations" :key="`agent-main-citation-${index}`">{{ item }}</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                                </template>
+                            </div>
+                        </div>
+
+                        <div v-if="getAgentPlanChecklist().visible" class="agent-plan-wrap" :class="{ 'is-collapsed': !agentPlanExpanded }">
+                            <div class="agent-plan-panel">
+                                <button type="button" class="agent-plan-head" @click="toggleAgentPlanExpanded()">
+                                    <div class="agent-plan-head-main">
+                                        <div class="agent-plan-title-row">
+                                            <div class="agent-plan-title">本轮计划</div>
+                                            <div v-if="getAgentPlanProgressLabel()" class="agent-plan-progress">{{ getAgentPlanProgressLabel() }}</div>
+                                        </div>
+                                        <div v-if="getAgentPlanSummary()" class="agent-plan-summary">{{ getAgentPlanSummary() }}</div>
+                                    </div>
+                                    <div class="agent-plan-toggle">{{ agentPlanExpanded ? '收起计划' : '展开计划' }}</div>
+                                </button>
+
+                                <div v-if="agentPlanExpanded" class="agent-plan-body">
+                                    <div class="agent-plan-scroll">
+                                        <div v-if="getAgentPanelPreloadNotes().length" class="agent-plan-preload">
+                                            <div class="agent-plan-preload-title">已同步到面板</div>
+                                            <div class="agent-plan-preload-notes">
+                                                <span v-for="note in getAgentPanelPreloadNotes()" :key="`agent-plan-preload-${note.key}`" class="agent-plan-preload-chip">
+                                                    {{ note.label }}
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <div v-for="group in getAgentPlanChecklist().groups" :key="`agent-plan-group-${group.key}`" class="agent-plan-group">
+                                            <div class="agent-plan-group-head">
+                                                <div class="agent-plan-group-title">{{ group.title }}</div>
+                                                <div class="agent-plan-group-desc">{{ group.description }}</div>
+                                            </div>
+                                            <div class="agent-plan-items">
+                                                <div v-for="(item, index) in group.items" :key="`agent-plan-item-${group.key}-${index}`" class="agent-plan-item" :class="`is-${item.status}`">
+                                                    <div class="agent-plan-item-status" :title="getAgentPlanStatusLabel(item.status)">
+                                                        {{ getAgentPlanStatusSymbol(item.status) }}
+                                                    </div>
+                                                    <div class="agent-plan-item-main">
+                                                        <div class="agent-plan-item-title-row">
+                                                            <div class="agent-plan-item-title">{{ item.title }}</div>
+                                                            <div v-if="item.optional" class="agent-plan-item-optional">可选</div>
+                                                        </div>
+                                                        <div v-if="item.detail" class="agent-plan-item-detail">{{ item.detail }}</div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="agent-app-composer-wrap">
+                            <div class="agent-chat-shortcuts">
+                                <button type="button" class="agent-shortcut-chip" @click="queueAgentPrompt('总结这个区域的商业特征')">总结区域</button>
+                                <button type="button" class="agent-shortcut-chip" @click="queueAgentPrompt('哪里适合补充餐饮')">补充餐饮</button>
+                                <button type="button" class="agent-shortcut-chip" @click="queueAgentPrompt('为什么这里路网差')">路网原因</button>
+                                <button type="button" class="agent-shortcut-chip" @click="queueAgentPrompt('下一步做什么分析')">下一步建议</button>
+                            </div>
+
+                            <div class="agent-composer-card">
+                                <button type="button" class="agent-composer-plus" @click="startNewAgentChat" title="新聊天">+</button>
+                                <textarea
+                                    v-model="agentInput"
+                                    class="agent-composer-input"
+                                    placeholder="有问题，尽管问"
+                                    @keydown.enter.exact.prevent="submitAgentTurn()"
+                                ></textarea>
+                                <div class="agent-composer-actions">
+                                    <button
+                                        type="button"
+                                        class="agent-composer-send"
+                                        :class="{ 'is-loading': agentLoading }"
+                                        :disabled="agentSessionHydrating || (!agentLoading && !agentCanSubmit())"
+                                        :title="agentLoading ? '暂停执行' : '发送'"
+                                        @click="agentLoading ? cancelAgentTurn() : submitAgentTurn()">
+                                        <span v-if="!agentLoading">发送</span>
+                                        <span v-else class="agent-composer-send-loading" aria-hidden="true">
+                                            <span class="agent-composer-send-stop"></span>
+                                        </span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div v-show="!isAgentWorkspaceActive()" class="analysis-map-stage">
             <div v-if="sidebarView === 'wizard' && step === 2" class="h3-map-toolbar">
                 <button type="button" class="h3-map-tool-btn h3-map-save-btn" @click="saveAndRestart" title="保存并开启新分析">
                     <svg class="h3-map-tool-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -147,6 +489,7 @@
                     </svg>
                     <span class="h3-map-tool-text">{{ isLoadingIsochroneDebug ? '调试中...' : '调试' }}</span>
                 </button>
+
             </div>
 
             <div v-if="sidebarView === 'wizard' && step === 2 && h3ExportTasksOpen" class="h3-export-task-panel">
@@ -222,5 +565,6 @@
             </div>
             <div v-else-if="basemapSource === 'tianditu'" style="position:absolute; right:8px; bottom:6px; z-index:2; background:rgba(255,255,255,0.9); border:1px solid #e5e7eb; border-radius:6px; padding:2px 6px; font-size:10px; color:#4b5563;">
                 © 天地图
+            </div>
             </div>
         </main>

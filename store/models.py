@@ -7,6 +7,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     JSON,
     Column,
     DateTime,
@@ -89,3 +90,20 @@ class PoiResult(Base):
     summary = Column(JSON, nullable=True)
     
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class AgentSession(Base):
+    """
+    AI 会话历史记录
+    """
+    __tablename__ = "agent_sessions"
+
+    id = Column(String(128), primary_key=True)
+    title = Column(String(255), nullable=False, default="")
+    preview = Column(Text, nullable=False, default="")
+    status = Column(String(64), nullable=False, default="idle")
+    is_pinned = Column(Boolean, nullable=False, default=False, index=True)
+    pinned_at = Column(DateTime, nullable=True)
+    snapshot = Column(JSON, nullable=False, default=dict)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)

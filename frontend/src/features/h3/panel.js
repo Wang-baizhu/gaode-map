@@ -357,6 +357,90 @@
                     this.computeH3DerivedStats();
                 }
             },
+            async applyH3AnalysisResultPayload(h3Result, options = {}) {
+                const payload = h3Result && typeof h3Result === 'object' ? h3Result : {};
+                const grid = payload.grid && typeof payload.grid === 'object' ? payload.grid : {};
+                const features = Array.isArray(grid.features) ? grid.features : [];
+                const summary = payload.summary && typeof payload.summary === 'object' ? payload.summary : null;
+                if (!features.length && !summary) return false;
+
+                this.h3AnalysisGridFeatures = features;
+                this.h3GridFeatures = features;
+                const countRaw = Number(grid.count);
+                this.h3GridCount = Number.isFinite(countRaw) ? countRaw : features.length;
+                this.h3AnalysisSummary = summary;
+                this.h3AnalysisCharts = (payload.charts && typeof payload.charts === 'object') ? payload.charts : null;
+
+                const resolutionRaw = Number(grid.resolution);
+                if (Number.isFinite(resolutionRaw) && resolutionRaw >= 0) {
+                    this.h3GridResolution = Math.round(resolutionRaw);
+                }
+                const includeModeRaw = String(grid.include_mode || '').trim().toLowerCase();
+                if (includeModeRaw === 'inside' || includeModeRaw === 'intersects') {
+                    this.h3GridIncludeMode = includeModeRaw;
+                }
+                const overlapRaw = Number(grid.min_overlap_ratio);
+                if (Number.isFinite(overlapRaw)) {
+                    this.h3GridMinOverlapRatio = Math.max(0, Math.min(1, overlapRaw));
+                }
+
+                const ui = (payload.ui && typeof payload.ui === 'object') ? payload.ui : {};
+                const targetCategory = String(options.targetCategory || ui.target_category || '').trim();
+                if (targetCategory) {
+                    this.h3TargetCategory = targetCategory;
+                }
+                const mainStage = String(ui.main_stage || '').trim().toLowerCase();
+                if (['params', 'analysis', 'diagnosis', 'evaluate'].includes(mainStage)) {
+                    this.h3MainStage = mainStage;
+                }
+                const subTab = String(ui.sub_tab || '').trim();
+                if (subTab) {
+                    this.h3SubTab = subTab;
+                }
+                const metricView = String(ui.metric_view || '').trim();
+                if (metricView) {
+                    this.h3MetricView = metricView;
+                }
+                const structureFillMode = String(ui.structure_fill_mode || '').trim();
+                if (structureFillMode) {
+                    this.h3StructureFillMode = structureFillMode;
+                }
+                this._ensureH3CategoryState();
+                this.computeH3DerivedStats();
+                this.ensureH3PanelEntryState();
+                if (this.activeStep3Panel === 'poi' && String(this.poiSubTab || '').trim().toLowerCase() === 'grid') {
+                    this.renderH3BySubTab();
+                    await this.$nextTick();
+                    this.updateH3Charts();
+                    this.updateDecisionCards();
+                }
+                return true;
+            },
+            async ensureH3ReadyForAgentTarget(agentPayloads = {}, options = {}) {
+                const payloads = agentPayloads && typeof agentPayloads === 'object' ? agentPayloads : {};
+                const h3Result = (payloads.h3_result && typeof payloads.h3_result === 'object')
+                    ? payloads.h3_result
+                    : ((payloads.h3Result && typeof payloads.h3Result === 'object') ? payloads.h3Result : payloads);
+                const hydrated = await this.applyH3AnalysisResultPayload(h3Result, options);
+                if (hydrated) return true;
+                if (!options.allowCompute) return false;
+                const targetCategory = String(options.targetCategory || ((h3Result.ui || {}).target_category || '')).trim();
+                if (targetCategory) {
+                    this.h3TargetCategory = targetCategory;
+                }
+                this._ensureH3CategoryState();
+                if (typeof this.selectAllH3PoiFilters === 'function') {
+                    this.selectAllH3PoiFilters();
+                }
+                if (typeof this.generateH3Grid === 'function') {
+                    await this.generateH3Grid();
+                }
+                if (typeof this.computeH3Analysis === 'function') {
+                    await this.computeH3Analysis();
+                }
+                return !!(Array.isArray(this.h3AnalysisGridFeatures) && this.h3AnalysisGridFeatures.length)
+                    || !!this.h3AnalysisSummary;
+            },
             async onH3ResolutionChange() {
                 const rawRing = this.getIsochronePolygonRing();
                 if (!rawRing) {

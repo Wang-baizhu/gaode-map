@@ -1,4 +1,5 @@
 import { createApp, markRaw } from 'vue'
+import { createAnalysisAgentInitialState, createAnalysisAgentSessionMethods } from '../../../features/agent/sessions'
 import { createAnalysisBootstrapContext } from './bootstrap-context'
 import { mountAnalysisRuntimeApp } from '../views/runtime-mount'
 import { createAnalysisLifecycleHooks } from './lifecycle'
@@ -43,6 +44,7 @@ export function runAnalysisBootstrapApp() {
               roadSyntaxModulesReady,
               roadSyntaxModuleMissing,
           });
+          const agentSessionMethods = createAnalysisAgentSessionMethods()
 
           const analysisApp = createApp({
               data() {
@@ -51,6 +53,7 @@ export function runAnalysisBootstrapApp() {
                       config: null,
 
                       ...initialState,
+                      ...createAnalysisAgentInitialState(),
   
                       // Instances
                       placeSearch: null,
@@ -89,6 +92,81 @@ export function runAnalysisBootstrapApp() {
                   ...roadSyntaxControllerCoreMethods,
                   ...roadSyntaxWebglMethods,
                   ...roadSyntaxUiMethods,
+                  ...agentSessionMethods,
+                  openAgentPanel() {
+                      this.agentWorkspaceView = 'chat';
+                      if (typeof this.selectStep3Panel === 'function') {
+                          this.selectStep3Panel('agent');
+                          return;
+                      }
+                      this.activeStep3Panel = 'agent';
+                      this.ensureAgentPanelReady();
+                  },
+                  getAgentReturnPanel() {
+                      const candidate = String(this.lastNonAgentStep3Panel || '').trim();
+                      if (candidate && candidate !== 'agent' && typeof this.isStep3PanelVisible === 'function' && this.isStep3PanelVisible(candidate)) {
+                          return candidate;
+                      }
+                      return 'poi';
+                  },
+                  exitAgentPanel() {
+                      const targetPanel = this.getAgentReturnPanel();
+                      if (typeof this.selectStep3Panel === 'function') {
+                          this.selectStep3Panel(targetPanel);
+                          return;
+                      }
+                      this.activeStep3Panel = targetPanel;
+                  },
+                  isAgentWorkspaceActive() {
+                      return this.sidebarView === 'wizard'
+                          && Number(this.step) === 2
+                          && this.activeStep3Panel === 'agent';
+                  },
+                  resetAgentPanelState() {
+                      if (typeof this.destroyAllAgentRuns === 'function') {
+                          this.destroyAllAgentRuns();
+                      }
+                      this.agentWorkspaceView = 'chat';
+                      this.activeAgentSessionId = '';
+                      this.agentConversationId = '';
+                      this.agentInput = '';
+                      this.agentLoading = false;
+                      this.agentStatus = 'idle';
+                      this.agentCards = [];
+                      this.agentExecutionTrace = [];
+                      this.agentUsedTools = [];
+                      this.agentCitations = [];
+                      this.agentResearchNotes = [];
+                      this.agentNextSuggestions = [];
+                      this.agentClarificationQuestion = '';
+                      this.agentRiskPrompt = '';
+                      this.agentError = '';
+                      this.agentRiskConfirmations = [];
+                      this.agentMessages = [];
+                      this.agentThinkingTimeline = [];
+                      this.agentStreamingMessageId = '';
+                      this.agentStreamState = 'idle';
+                      this.agentStreamStartedAt = 0;
+                      this.agentStreamElapsedTick = 0;
+                      this.agentStreamElapsedTimer = null;
+                      this.agentThinkingExpanded = false;
+                      this.agentSessions = [];
+                      this.agentSessionsLoaded = false;
+                      this.agentSessionsLoading = false;
+                      this.agentSessionHydrating = false;
+                      this.agentSessionDetailLoadingId = '';
+                      this.agentSessionDetailRequestToken = 0;
+                      this.agentTurnAbortController = null;
+                      this.agentRunRegistry = {};
+                      this.agentSessionMenuId = '';
+                      this.agentRenameDialogOpen = false;
+                      this.agentRenameSessionId = '';
+                      this.agentRenameInput = '';
+                      this.agentTools = [];
+                      this.agentToolsLoaded = false;
+                      this.agentToolsLoading = false;
+                      this.agentToolsError = '';
+                  },
                   async generateH3Grid() {
                       const rawRing = this.getIsochronePolygonRing();
                       if (!rawRing || this.isGeneratingGrid || this.isComputingH3Analysis) return;

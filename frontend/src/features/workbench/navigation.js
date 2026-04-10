@@ -5,6 +5,7 @@
         POPULATION: 'population',
         NIGHTLIGHT: 'nightlight',
         SYNTAX: 'syntax',
+        AGENT: 'agent',
     });
 
     function createAnalysisWorkbenchMethods() {
@@ -109,10 +110,27 @@
 
                 const previousPanel = this.activeStep3Panel;
                 const previousPoiSubTab = String(this.poiSubTab || '').trim().toLowerCase();
+                if (previousPanel && previousPanel !== STEP3_PANEL_IDS.AGENT) {
+                    this.lastNonAgentStep3Panel = previousPanel;
+                }
+                if (nextPanelId !== STEP3_PANEL_IDS.AGENT) {
+                    this.lastNonAgentStep3Panel = nextPanelId;
+                }
                 this.activeStep3Panel = nextPanelId;
                 if (nextPanelId === STEP3_PANEL_IDS.POI && openPoiGrid) {
                     this.poiSubTab = 'grid';
                     this.poiKdeEnabled = false;
+                }
+                if (
+                    previousPanel === STEP3_PANEL_IDS.AGENT
+                    && nextPanelId !== STEP3_PANEL_IDS.AGENT
+                ) {
+                    this.$nextTick(() => {
+                        const map = this.mapCore && this.mapCore.map ? this.mapCore.map : null;
+                        if (map && typeof map.resize === 'function') {
+                            map.resize();
+                        }
+                    });
                 }
                 this.autoEnableDisplayTargetsForPanel(nextPanelId, { openPoiGrid });
 
@@ -185,6 +203,17 @@
                     this.ensureNightlightPanelEntryState();
                     this.restoreNightlightDisplayOnEnter();
                     this.applySimplifyPointVisibility();
+                    return;
+                }
+                if (nextPanelId === STEP3_PANEL_IDS.AGENT) {
+                    if (typeof this.ensureAgentPanelReady === 'function') {
+                        this.ensureAgentPanelReady();
+                    }
+                    if (typeof this.applyPoiVisualState === 'function') {
+                        this.applyPoiVisualState({
+                            shouldShowPoi: false,
+                        });
+                    }
                     return;
                 }
                 if (nextPanelId === STEP3_PANEL_IDS.SYNTAX) {

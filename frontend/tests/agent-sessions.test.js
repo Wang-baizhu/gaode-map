@@ -1,0 +1,1933 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+
+import {
+  createAnalysisAgentInitialState,
+  createAnalysisAgentSessionMethods,
+  deriveAgentSessionPreview,
+  normalizeAgentToolSummary,
+  normalizeAgentTurnPayload,
+  sortAgentSessions,
+} from '../src/features/agent/sessions.js'
+
+const agentMethods = createAnalysisAgentSessionMethods()
+
+function createSseResponse(events = []) {
+  const encoder = new TextEncoder()
+  const stream = new ReadableStream({
+    start(controller) {
+      events.forEach((event) => {
+        controller.enqueue(
+          encoder.encode(`event: ${event.type}\ndata: ${JSON.stringify(event.payload)}\n\n`),
+        )
+      })
+      controller.close()
+    },
+  })
+  return {
+    ok: true,
+    body: stream,
+  }
+}
+
+function createAgentContext(overrides = {}) {
+  const state = createAnalysisAgentInitialState()
+  const ctx = {
+    ...state,
+    ...agentMethods,
+    sidebarView: 'wizard',
+    step: 2,
+    activeStep3Panel: 'agent',
+    scopeSource: '',
+    transportMode: 'walking',
+    timeHorizon: 15,
+    roadSyntaxSummary: null,
+    populationOverview: null,
+    nightlightOverview: null,
+    allPoisDetails: [],
+    h3AnalysisSummary: null,
+    h3GridCount: 0,
+    roadSyntaxDiagnostics: null,
+    resultDataSource: 'local',
+    poiDataSource: 'local',
+    h3AnalysisCharts: {},
+    h3GridResolution: 9,
+    h3NeighborRing: 1,
+    roadSyntaxMetric: 'connectivity',
+    populationAnalysisView: 'analysis',
+    nightlightAnalysisView: 'grid',
+    lastNonAgentStep3Panel: 'poi',
+    getIsochronePolygonPayload() {
+      return [[1, 1], [1, 2], [2, 2], [1, 1]]
+    },
+    getDrawnScopePolygonPoints() {
+      return []
+    },
+    selectStep3Panel(panelId) {
+      this.activeStep3Panel = panelId
+    },
+  }
+  return Object.assign(ctx, overrides)
+}
+
+test('sortAgentSessions keeps pinned sessions before newer unpinned sessions', () => {
+  const sessions = sortAgentSessions([
+    { id: 'b', isPinned: false, updatedAt: '2026-04-05T10:00:00Z', createdAt: '2026-04-05T10:00:00Z' },
+    { id: 'a', isPinned: true, pinnedAt: '2026-04-05T09:00:00Z', updatedAt: '2026-04-05T08:00:00Z', createdAt: '2026-04-05T08:00:00Z' },
+  ])
+
+  assert.deepEqual(sessions.map((item) => item.id), ['a', 'b'])
+})
+
+test('normalizeAgentTurnPayload reads staged backend response shape', () => {
+  const normalized = normalizeAgentTurnPayload({
+    status: 'answered',
+    stage: 'answered',
+    output: {
+      cards: [{ type: 'summary', title: '概览', content: '这里以社区商业为主', items: [] }],
+      next_suggestions: ['继续看路网'],
+      panel_payloads: { h3_result: { summary: { grid_count: 8 } } },
+    },
+    diagnostics: {
+      execution_trace: [{ tool_name: 'read_current_scope', status: 'success' }],
+      used_tools: ['read_current_scope'],
+      citations: ['analysis_snapshot.h3.summary'],
+      research_notes: ['已复用现有结果'],
+      audit_issues: ['不能直接推断经营收益'],
+      planning_summary: '先读取范围，再分析业态结构',
+      audit_summary: '证据完整，可直接回答',
+      replan_count: 1,
+      thinking_timeline: [{ id: 'thinking-1', phase: 'gating', title: '输入检查完成', detail: '已确认范围。', state: 'completed' }],
+      error: '',
+    },
+    context_summary: {
+      has_scope: true,
+      available_results: ['pois', 'h3'],
+      active_panel: 'agent',
+      filters_digest: { poi_source: 'local' },
+    },
+    plan: {
+      steps: [{ tool_name: 'read_current_scope', reason: '读取范围' }],
+      followup_steps: [],
+      followup_applied: false,
+      summary: '先读取范围，再分析业态结构',
+    },
+  })
+
+  assert.equal(normalized.output.cards[0].content, '这里以社区商业为主')
+  assert.equal(normalized.output.panelPayloads.h3_result.summary.grid_count, 8)
+  assert.deepEqual(normalized.diagnostics.usedTools, ['read_current_scope'])
+  assert.deepEqual(normalized.diagnostics.auditIssues, ['不能直接推断经营收益'])
+  assert.equal(normalized.diagnostics.planningSummary, '先读取范围，再分析业态结构')
+  assert.equal(normalized.diagnostics.auditSummary, '证据完整，可直接回答')
+  assert.equal(normalized.diagnostics.replanCount, 1)
+  assert.equal(normalized.diagnostics.thinkingTimeline[0].id, 'thinking-1')
+  assert.equal(normalized.contextSummary.active_panel, 'agent')
+  assert.equal(normalized.plan.summary, '先读取范围，再分析业态结构')
+})
+
+test('deriveAgentSessionPreview prefers summary card over mirrored message fallback', () => {
+  const preview = deriveAgentSessionPreview({
+    messages: [{ role: 'user', content: '总结这个区域' }],
+    cards: [{ type: 'summary', title: '核心判断', content: '这里以社区商业为主', items: [] }],
+  })
+
+  assert.equal(preview, '这里以社区商业为主')
+})
+
+test('openAgentToolsPanel switches to tools view and loads tools once', async () => {
+  const ctx = createAgentContext()
+  let fetchCount = 0
+  global.fetch = async (url) => {
+    fetchCount += 1
+    assert.equal(url, '/api/v1/analysis/agent/tools')
+    return {
+      ok: true,
+      async json() {
+        return [
+          {
+            name: 'read_current_scope',
+            description: '读取当前范围',
+            category: 'information',
+            layer: 'L1',
+            ui_tier: 'foundation',
+            data_domain: 'general',
+            capability_type: 'fetch',
+            scene_type: 'general',
+            llm_exposure: 'primary',
+            applicable_scenarios: ['所有地图分析任务起步'],
+            cautions: [],
+            requires: [],
+            produces: ['scope_polygon'],
+            input_schema: { type: 'object', properties: {} },
+            output_schema: { type: 'object', properties: { has_scope: { type: 'boolean' } } },
+            readonly: true,
+            cost_level: 'safe',
+            risk_level: 'safe',
+            timeout_sec: 30,
+            cacheable: false,
+          },
+        ]
+      },
+    }
+  }
+
+  ctx.openAgentToolsPanel()
+  await Promise.resolve()
+  await Promise.resolve()
+
+  assert.equal(ctx.activeStep3Panel, 'agent')
+  assert.equal(ctx.agentWorkspaceView, 'tools')
+  assert.equal(ctx.agentToolsLoaded, true)
+  assert.equal(ctx.agentTools.length, 1)
+  assert.equal(ctx.agentTools[0].costLevel, 'safe')
+  assert.equal(ctx.agentTools[0].uiTier, 'foundation')
+
+  ctx.openAgentToolsPanel()
+  await Promise.resolve()
+
+  assert.equal(fetchCount, 1)
+})
+
+test('backToAgentChat keeps conversation state and cached tools', () => {
+  const ctx = createAgentContext({
+    agentWorkspaceView: 'tools',
+    agentInput: '继续分析',
+    agentMessages: [{ role: 'user', content: '总结这个区域' }],
+    agentTools: [{ name: 'read_current_scope', requires: [], produces: [] }],
+    agentToolsLoaded: true,
+  })
+
+  ctx.backToAgentChat()
+
+  assert.equal(ctx.agentWorkspaceView, 'chat')
+  assert.equal(ctx.agentInput, '继续分析')
+  assert.deepEqual(ctx.agentMessages.map((item) => item.content), ['总结这个区域'])
+  assert.deepEqual(ctx.agentTools.map((item) => item.name), ['read_current_scope'])
+  assert.equal(ctx.agentToolsLoaded, true)
+})
+
+test('normalizeAgentToolSummary keeps new classification fields and grouping works', () => {
+  const toolA = normalizeAgentToolSummary({
+    name: 'run_area_character_pack',
+    ui_tier: 'scenario',
+    data_domain: 'general',
+    capability_type: 'decide',
+    scene_type: 'area_character',
+    llm_exposure: 'primary',
+    applicable_scenarios: ['区域总体调性'],
+    cautions: ['不能替代控规'],
+    input_schema: { type: 'object', properties: { policy_key: { type: 'string' } } },
+    output_schema: { type: 'object', properties: { character_tags: { type: 'array' } } },
+    requires: ['scope_polygon'],
+    produces: ['area_character_pack'],
+  })
+  const toolB = normalizeAgentToolSummary({
+    name: 'compute_population_overview_from_scope',
+    ui_tier: 'foundation',
+    data_domain: 'population',
+    capability_type: 'analyze',
+    scene_type: 'general',
+    llm_exposure: 'primary',
+    requires: ['scope_polygon'],
+    produces: ['current_population_summary'],
+  })
+  const ctx = createAgentContext({
+    agentTools: [toolA, toolB],
+  })
+
+  const groups = ctx.getGroupedAgentTools()
+
+  assert.equal(toolA.uiTier, 'scenario')
+  assert.equal(toolA.sceneType, 'area_character')
+  assert.equal(toolA.capabilityType, 'decide')
+  assert.deepEqual(toolA.applicableScenarios, ['区域总体调性'])
+  assert.equal(groups[0].key, 'foundation')
+  assert.equal(groups[1].key, 'scenario')
+  assert.equal(groups[1].subgroups[0].key, 'area_character')
+})
+
+test('loadAgentSessionSummaries preserves local draft while adding persisted summaries', async () => {
+  const ctx = createAgentContext()
+  const draft = ctx.createAgentSession('本地草稿')
+  ctx.agentSessions = [draft]
+  ctx.activeAgentSessionId = draft.id
+  ctx.agentConversationId = draft.id
+
+  global.fetch = async () => ({
+    ok: true,
+    async json() {
+      return [
+        {
+          id: 'agent-persisted',
+          title: '已保存会话',
+          preview: '服务器摘要',
+          status: 'answered',
+          analysis_fingerprint: 'fp-persisted',
+          is_pinned: false,
+          created_at: '2026-04-05T00:00:00Z',
+          updated_at: '2026-04-05T01:00:00Z',
+          pinned_at: null,
+        },
+      ]
+    },
+  })
+
+  await ctx.loadAgentSessionSummaries()
+
+  assert.equal(ctx.agentSessionsLoaded, true)
+  assert.equal(ctx.agentSessions.length, 2)
+  assert.equal(ctx.getAgentHistorySessions().length, 1)
+  assert.equal(ctx.findAgentSession('agent-persisted').analysisFingerprint, 'fp-persisted')
+  assert.equal(ctx.agentSessions.some((item) => item.id === draft.id && item.persisted === false), true)
+  assert.equal(ctx.agentSessions.some((item) => item.id === 'agent-persisted' && item.persisted === true), true)
+})
+
+test('agent history sessions are grouped by current analysis fingerprint', () => {
+  const ctx = createAgentContext()
+  const currentFingerprint = ctx.getCurrentAgentAnalysisFingerprint()
+  ctx.agentSessions = [
+    { ...ctxSessionBase('agent-current', '当前范围'), analysisFingerprint: currentFingerprint, persisted: true, snapshotLoaded: true },
+    { ...ctxSessionBase('agent-other', '其他范围'), analysisFingerprint: 'fp-other', persisted: true, snapshotLoaded: true },
+    { ...ctxSessionBase('agent-legacy', '旧历史'), analysisFingerprint: '', persisted: true, snapshotLoaded: true },
+    { ...ctxSessionBase('agent-draft', '草稿'), analysisFingerprint: currentFingerprint, persisted: false, snapshotLoaded: true },
+  ]
+
+  assert.deepEqual(ctx.getAgentCurrentRangeSessions().map((item) => item.id), ['agent-current'])
+  assert.deepEqual(ctx.getAgentOtherRangeSessions().map((item) => item.id), ['agent-other', 'agent-legacy'])
+  assert.deepEqual(ctx.getAgentRangeSessionGroups().map((item) => item.title), ['当前范围', '其他范围'])
+})
+
+test('agent history puts all sessions into other range when current fingerprint is missing', () => {
+  const ctx = createAgentContext({
+    getIsochronePolygonPayload() {
+      return []
+    },
+    getDrawnScopePolygonPoints() {
+      return []
+    },
+  })
+  ctx.agentSessions = [
+    { ...ctxSessionBase('agent-a', 'A'), analysisFingerprint: 'fp-a', persisted: true, snapshotLoaded: true },
+    { ...ctxSessionBase('agent-b', 'B'), analysisFingerprint: '', persisted: true, snapshotLoaded: true },
+  ]
+
+  assert.equal(ctx.getCurrentAgentAnalysisFingerprint(), '')
+  assert.deepEqual(ctx.getAgentCurrentRangeSessions(), [])
+  assert.deepEqual(ctx.getAgentOtherRangeSessions().map((item) => item.id), ['agent-a', 'agent-b'])
+})
+
+test('activateAgentSession switches immediately and hydrates persisted summary later', async () => {
+  const ctx = createAgentContext({
+    agentSessions: [
+      {
+        id: 'agent-persisted',
+        title: '已保存会话',
+        preview: '服务器摘要',
+        status: 'answered',
+        createdAt: '2026-04-05T00:00:00Z',
+        updatedAt: '2026-04-05T01:00:00Z',
+        pinnedAt: '',
+        input: '',
+        cards: [],
+        executionTrace: [],
+        usedTools: [],
+        citations: [],
+        researchNotes: [],
+        nextSuggestions: [],
+        clarificationQuestion: '',
+        riskPrompt: '',
+        error: '',
+        riskConfirmations: [],
+        messages: [],
+        isPinned: false,
+        persisted: true,
+        snapshotLoaded: false,
+      },
+    ],
+  })
+
+  let resolveDetail
+  global.fetch = async () => ({
+    ok: true,
+    async json() {
+      return new Promise((resolve) => {
+        resolveDetail = resolve
+      })
+    },
+  })
+
+  const activating = ctx.activateAgentSession('agent-persisted')
+
+  assert.equal(ctx.activeAgentSessionId, 'agent-persisted')
+  assert.equal(ctx.agentSessionHydrating, true)
+  assert.equal(ctx.agentSessionDetailLoadingId, 'agent-persisted')
+  assert.equal(ctx.agentMessages.length, 0)
+  await Promise.resolve()
+
+  resolveDetail({
+    id: 'agent-persisted',
+    title: '已保存会话',
+    preview: '助手回复',
+    status: 'answered',
+    is_pinned: false,
+    created_at: '2026-04-05T00:00:00Z',
+    updated_at: '2026-04-05T01:00:00Z',
+    pinned_at: null,
+    input: '',
+    messages: [
+      { role: 'user', content: '总结这个区域' },
+      { role: 'assistant', content: '这里以社区商业为主' },
+    ],
+    cards: [],
+    output: { cards: [], clarification_question: '', risk_prompt: '', next_suggestions: [] },
+    diagnostics: {
+      execution_trace: [],
+      used_tools: [],
+      citations: [],
+      research_notes: [],
+      audit_issues: [],
+      thinking_timeline: [{ id: 'thinking-restored', phase: 'answering', title: '回答生成完成', detail: '已恢复。', state: 'completed' }],
+      error: '',
+    },
+    context_summary: {},
+    plan: { steps: [], followup_steps: [], followup_applied: false },
+    risk_confirmations: [],
+  })
+
+  await activating
+
+  assert.equal(ctx.activeAgentSessionId, 'agent-persisted')
+  assert.equal(ctx.agentSessionHydrating, false)
+  assert.equal(ctx.agentSessionDetailLoadingId, '')
+  assert.equal(ctx.agentMessages.length, 2)
+  assert.equal(ctx.agentThinkingTimeline[0].id, 'thinking-restored')
+  assert.equal(ctx.agentThinkingExpanded, false)
+  assert.equal(ctx.findAgentSession('agent-persisted').snapshotLoaded, true)
+})
+
+test('activateAgentSession ignores stale detail response when user switches again', async () => {
+  const ctx = createAgentContext({
+    agentSessions: [
+      { ...ctxSessionBase('agent-a', 'A'), persisted: true, snapshotLoaded: false, preview: 'A 摘要' },
+      { ...ctxSessionBase('agent-b', 'B'), persisted: true, snapshotLoaded: false, preview: 'B 摘要' },
+    ],
+  })
+
+  const resolvers = new Map()
+  global.fetch = async (url) => ({
+    ok: true,
+    async json() {
+      const sessionId = String(url).split('/').pop()
+      return new Promise((resolve) => {
+        resolvers.set(sessionId, resolve)
+      })
+    },
+  })
+
+  const firstActivation = ctx.activateAgentSession('agent-a')
+  assert.equal(ctx.activeAgentSessionId, 'agent-a')
+  assert.equal(ctx.agentSessionHydrating, true)
+  await Promise.resolve()
+
+  const secondActivation = ctx.activateAgentSession('agent-b')
+  assert.equal(ctx.activeAgentSessionId, 'agent-b')
+  assert.equal(ctx.agentSessionDetailLoadingId, 'agent-b')
+  await Promise.resolve()
+
+  resolvers.get('agent-a')({
+    id: 'agent-a',
+    title: 'A',
+    preview: 'A 完整内容',
+    status: 'answered',
+    is_pinned: false,
+    created_at: '2026-04-05T00:00:00Z',
+    updated_at: '2026-04-05T01:00:00Z',
+    pinned_at: null,
+    input: '',
+    messages: [{ role: 'assistant', content: 'A 详情' }],
+    cards: [],
+    execution_trace: [],
+    used_tools: [],
+    citations: [],
+    research_notes: [],
+    next_suggestions: [],
+    clarification_question: '',
+    risk_prompt: '',
+    error: '',
+    risk_confirmations: [],
+  })
+  await firstActivation
+
+  assert.equal(ctx.activeAgentSessionId, 'agent-b')
+  assert.equal(ctx.agentSessionHydrating, true)
+  assert.equal(ctx.agentMessages.length, 0)
+
+  resolvers.get('agent-b')({
+    id: 'agent-b',
+    title: 'B',
+    preview: 'B 完整内容',
+    status: 'answered',
+    is_pinned: false,
+    created_at: '2026-04-05T00:00:00Z',
+    updated_at: '2026-04-05T01:00:00Z',
+    pinned_at: null,
+    input: '',
+    messages: [{ role: 'assistant', content: 'B 详情' }],
+    cards: [],
+    execution_trace: [],
+    used_tools: [],
+    citations: [],
+    research_notes: [],
+    next_suggestions: [],
+    clarification_question: '',
+    risk_prompt: '',
+    error: '',
+    risk_confirmations: [],
+  })
+  await secondActivation
+
+  assert.equal(ctx.activeAgentSessionId, 'agent-b')
+  assert.equal(ctx.agentSessionHydrating, false)
+  assert.deepEqual(ctx.agentMessages.map((item) => item.content), ['B 详情'])
+})
+
+test('submitAgentRename updates local draft title without persisting history entry', async () => {
+  const ctx = createAgentContext()
+  const draft = ctx.createAgentSession('旧名称')
+  ctx.agentSessions = [draft]
+  ctx.activeAgentSessionId = draft.id
+  ctx.agentConversationId = draft.id
+  ctx.agentRenameDialogOpen = true
+  ctx.agentRenameSessionId = draft.id
+  ctx.agentRenameInput = '新名称'
+
+  await ctx.submitAgentRename()
+
+  assert.equal(ctx.findAgentSession(draft.id).persisted, false)
+  assert.equal(ctx.findAgentSession(draft.id).title, '新名称')
+  assert.equal(ctx.findAgentSession(draft.id).titleSource, 'user')
+  assert.equal(ctx.getAgentHistorySessions().length, 0)
+  assert.equal(ctx.agentRenameDialogOpen, false)
+  assert.equal(ctx.agentConversationId, draft.id)
+})
+
+test('startNewAgentChat keeps new draft out of visible history until first turn succeeds', async () => {
+  const ctx = createAgentContext()
+  ctx.agentSessionsLoaded = true
+  ctx.startNewAgentChat()
+
+  assert.equal(ctx.agentSessions.length, 1)
+  assert.equal(ctx.getAgentHistorySessions().length, 0)
+  assert.equal(ctx.findAgentSession(ctx.activeAgentSessionId).persisted, false)
+
+  let fetchIndex = 0
+  global.fetch = async (url, options = {}) => {
+    fetchIndex += 1
+    if (fetchIndex === 1) {
+      assert.equal(url, '/api/v1/analysis/agent/turn/stream')
+      const payload = JSON.parse(String(options.body || '{}'))
+      assert.equal(payload.conversation_id, ctx.activeAgentSessionId)
+      assert.equal(payload.governance_mode, 'auto')
+      return createSseResponse([
+        {
+          type: 'status',
+          payload: { stage: 'planned', label: '制定工具计划' },
+        },
+        {
+          type: 'thinking',
+          payload: { id: 'thinking-1', phase: 'planned', title: '规划工具调用', detail: '正在决定下一步工具。', state: 'active' },
+        },
+        {
+          type: 'final',
+          payload: {
+            response: {
+              status: 'answered',
+              stage: 'answered',
+              output: {
+                cards: [{ type: 'summary', title: '概览', content: '这里以社区商业为主', items: [] }],
+                clarification_question: '',
+                risk_prompt: '',
+                next_suggestions: [],
+              },
+              diagnostics: {
+                execution_trace: [],
+                used_tools: [],
+                citations: [],
+                research_notes: [],
+                audit_issues: [],
+                thinking_timeline: [{ id: 'thinking-1', phase: 'planned', title: '规划工具调用', detail: '正在决定下一步工具。', state: 'completed' }],
+                error: '',
+              },
+              context_summary: {
+                has_scope: true,
+                available_results: [],
+                active_panel: 'agent',
+                filters_digest: {},
+              },
+              plan: {
+                steps: [],
+                followup_steps: [],
+                followup_applied: false,
+              },
+            },
+          },
+        },
+      ])
+    }
+    assert.equal(url, `/api/v1/analysis/agent/sessions/${encodeURIComponent(ctx.activeAgentSessionId)}`)
+    return {
+      ok: true,
+      async json() {
+        return {
+          id: ctx.activeAgentSessionId,
+          title: '社区商业概览',
+          title_source: 'ai',
+          preview: '这里以社区商业为主',
+          status: 'answered',
+          stage: 'answered',
+          is_pinned: false,
+          created_at: '2026-04-05T00:00:00Z',
+          updated_at: '2026-04-05T01:00:00Z',
+          pinned_at: null,
+          input: '',
+          messages: [
+            { role: 'user', content: '总结这个区域' },
+            { role: 'assistant', content: '这里以社区商业为主' },
+          ],
+          output: {
+            cards: [{ type: 'summary', title: '概览', content: '这里以社区商业为主', items: [] }],
+            clarification_question: '',
+            risk_prompt: '',
+            next_suggestions: [],
+          },
+          diagnostics: { execution_trace: [], used_tools: [], citations: [], research_notes: [], audit_issues: [], thinking_timeline: [{ id: 'thinking-1', phase: 'planned', title: '规划工具调用', detail: '正在决定下一步工具。', state: 'completed' }], error: '' },
+          context_summary: { has_scope: true, available_results: [], active_panel: 'agent', filters_digest: {} },
+          plan: { steps: [], followup_steps: [], followup_applied: false },
+          risk_confirmations: [],
+        }
+      },
+    }
+  }
+
+  ctx.agentInput = '总结这个区域'
+  await ctx.submitAgentTurn()
+
+  assert.equal(ctx.agentThinkingTimeline.length >= 1, true)
+  assert.equal(ctx.getAgentHistorySessions().length, 1)
+  assert.equal(ctx.findAgentSession(ctx.activeAgentSessionId).persisted, true)
+  assert.equal(ctx.findAgentSession(ctx.activeAgentSessionId).title, '社区商业概览')
+  assert.equal(ctx.findAgentSession(ctx.activeAgentSessionId).titleSource, 'ai')
+  assert.equal(ctx.findAgentSession(ctx.activeAgentSessionId).thinkingTimeline[0].id, 'thinking-1')
+})
+
+test('cancelAgentTurn aborts in-flight agent request and restores idle state', async () => {
+  const ctx = createAgentContext()
+  ctx.agentSessionsLoaded = true
+  ctx.startNewAgentChat()
+  ctx.agentInput = '总结这个区域'
+
+  let capturedSignal = null
+  global.fetch = async (url, options = {}) => {
+    assert.equal(url, '/api/v1/analysis/agent/turn/stream')
+    capturedSignal = options.signal
+    return new Promise((_resolve, reject) => {
+      options.signal.addEventListener('abort', () => {
+        const error = new Error('aborted')
+        error.name = 'AbortError'
+        reject(error)
+      }, { once: true })
+    })
+  }
+
+  const pending = ctx.submitAgentTurn()
+  await Promise.resolve()
+
+  assert.equal(ctx.agentLoading, true)
+  assert.equal(typeof capturedSignal?.aborted, 'boolean')
+  assert.equal(capturedSignal.aborted, false)
+
+  ctx.cancelAgentTurn()
+  await pending
+
+  assert.equal(capturedSignal.aborted, true)
+  assert.equal(ctx.agentLoading, false)
+  assert.equal(ctx.agentStatus, 'idle')
+  assert.equal(ctx.agentError, '')
+  assert.equal(ctx.agentThinkingTimeline.length, 0)
+  assert.equal(ctx.agentStreamElapsedTimer, null)
+  assert.equal(ctx.agentStreamStartedAt, 0)
+  assert.equal(ctx.agentInput, '总结这个区域')
+})
+
+test('running session survives switching to a new chat and can be revisited', async () => {
+  const ctx = createAgentContext()
+  ctx.agentSessionsLoaded = true
+  ctx.startNewAgentChat()
+  ctx.agentInput = '总结这个区域'
+
+  const pendingBySessionId = new Map()
+  global.fetch = async (url, options = {}) => {
+    assert.equal(url, '/api/v1/analysis/agent/turn/stream')
+    const payload = JSON.parse(String(options.body || '{}'))
+    const sessionId = String(payload.conversation_id || '')
+    return new Promise((_resolve, reject) => {
+      pendingBySessionId.set(sessionId, { signal: options.signal, reject })
+      options.signal.addEventListener('abort', () => {
+        const error = new Error('aborted')
+        error.name = 'AbortError'
+        reject(error)
+      }, { once: true })
+    })
+  }
+
+  const sessionAId = ctx.activeAgentSessionId
+  const pendingA = ctx.submitAgentTurn()
+  await Promise.resolve()
+
+  assert.equal(ctx.isAgentSessionRunning(sessionAId), true)
+  assert.equal(ctx.agentLoading, true)
+
+  ctx.startNewAgentChat()
+  const sessionBId = ctx.activeAgentSessionId
+
+  assert.notEqual(sessionBId, sessionAId)
+  assert.equal(ctx.isAgentSessionRunning(sessionAId), true)
+  assert.equal(ctx.agentLoading, false)
+  assert.equal(ctx.getRunningAgentSessionCount(), 1)
+
+  await ctx.activateAgentSession(sessionAId)
+  assert.equal(ctx.activeAgentSessionId, sessionAId)
+  assert.equal(ctx.agentLoading, true)
+
+  ctx.cancelAgentTurn(sessionAId)
+  await pendingA
+
+  assert.equal(pendingBySessionId.get(sessionAId).signal.aborted, true)
+  assert.equal(ctx.isAgentSessionRunning(sessionAId), false)
+})
+
+test('parallel agent turns can run concurrently and cancel only the active session', async () => {
+  const ctx = createAgentContext()
+  ctx.agentSessionsLoaded = true
+  ctx.startNewAgentChat()
+  ctx.agentInput = '总结这个区域'
+
+  const pendingBySessionId = new Map()
+  global.fetch = async (url, options = {}) => {
+    assert.equal(url, '/api/v1/analysis/agent/turn/stream')
+    const payload = JSON.parse(String(options.body || '{}'))
+    const sessionId = String(payload.conversation_id || '')
+    return new Promise((_resolve, reject) => {
+      pendingBySessionId.set(sessionId, { signal: options.signal, reject })
+      options.signal.addEventListener('abort', () => {
+        const error = new Error('aborted')
+        error.name = 'AbortError'
+        reject(error)
+      }, { once: true })
+    })
+  }
+
+  const sessionAId = ctx.activeAgentSessionId
+  const pendingA = ctx.submitAgentTurn()
+  await Promise.resolve()
+
+  ctx.startNewAgentChat()
+  ctx.agentInput = '下一步做什么分析'
+  const sessionBId = ctx.activeAgentSessionId
+  const pendingB = ctx.submitAgentTurn()
+  await Promise.resolve()
+
+  assert.equal(ctx.getRunningAgentSessionCount(), 2)
+  assert.equal(ctx.isAgentSessionRunning(sessionAId), true)
+  assert.equal(ctx.isAgentSessionRunning(sessionBId), true)
+  assert.equal(ctx.agentLoading, true)
+
+  ctx.cancelAgentTurn()
+  await pendingB
+
+  assert.equal(pendingBySessionId.get(sessionBId).signal.aborted, true)
+  assert.equal(ctx.isAgentSessionRunning(sessionBId), false)
+  assert.equal(ctx.isAgentSessionRunning(sessionAId), true)
+  assert.equal(ctx.getRunningAgentSessionCount(), 1)
+
+  ctx.cancelAgentTurn(sessionAId)
+  await pendingA
+
+  assert.equal(pendingBySessionId.get(sessionAId).signal.aborted, true)
+  assert.equal(ctx.getRunningAgentSessionCount(), 0)
+})
+
+test('thinking elapsed timer updates reactive tick and freezes after stop', () => {
+  const ctx = createAgentContext()
+  const originalDateNow = Date.now
+  const originalSetInterval = global.window.setInterval
+  const originalClearInterval = global.window.clearInterval
+  let now = 1000
+  let timerCallback = null
+  let clearedTimer = ''
+
+  Date.now = () => now
+  global.window.setInterval = (callback, intervalMs) => {
+    assert.equal(intervalMs, 1000)
+    timerCallback = callback
+    return 'timer-1'
+  }
+  global.window.clearInterval = (timerId) => {
+    clearedTimer = timerId
+  }
+
+  try {
+    ctx.startAgentThinkingTimer()
+    assert.equal(ctx.agentStreamStartedAt, 1000)
+    assert.equal(ctx.agentStreamElapsedTimer, 'timer-1')
+    assert.equal(ctx.getAgentThinkingElapsedLabel(), '1s')
+
+    now = 3200
+    timerCallback()
+    assert.equal(ctx.agentStreamElapsedTick, 3200)
+    assert.equal(ctx.getAgentThinkingElapsedLabel(), '2s')
+
+    ctx.stopAgentThinkingTimer()
+    assert.equal(clearedTimer, 'timer-1')
+    assert.equal(ctx.agentStreamElapsedTimer, null)
+    assert.equal(ctx.getAgentThinkingElapsedLabel(), '2s')
+
+    now = 5200
+    assert.equal(ctx.getAgentThinkingElapsedLabel(), '2s')
+  } finally {
+    Date.now = originalDateNow
+    global.window.setInterval = originalSetInterval
+    global.window.clearInterval = originalClearInterval
+  }
+})
+
+test('waiting process fallback advances while first backend event is delayed', () => {
+  const ctx = createAgentContext()
+  const originalDateNow = Date.now
+  const originalSetInterval = global.window.setInterval
+  const originalClearInterval = global.window.clearInterval
+  let now = 1000
+  let timerCallback = null
+
+  Date.now = () => now
+  global.window.setInterval = (callback) => {
+    timerCallback = callback
+    return 'timer-waiting'
+  }
+  global.window.clearInterval = () => {}
+
+  try {
+    ctx.agentLoading = true
+    ctx.agentStreamState = 'connecting'
+    ctx.agentThinkingTimeline = []
+    ctx.upsertAgentThinkingItem({
+      id: 'frontend-submit-request',
+      phase: 'connecting',
+      title: '提交请求',
+      detail: '正在提交请求并等待 Agent 响应。',
+      state: 'active',
+    })
+    ctx.startAgentThinkingTimer()
+
+    now = 5000
+    timerCallback()
+    assert.deepEqual(ctx.getAgentVisibleProcessSteps().map((item) => item.id), ['frontend-submit-request', 'frontend-wait-first-event'])
+    assert.equal(ctx.getAgentVisibleProcessSteps()[0].state, 'completed')
+    assert.equal(ctx.getAgentVisibleProcessSteps()[1].title, '等待 Agent 过程')
+
+    now = 14000
+    timerCallback()
+    assert.equal(ctx.getAgentVisibleProcessSteps().at(-1).id, 'frontend-wait-model')
+    assert.equal(ctx.getAgentVisibleProcessSteps().at(-1).title, '等待模型与分析工具')
+
+    ctx.upsertAgentThinkingItem({
+      id: 'thinking-gating',
+      phase: 'gating',
+      title: '检查输入',
+      detail: '正在检查问题与范围。',
+      state: 'active',
+    })
+    assert.deepEqual(ctx.getAgentVisibleProcessSteps().map((item) => item.id), ['frontend-submit-request', 'thinking-gating'])
+  } finally {
+    Date.now = originalDateNow
+    global.window.setInterval = originalSetInterval
+    global.window.clearInterval = originalClearInterval
+  }
+})
+
+test('reasoning deltas are merged in-memory and can be cleared before persistence', () => {
+  const ctx = createAgentContext()
+
+  ctx.upsertAgentReasoningDelta({ id: 'reasoning-1', phase: 'planned', title: '模型思考', delta: '先检查', state: 'active' })
+  ctx.upsertAgentReasoningDelta({ id: 'reasoning-1', phase: 'planned', title: '模型思考', delta: '范围。', state: 'completed' })
+
+  assert.equal(ctx.agentReasoningBlocks.length, 1)
+  assert.equal(ctx.agentReasoningBlocks[0].content, '先检查范围。')
+  assert.equal(ctx.agentShouldRenderThinkingBlock(), true)
+  assert.equal(ctx.getAgentVisibleReasoningBlocks().length, 1)
+  assert.equal(ctx.getAgentVisibleReasoningBlocks()[0].title, '模型思考')
+
+  ctx.clearAgentReasoningBlocks()
+  assert.equal(ctx.agentReasoningBlocks.length, 0)
+})
+
+test('submitAgentTurn shows submit process before first stream event', async () => {
+  const ctx = createAgentContext()
+  ctx.agentSessionsLoaded = true
+  ctx.startNewAgentChat()
+  ctx.agentInput = '总结这个区域'
+
+  let capturedSignal = null
+  global.fetch = async (_url, options = {}) => {
+    capturedSignal = options.signal
+    return new Promise((_resolve, reject) => {
+      options.signal.addEventListener('abort', () => {
+        const error = new Error('aborted')
+        error.name = 'AbortError'
+        reject(error)
+      }, { once: true })
+    })
+  }
+
+  const pending = ctx.submitAgentTurn()
+  await Promise.resolve()
+
+  const steps = ctx.getAgentVisibleProcessSteps()
+  assert.equal(steps.length, 1)
+  assert.equal(steps[0].id, 'frontend-submit-request')
+  assert.equal(steps[0].title, '提交请求')
+  assert.equal(steps[0].detail.includes('正在建立 Agent 流式响应'), false)
+  assert.equal(ctx.agentThinkingTimeline.some((item) => item.id === 'stream-connect'), false)
+  assert.equal(ctx.agentThinkingExpanded, true)
+  ctx.toggleAgentThinkingExpanded()
+  assert.equal(ctx.agentThinkingExpanded, false)
+  assert.equal(ctx.getAgentVisibleProcessSteps().length, 1)
+  assert.equal(typeof capturedSignal?.aborted, 'boolean')
+
+  ctx.cancelAgentTurn()
+  await pending
+})
+
+test('getAgentVisibleProcessSteps keeps cumulative visible timeline items', () => {
+  const ctx = createAgentContext()
+
+  ctx.upsertAgentThinkingItem({
+    id: 'stream-connect',
+    phase: 'connecting',
+    title: '连接实时过程',
+    detail: '正在建立 Agent 流式响应。',
+    state: 'active',
+  })
+  ctx.upsertAgentThinkingItem({
+    id: 'thinking-gating',
+    phase: 'gating',
+    title: '检查输入',
+    detail: '正在检查问题与范围。',
+    state: 'active',
+  })
+  ctx.upsertAgentTraceThinkingItem({
+    id: 'tool-call-read-current-scope',
+    tool_name: 'read_current_scope',
+    status: 'success',
+    message: '执行成功',
+    result_summary: 'scope_polygon 已读取',
+  })
+
+  assert.equal(ctx.agentThinkingTimeline.length, 3)
+  assert.deepEqual(ctx.getAgentVisibleProcessSteps().map((item) => item.id), ['thinking-gating', 'tool-call-read-current-scope'])
+  assert.equal(ctx.getAgentVisibleProcessSteps()[1].items.includes('结果：scope_polygon 已读取'), true)
+})
+
+test('status events create visible process fallback steps', async () => {
+  const ctx = createAgentContext()
+  ctx.agentSessionsLoaded = true
+  ctx.startNewAgentChat()
+  ctx.agentInput = '总结这个区域'
+
+  global.fetch = async (url) => {
+    if (url === '/api/v1/analysis/agent/turn/stream') {
+      return createSseResponse([
+        {
+          type: 'status',
+          payload: { stage: 'gating', label: '检查输入' },
+        },
+        {
+          type: 'status',
+          payload: { stage: 'planning', label: '规划工具调用' },
+        },
+        {
+          type: 'final',
+          payload: {
+            response: {
+              status: 'answered',
+              stage: 'answered',
+              output: {
+                cards: [{ type: 'summary', title: '概览', content: '这里以社区商业为主', items: [] }],
+                clarification_question: '',
+                risk_prompt: '',
+                next_suggestions: [],
+              },
+              diagnostics: {
+                execution_trace: [],
+                used_tools: [],
+                citations: [],
+                research_notes: [],
+                audit_issues: [],
+                thinking_timeline: [],
+                error: '',
+              },
+              context_summary: { has_scope: true, available_results: [], active_panel: 'agent', filters_digest: {} },
+              plan: { steps: [], followup_steps: [], followup_applied: false },
+            },
+          },
+        },
+      ])
+    }
+    return {
+      ok: true,
+      async json() {
+        return {
+          id: ctx.activeAgentSessionId,
+          title: '社区商业概览',
+          title_source: 'ai',
+          preview: '这里以社区商业为主',
+          status: 'answered',
+          stage: 'answered',
+          is_pinned: false,
+          created_at: '2026-04-05T00:00:00Z',
+          updated_at: '2026-04-05T01:00:00Z',
+          pinned_at: null,
+          input: '',
+          messages: [
+            { role: 'user', content: '总结这个区域' },
+            { role: 'assistant', content: '这里以社区商业为主' },
+          ],
+          output: {
+            cards: [{ type: 'summary', title: '概览', content: '这里以社区商业为主', items: [] }],
+            clarification_question: '',
+            risk_prompt: '',
+            next_suggestions: [],
+          },
+          diagnostics: { execution_trace: [], used_tools: [], citations: [], research_notes: [], audit_issues: [], thinking_timeline: [], error: '' },
+          context_summary: { has_scope: true, available_results: [], active_panel: 'agent', filters_digest: {} },
+          plan: { steps: [], followup_steps: [], followup_applied: false },
+          risk_confirmations: [],
+        }
+      },
+    }
+  }
+
+  await ctx.submitAgentTurn()
+
+  assert.deepEqual(
+    ctx.getAgentVisibleProcessSteps().map((item) => item.id),
+    ['frontend-submit-request', 'status-gating', 'status-planning', 'status-answered'],
+  )
+  assert.equal(ctx.getAgentVisibleProcessSteps()[0].state, 'completed')
+  assert.equal(ctx.getAgentVisibleProcessSteps()[1].state, 'completed')
+  assert.equal(ctx.getAgentVisibleProcessSteps()[2].state, 'completed')
+  assert.equal(ctx.getAgentVisibleProcessSteps()[2].title, '规划分析步骤')
+  assert.equal(ctx.getAgentVisibleProcessSteps()[3].state, 'completed')
+})
+
+test('applyAgentSessionSnapshot expands failed and risk confirmation thinking timeline', () => {
+  const ctx = createAgentContext()
+  const baseSnapshot = {
+    id: 'agent-restored',
+    input: '',
+    stage: 'failed',
+    cards: [],
+    executionTrace: [],
+    usedTools: [],
+    citations: [],
+    researchNotes: [],
+    auditIssues: [],
+    nextSuggestions: [],
+    contextSummary: {},
+    plan: { steps: [], followupSteps: [], followupApplied: false },
+    riskConfirmations: [],
+    messages: [],
+    thinkingTimeline: [
+      { id: 'thinking-failed', phase: 'answering', title: '生成回答失败', detail: '需要查看原因。', state: 'failed' },
+    ],
+  }
+
+  ctx.applyAgentSessionSnapshot({ ...baseSnapshot, status: 'failed' })
+  assert.equal(ctx.agentThinkingExpanded, true)
+
+  ctx.applyAgentSessionSnapshot({
+    ...baseSnapshot,
+    status: 'requires_risk_confirmation',
+    stage: 'requires_risk_confirmation',
+    thinkingTimeline: [
+      { id: 'thinking-risk', phase: 'governance', title: '等待风险确认', detail: '需要确认工具调用。', state: 'active' },
+    ],
+  })
+  assert.equal(ctx.agentThinkingExpanded, true)
+
+  ctx.applyAgentSessionSnapshot({
+    ...baseSnapshot,
+    status: 'answered',
+    stage: 'answered',
+    thinkingTimeline: [
+      { id: 'thinking-answered', phase: 'answering', title: '回答生成完成', detail: '已完成。', state: 'completed' },
+    ],
+  })
+  assert.equal(ctx.agentThinkingExpanded, false)
+})
+
+test('applyAgentSessionSnapshot defaults plan checklist to expanded when plan exists', () => {
+  const ctx = createAgentContext({
+    agentPlanExpanded: false,
+  })
+
+  ctx.applyAgentSessionSnapshot({
+    id: 'agent-restored-plan',
+    status: 'answered',
+    stage: 'answered',
+    cards: [],
+    executionTrace: [{ tool_name: 'read_current_results', status: 'success' }],
+    usedTools: ['read_current_results'],
+    citations: [],
+    researchNotes: [],
+    auditIssues: [],
+    nextSuggestions: [],
+    contextSummary: {},
+    plan: {
+      steps: [{ tool_name: 'read_current_results', reason: '读取当前结果' }],
+      followupSteps: [],
+      followupApplied: false,
+      summary: '先读取结果。',
+    },
+    riskConfirmations: [],
+    messages: [],
+    thinkingTimeline: [],
+  })
+
+  assert.equal(ctx.agentPlanExpanded, true)
+  assert.equal(ctx.agentPlan.summary, '先读取结果。')
+})
+
+test('getAgentPlanChecklist derives grouped checklist states from plan and trace', () => {
+  const ctx = createAgentContext({
+    agentPlan: {
+      steps: [
+        { tool_name: 'read_current_results', reason: '读取当前结果', evidence_goal: '确认已有证据' },
+        { tool_name: 'read_h3_structure_analysis', reason: '读取空间结构', evidence_goal: '判断集中或分散' },
+      ],
+      followupSteps: [
+        { tool_name: 'detect_commercial_hotspots', reason: '识别商业热点', evidence_goal: '补空间热点结论', optional: true },
+      ],
+      followupApplied: true,
+      summary: '先读取已有分析，再补充热点识别。',
+    },
+    agentExecutionTrace: [
+      { tool_name: 'read_current_results', status: 'success' },
+      { tool_name: 'read_h3_structure_analysis', status: 'start' },
+    ],
+    agentLoading: true,
+    agentStage: 'executing',
+  })
+
+  const checklist = ctx.getAgentPlanChecklist()
+
+  assert.equal(checklist.visible, true)
+  assert.equal(checklist.summary.includes('已根据审计补充步骤'), true)
+  assert.equal(checklist.progressLabel, '1/3 已完成')
+  assert.equal(checklist.groups.length, 2)
+  assert.equal(checklist.groups[0].items[0].status, 'completed')
+  assert.equal(checklist.groups[0].items[1].status, 'active')
+  assert.equal(checklist.groups[1].items[0].status, 'pending')
+  assert.equal(checklist.groups[1].items[0].optional, true)
+
+  ctx.toggleAgentPlanExpanded()
+  assert.equal(ctx.agentPlanExpanded, false)
+})
+
+test('maybePreloadPanelForAgentTool preloads matching panel once without switching active panel', async () => {
+  let populationPreloadCount = 0
+  const ctx = createAgentContext({
+    activeStep3Panel: 'agent',
+    async ensurePopulationPanelEntryState() {
+      populationPreloadCount += 1
+    },
+  })
+
+  const first = await ctx.maybePreloadPanelForAgentTool({
+    tool_name: 'compute_population_overview_from_scope',
+    status: 'success',
+  })
+  const second = await ctx.maybePreloadPanelForAgentTool({
+    tool_name: 'compute_population_overview_from_scope',
+    status: 'success',
+  })
+
+  assert.equal(first, true)
+  assert.equal(second, false)
+  assert.equal(populationPreloadCount, 1)
+  assert.equal(ctx.activeStep3Panel, 'agent')
+  assert.deepEqual(ctx.getAgentPanelPreloadNotes().map((item) => item.label), ['已预加载人口面板数据'])
+})
+
+test('submitAgentTurn appends user message immediately and updates thinking timeline from stream', async () => {
+  const ctx = createAgentContext()
+  ctx.agentSessionsLoaded = true
+  ctx.startNewAgentChat()
+  ctx.agentInput = '总结这个区域'
+
+  global.fetch = async (url) => {
+    if (url === '/api/v1/analysis/agent/turn/stream') {
+      assert.deepEqual(ctx.agentMessages.map((item) => item.content), ['总结这个区域'])
+      return createSseResponse([
+        {
+          type: 'status',
+          payload: { stage: 'gating', label: '检查输入' },
+        },
+        {
+          type: 'thinking',
+          payload: { id: 'thinking-gating', phase: 'gating', title: '检查输入', detail: '正在检查问题与范围。', state: 'active' },
+        },
+        {
+          type: 'reasoning_delta',
+          payload: { id: 'reasoning-1', phase: 'planned', title: '模型思考', delta: '先读取当前范围。', state: 'active' },
+        },
+        {
+          type: 'trace',
+          payload: {
+            id: 'tool-call-read-current-scope',
+            tool_name: 'read_current_scope',
+            status: 'start',
+            reason: 'LLM tool call',
+            message: '开始执行工具',
+            arguments_summary: '无参数',
+            result_summary: '',
+            evidence_count: 0,
+            warning_count: 0,
+            produced_artifacts: ['scope_polygon'],
+          },
+        },
+        {
+          type: 'final',
+          payload: {
+            response: {
+              status: 'answered',
+              stage: 'answered',
+              output: {
+                cards: [{ type: 'summary', title: '概览', content: '这里以社区商业为主', items: [] }],
+                clarification_question: '',
+                risk_prompt: '',
+                next_suggestions: [],
+              },
+              diagnostics: {
+                execution_trace: [{ tool_name: 'read_current_scope', status: 'success' }],
+                used_tools: ['read_current_scope'],
+                citations: [],
+                research_notes: [],
+                audit_issues: [],
+                thinking_timeline: [
+                  { id: 'thinking-gating', phase: 'gating', title: '检查输入', detail: '正在检查问题与范围。', state: 'completed' },
+                  {
+                    id: 'tool-call-read-current-scope',
+                    phase: 'executing',
+                    title: '执行成功 read_current_scope',
+                    detail: '执行成功',
+                    items: ['参数：无参数', '结果：scope_polygon 已读取', '证据：1 条', '产物：scope_polygon'],
+                    state: 'completed',
+                  },
+                ],
+                error: '',
+              },
+              context_summary: {
+                has_scope: true,
+                available_results: [],
+                active_panel: 'agent',
+                filters_digest: {},
+              },
+              plan: {
+                steps: [{ tool_name: 'read_current_scope', reason: '读取范围' }],
+                followup_steps: [],
+                followup_applied: false,
+              },
+            },
+          },
+        },
+      ])
+    }
+    return {
+      ok: true,
+      async json() {
+        return {
+          id: ctx.activeAgentSessionId,
+          title: '社区商业概览',
+          title_source: 'ai',
+          preview: '这里以社区商业为主',
+          status: 'answered',
+          stage: 'answered',
+          is_pinned: false,
+          created_at: '2026-04-05T00:00:00Z',
+          updated_at: '2026-04-05T01:00:00Z',
+          pinned_at: null,
+          input: '',
+          messages: [
+            { role: 'user', content: '总结这个区域' },
+            { role: 'assistant', content: '这里以社区商业为主' },
+          ],
+          output: {
+            cards: [{ type: 'summary', title: '概览', content: '这里以社区商业为主', items: [] }],
+            clarification_question: '',
+            risk_prompt: '',
+            next_suggestions: [],
+          },
+          diagnostics: {
+            execution_trace: [],
+            used_tools: [],
+            citations: [],
+            research_notes: [],
+            audit_issues: [],
+            thinking_timeline: [
+              { id: 'thinking-gating', phase: 'gating', title: '检查输入', detail: '正在检查问题与范围。', state: 'completed' },
+              {
+                id: 'tool-call-read-current-scope',
+                phase: 'executing',
+                title: '执行成功 read_current_scope',
+                detail: '执行成功',
+                items: ['参数：无参数', '结果：scope_polygon 已读取', '证据：1 条', '产物：scope_polygon'],
+                state: 'completed',
+              },
+            ],
+            error: '',
+          },
+          context_summary: { has_scope: true, available_results: [], active_panel: 'agent', filters_digest: {} },
+          plan: { steps: [], followup_steps: [], followup_applied: false },
+          risk_confirmations: [],
+        }
+      },
+    }
+  }
+
+  const pending = ctx.submitAgentTurn()
+  await Promise.resolve()
+
+  assert.deepEqual(ctx.agentMessages.map((item) => item.content), ['总结这个区域'])
+  assert.equal(ctx.agentInput, '')
+  assert.equal(ctx.agentThinkingExpanded, true)
+  assert.equal(ctx.getAgentVisibleProcessSteps()[0].title, '提交请求')
+  assert.equal(ctx.getAgentVisibleProcessSteps()[0].title === '连接实时过程', false)
+
+  await pending
+
+  assert.equal(ctx.agentThinkingTimeline.length, 3)
+  assert.equal(ctx.agentThinkingExpanded, true)
+  assert.deepEqual(ctx.getAgentMessagesBeforeThinking().map((item) => item.content), ['总结这个区域'])
+  assert.deepEqual(ctx.getAgentMessagesAfterThinking().map((item) => item.content), [])
+  assert.deepEqual(ctx.getAgentVisibleProcessSteps().map((item) => item.id), ['thinking-gating', 'tool-call-read-current-scope', 'status-answered'])
+  assert.equal(ctx.getAgentVisibleProcessSteps()[1].state, 'completed')
+  const toolThinking = ctx.agentThinkingTimeline.find((item) => item.id === 'tool-call-read-current-scope')
+  assert.equal(toolThinking.items.includes('参数：无参数'), true)
+  assert.equal(toolThinking.items.includes('结果：scope_polygon 已读取'), true)
+  assert.equal(ctx.agentStreamElapsedTimer, null)
+  assert.equal(ctx.getAgentThinkingElapsedLabel().endsWith('s'), true)
+  assert.equal(ctx.agentExecutionTrace.length, 1)
+  assert.equal(ctx.agentCards.length, 1)
+  assert.equal(ctx.agentReasoningBlocks.length, 1)
+  assert.equal(ctx.getAgentVisibleReasoningBlocks()[0].content, '先读取当前范围。')
+  assert.deepEqual(ctx.agentMessages.map((item) => item.content), ['总结这个区域'])
+  assert.equal(ctx.findAgentSession(ctx.activeAgentSessionId).thinkingTimeline[0].id, 'thinking-gating')
+  assert.equal(ctx.findAgentSession(ctx.activeAgentSessionId).preview, '这里以社区商业为主')
+  assert.equal(Object.prototype.hasOwnProperty.call(ctx.findAgentSession(ctx.activeAgentSessionId), 'reasoningBlocks'), false)
+})
+
+test('submitAgentTurn shows streamed plan above final response and keeps checklist expanded by default', async () => {
+  const ctx = createAgentContext()
+  ctx.agentSessionsLoaded = true
+  ctx.startNewAgentChat()
+  ctx.agentInput = '总结这个区域'
+
+  global.fetch = async (url) => {
+    if (url === '/api/v1/analysis/agent/turn/stream') {
+      return createSseResponse([
+        {
+          type: 'plan',
+          payload: {
+            steps: [
+              { tool_name: 'read_current_results', reason: '读取当前结果', evidence_goal: '确认已有摘要' },
+              { tool_name: 'analyze_poi_mix_from_scope', reason: '分析业态结构', evidence_goal: '形成商业画像' },
+            ],
+            followup_steps: [],
+            followup_applied: false,
+            summary: '先读取已有分析，再生成商业画像。',
+          },
+        },
+        {
+          type: 'trace',
+          payload: {
+            tool_name: 'read_current_results',
+            status: 'success',
+            reason: '读取当前结果',
+            message: '执行成功',
+          },
+        },
+        {
+          type: 'final',
+          payload: {
+            response: {
+              status: 'answered',
+              stage: 'answered',
+              output: {
+                cards: [{ type: 'summary', title: '概览', content: '这里以社区商业为主', items: [] }],
+                clarification_question: '',
+                risk_prompt: '',
+                next_suggestions: [],
+              },
+              diagnostics: {
+                execution_trace: [{ tool_name: 'read_current_results', status: 'success' }],
+                used_tools: ['read_current_results'],
+                citations: [],
+                research_notes: [],
+                audit_issues: [],
+                thinking_timeline: [],
+                error: '',
+              },
+              context_summary: { has_scope: true, available_results: [], active_panel: 'agent', filters_digest: {} },
+              plan: {
+                steps: [
+                  { tool_name: 'read_current_results', reason: '读取当前结果', evidence_goal: '确认已有摘要' },
+                  { tool_name: 'analyze_poi_mix_from_scope', reason: '分析业态结构', evidence_goal: '形成商业画像' },
+                ],
+                followup_steps: [],
+                followup_applied: false,
+                summary: '先读取已有分析，再生成商业画像。',
+              },
+            },
+          },
+        },
+      ])
+    }
+    return {
+      ok: true,
+      async json() {
+        return {
+          id: ctx.activeAgentSessionId,
+          title: '社区商业概览',
+          title_source: 'ai',
+          preview: '这里以社区商业为主',
+          status: 'answered',
+          stage: 'answered',
+          is_pinned: false,
+          created_at: '2026-04-05T00:00:00Z',
+          updated_at: '2026-04-05T01:00:00Z',
+          pinned_at: null,
+          input: '',
+          messages: [{ role: 'user', content: '总结这个区域' }],
+          output: {
+            cards: [{ type: 'summary', title: '概览', content: '这里以社区商业为主', items: [] }],
+            clarification_question: '',
+            risk_prompt: '',
+            next_suggestions: [],
+          },
+          diagnostics: { execution_trace: [{ tool_name: 'read_current_results', status: 'success' }], used_tools: ['read_current_results'], citations: [], research_notes: [], audit_issues: [], thinking_timeline: [], error: '' },
+          context_summary: { has_scope: true, available_results: [], active_panel: 'agent', filters_digest: {} },
+          plan: {
+            steps: [
+              { tool_name: 'read_current_results', reason: '读取当前结果', evidence_goal: '确认已有摘要' },
+              { tool_name: 'analyze_poi_mix_from_scope', reason: '分析业态结构', evidence_goal: '形成商业画像' },
+            ],
+            followup_steps: [],
+            followup_applied: false,
+            summary: '先读取已有分析，再生成商业画像。',
+          },
+          risk_confirmations: [],
+        }
+      },
+    }
+  }
+
+  const pending = ctx.submitAgentTurn()
+  await pending
+
+  assert.equal(ctx.agentPlan.steps.length, 2)
+  assert.equal(ctx.agentPlan.summary, '先读取已有分析，再生成商业画像。')
+  assert.equal(ctx.agentPlanExpanded, true)
+  assert.equal(ctx.getAgentPlanChecklist().visible, true)
+  assert.equal(ctx.getAgentPlanChecklist().groups[0].items[0].status, 'completed')
+  assert.equal(ctx.getAgentPlanChecklist().groups[0].items[1].status, 'pending')
+})
+
+test('submitAgentTurn preloads mapped panel after successful trace and records lightweight note', async () => {
+  let h3EnsureCount = 0
+  let h3ChartsCount = 0
+  let decisionCardsCount = 0
+  let h3RestoreCount = 0
+  const ctx = createAgentContext({
+    h3AnalysisSummary: { grid_count: 12 },
+    ensureH3PanelEntryState() {
+      h3EnsureCount += 1
+    },
+    updateH3Charts() {
+      h3ChartsCount += 1
+    },
+    updateDecisionCards() {
+      decisionCardsCount += 1
+    },
+    restoreH3GridDisplayOnEnter() {
+      h3RestoreCount += 1
+    },
+  })
+  ctx.agentSessionsLoaded = true
+  ctx.startNewAgentChat()
+  ctx.agentInput = '哪里是商业核心'
+
+  global.fetch = async (url) => {
+    if (url === '/api/v1/analysis/agent/turn/stream') {
+      return createSseResponse([
+        {
+          type: 'trace',
+          payload: {
+            tool_name: 'read_h3_structure_analysis',
+            status: 'success',
+            reason: '读取 H3 结构',
+            message: '执行成功',
+          },
+        },
+        {
+          type: 'final',
+          payload: {
+            response: {
+              status: 'answered',
+              stage: 'answered',
+              output: {
+                cards: [{ type: 'summary', title: '概览', content: '商业有明显集聚', items: [] }],
+                clarification_question: '',
+                risk_prompt: '',
+                next_suggestions: [],
+              },
+              diagnostics: {
+                execution_trace: [{ tool_name: 'read_h3_structure_analysis', status: 'success' }],
+                used_tools: ['read_h3_structure_analysis'],
+                citations: [],
+                research_notes: [],
+                audit_issues: [],
+                thinking_timeline: [],
+                error: '',
+              },
+              context_summary: { has_scope: true, available_results: [], active_panel: 'agent', filters_digest: {} },
+              plan: { steps: [], followup_steps: [], followup_applied: false, summary: '' },
+            },
+          },
+        },
+      ])
+    }
+    return {
+      ok: true,
+      async json() {
+        return {
+          id: ctx.activeAgentSessionId,
+          title: '商业核心判断',
+          title_source: 'ai',
+          preview: '商业有明显集聚',
+          status: 'answered',
+          stage: 'answered',
+          is_pinned: false,
+          created_at: '2026-04-05T00:00:00Z',
+          updated_at: '2026-04-05T01:00:00Z',
+          pinned_at: null,
+          input: '',
+          messages: [{ role: 'user', content: '哪里是商业核心' }],
+          output: {
+            cards: [{ type: 'summary', title: '概览', content: '商业有明显集聚', items: [] }],
+            clarification_question: '',
+            risk_prompt: '',
+            next_suggestions: [],
+          },
+          diagnostics: { execution_trace: [{ tool_name: 'read_h3_structure_analysis', status: 'success' }], used_tools: ['read_h3_structure_analysis'], citations: [], research_notes: [], audit_issues: [], thinking_timeline: [], error: '' },
+          context_summary: { has_scope: true, available_results: [], active_panel: 'agent', filters_digest: {} },
+          plan: { steps: [], followup_steps: [], followup_applied: false, summary: '' },
+          risk_confirmations: [],
+        }
+      },
+    }
+  }
+
+  await ctx.submitAgentTurn()
+
+  assert.equal(h3EnsureCount, 1)
+  assert.equal(h3ChartsCount, 1)
+  assert.equal(decisionCardsCount, 1)
+  assert.equal(h3RestoreCount, 1)
+  assert.deepEqual(ctx.getAgentPanelPreloadNotes().map((item) => item.label), ['已预加载 H3 面板内容'])
+  assert.equal(ctx.activeStep3Panel, 'agent')
+})
+
+test('onAgentCardItemClick switches to result panel and focuses target h3 cell', async () => {
+  let ensureCalls = 0
+  let focusedH3Id = ''
+  let receivedPayload = null
+  const ctx = createAgentContext({
+    async ensureH3ReadyForAgentTarget(payload, options = {}) {
+      ensureCalls += 1
+      receivedPayload = { payload, options }
+      return true
+    },
+    focusGridByH3Id(h3Id) {
+      focusedH3Id = h3Id
+    },
+  })
+  ctx.agentSessionsLoaded = true
+  ctx.startNewAgentChat()
+  ctx.updateAgentSessionSnapshot(ctx.activeAgentSessionId, (session) => ({
+    ...session,
+    panelPayloads: {
+      h3_result: {
+        summary: { grid_count: 3 },
+        ui: { target_category: 'group-05' },
+      },
+    },
+  }))
+
+  await ctx.onAgentCardItemClick({
+    type: 'h3_candidate',
+    h3_id: '8928308280fffff',
+    text: '候选1：人民路附近',
+  })
+
+  assert.equal(ctx.sidebarView, 'wizard')
+  assert.equal(ctx.step, 2)
+  assert.equal(ctx.activeStep3Panel, 'poi')
+  assert.equal(ctx.poiSubTab, 'grid')
+  assert.equal(ensureCalls, 1)
+  assert.equal(receivedPayload.payload.h3_result.summary.grid_count, 3)
+  assert.equal(receivedPayload.options.targetCategory, 'group-05')
+  assert.equal(focusedH3Id, '8928308280fffff')
+})
+
+test('submitAgentTurn keeps failed thinking timeline expanded after final response', async () => {
+  const ctx = createAgentContext()
+  ctx.agentSessionsLoaded = true
+  ctx.startNewAgentChat()
+  ctx.agentInput = '总结这个区域'
+
+  global.fetch = async (url) => {
+    if (url === '/api/v1/analysis/agent/turn/stream') {
+      return createSseResponse([
+        {
+          type: 'thinking',
+          payload: {
+            id: 'thinking-answering',
+            phase: 'answering',
+            title: '生成回答',
+            detail: '正在组织结果。',
+            state: 'active',
+          },
+        },
+        {
+          type: 'final',
+          payload: {
+            response: {
+              status: 'failed',
+              stage: 'failed',
+              output: {
+                cards: [],
+                clarification_question: '',
+                risk_prompt: '',
+                next_suggestions: [],
+              },
+              diagnostics: {
+                execution_trace: [],
+                used_tools: [],
+                citations: [],
+                research_notes: [],
+                audit_issues: [],
+                thinking_timeline: [
+                  {
+                    id: 'thinking-answering',
+                    phase: 'answering',
+                    title: '生成回答失败',
+                    detail: 'LLM 卡片生成失败。',
+                    state: 'failed',
+                  },
+                ],
+                error: 'LLM 卡片生成失败',
+              },
+              context_summary: {
+                has_scope: true,
+                available_results: [],
+                active_panel: 'agent',
+                filters_digest: {},
+              },
+              plan: {
+                steps: [],
+                followup_steps: [],
+                followup_applied: false,
+              },
+            },
+          },
+        },
+      ])
+    }
+    throw new Error(`unexpected fetch ${url}`)
+  }
+
+  await ctx.submitAgentTurn()
+
+  assert.equal(ctx.agentStatus, 'failed')
+  assert.equal(ctx.agentThinkingExpanded, true)
+  assert.equal(ctx.agentThinkingTimeline[0].state, 'failed')
+  assert.equal(ctx.agentError, 'LLM 卡片生成失败')
+})
+
+test('toggleAgentSessionPinned patches persisted session and reorders list', async () => {
+  const ctx = createAgentContext({
+    agentSessions: [
+      {
+        ...ctxSessionBase('agent-a', 'A'),
+        persisted: true,
+        snapshotLoaded: true,
+        updatedAt: '2026-04-05T00:00:00Z',
+      },
+      {
+        ...ctxSessionBase('agent-b', 'B'),
+        persisted: true,
+        snapshotLoaded: true,
+        updatedAt: '2026-04-05T01:00:00Z',
+      },
+    ],
+  })
+
+  global.fetch = async (_url, options = {}) => ({
+    ok: true,
+    async json() {
+      const body = JSON.parse(String(options.body || '{}'))
+      return {
+        id: 'agent-a',
+        title: 'A',
+        preview: '开始一段新的分析对话',
+        status: 'idle',
+        is_pinned: !!body.is_pinned,
+        created_at: '2026-04-05T00:00:00Z',
+        updated_at: '2026-04-05T02:00:00Z',
+        pinned_at: body.is_pinned ? '2026-04-05T02:00:00Z' : null,
+        input: '',
+        messages: [],
+        cards: [],
+        execution_trace: [],
+        used_tools: [],
+        citations: [],
+        research_notes: [],
+        next_suggestions: [],
+        clarification_question: '',
+        risk_prompt: '',
+        error: '',
+        risk_confirmations: [],
+      }
+    },
+  })
+
+  await ctx.toggleAgentSessionPinned('agent-a')
+
+  assert.deepEqual(ctx.agentSessions.map((item) => item.id), ['agent-a', 'agent-b'])
+  assert.equal(ctx.findAgentSession('agent-a').isPinned, true)
+})
+
+test('deleteAgentSession removes non-active persisted session optimistically and restores on failure', async () => {
+  const ctx = createAgentContext({
+    agentSessions: [
+      { ...ctxSessionBase('agent-a', 'A'), persisted: true, snapshotLoaded: true, updatedAt: '2026-04-05T01:00:00Z' },
+      { ...ctxSessionBase('agent-b', 'B'), persisted: true, snapshotLoaded: true, updatedAt: '2026-04-05T00:00:00Z' },
+    ],
+    activeAgentSessionId: 'agent-a',
+    agentConversationId: 'agent-a',
+  })
+
+  let fetchCalled = false
+  global.fetch = async () => {
+    fetchCalled = true
+    throw new Error('network down')
+  }
+
+  await ctx.deleteAgentSession('agent-b')
+
+  assert.equal(fetchCalled, true)
+  assert.deepEqual(ctx.agentSessions.map((item) => item.id), ['agent-a', 'agent-b'])
+  assert.equal(ctx.activeAgentSessionId, 'agent-a')
+})
+
+test('deleteAgentSession removes active persisted session and falls back immediately to next session', async () => {
+  const first = ctxSessionBase('agent-a', 'A')
+  const second = ctxSessionBase('agent-b', 'B')
+  const ctx = createAgentContext({
+    agentSessions: [
+      { ...first, persisted: true, snapshotLoaded: true, updatedAt: '2026-04-05T01:00:00Z' },
+      { ...second, persisted: true, snapshotLoaded: true, updatedAt: '2026-04-05T00:00:00Z' },
+    ],
+    activeAgentSessionId: 'agent-a',
+    agentConversationId: 'agent-a',
+  })
+
+  global.fetch = async () => ({
+    ok: true,
+    async json() {
+      return { status: 'success', id: 'agent-a' }
+    },
+    get body() {
+      return undefined
+    },
+  })
+
+  const deleting = ctx.deleteAgentSession('agent-a')
+
+  assert.deepEqual(ctx.agentSessions.map((item) => item.id), ['agent-b'])
+  assert.equal(ctx.activeAgentSessionId, 'agent-b')
+
+  await deleting
+
+  assert.deepEqual(ctx.agentSessions.map((item) => item.id), ['agent-b'])
+  assert.equal(ctx.activeAgentSessionId, 'agent-b')
+})
+
+test('deleteAgentSession falls back to hydrating persisted session when next session is summary only', async () => {
+  const ctx = createAgentContext({
+    agentSessions: [
+      { ...ctxSessionBase('agent-a', 'A'), persisted: true, snapshotLoaded: true, updatedAt: '2026-04-05T01:00:00Z' },
+      { ...ctxSessionBase('agent-b', 'B'), persisted: true, snapshotLoaded: false, updatedAt: '2026-04-05T00:00:00Z', preview: 'B 摘要' },
+    ],
+    activeAgentSessionId: 'agent-a',
+    agentConversationId: 'agent-a',
+  })
+
+  let resolveDetail
+  global.fetch = async (url) => {
+    if (String(url).endsWith('/agent-a')) {
+      return {
+        ok: true,
+        async json() {
+          return { status: 'success', id: 'agent-a' }
+        },
+      }
+    }
+    return {
+      ok: true,
+      async json() {
+        return new Promise((resolve) => {
+          resolveDetail = resolve
+        })
+      },
+    }
+  }
+
+  const deleting = ctx.deleteAgentSession('agent-a')
+
+  assert.equal(ctx.activeAgentSessionId, 'agent-b')
+  assert.equal(ctx.agentSessionHydrating, true)
+  assert.equal(ctx.agentSessionDetailLoadingId, 'agent-b')
+  await Promise.resolve()
+
+  resolveDetail({
+    id: 'agent-b',
+    title: 'B',
+    preview: 'B 详情',
+    status: 'answered',
+    is_pinned: false,
+    created_at: '2026-04-05T00:00:00Z',
+    updated_at: '2026-04-05T02:00:00Z',
+    pinned_at: null,
+    input: '',
+    messages: [{ role: 'assistant', content: 'B 完整内容' }],
+    cards: [],
+    execution_trace: [],
+    used_tools: [],
+    citations: [],
+    research_notes: [],
+    next_suggestions: [],
+    clarification_question: '',
+    risk_prompt: '',
+    error: '',
+    risk_confirmations: [],
+  })
+
+  await deleting
+
+  assert.equal(ctx.agentSessionHydrating, false)
+  assert.deepEqual(ctx.agentMessages.map((item) => item.content), ['B 完整内容'])
+})
+
+test('deleteAgentSession restores previous active session when delete request fails', async () => {
+  const ctx = createAgentContext({
+    agentSessions: [
+      { ...ctxSessionBase('agent-a', 'A'), persisted: true, snapshotLoaded: true, updatedAt: '2026-04-05T01:00:00Z', messages: [{ role: 'assistant', content: 'A 内容' }] },
+      { ...ctxSessionBase('agent-b', 'B'), persisted: true, snapshotLoaded: true, updatedAt: '2026-04-05T00:00:00Z' },
+    ],
+    activeAgentSessionId: 'agent-a',
+    agentConversationId: 'agent-a',
+    agentMessages: [{ role: 'assistant', content: 'A 内容' }],
+  })
+
+  global.fetch = async () => {
+    throw new Error('delete failed')
+  }
+
+  await ctx.deleteAgentSession('agent-a')
+
+  assert.deepEqual(ctx.agentSessions.map((item) => item.id), ['agent-a', 'agent-b'])
+  assert.equal(ctx.activeAgentSessionId, 'agent-a')
+  assert.deepEqual(ctx.agentMessages.map((item) => item.content), ['A 内容'])
+})
+
+test('deleteAgentSession falls back to hidden draft when no persisted history remains', async () => {
+  const ctx = createAgentContext({
+    agentSessions: [
+      { ...ctxSessionBase('agent-a', 'A'), persisted: true, snapshotLoaded: true },
+    ],
+    activeAgentSessionId: 'agent-a',
+    agentConversationId: 'agent-a',
+  })
+
+  global.fetch = async () => ({
+    ok: true,
+    async json() {
+      return { status: 'success', id: 'agent-a' }
+    },
+  })
+
+  await ctx.deleteAgentSession('agent-a')
+
+  assert.equal(ctx.getAgentHistorySessions().length, 0)
+  assert.equal(ctx.agentSessions.length, 1)
+  assert.equal(ctx.findAgentSession(ctx.activeAgentSessionId).persisted, false)
+})
+
+function ctxSessionBase(id, title) {
+  return {
+    id,
+    title,
+    preview: '开始一段新的分析对话',
+    status: 'idle',
+    input: '',
+    cards: [],
+    executionTrace: [],
+    usedTools: [],
+    citations: [],
+    researchNotes: [],
+    nextSuggestions: [],
+    clarificationQuestion: '',
+    riskPrompt: '',
+    error: '',
+    riskConfirmations: [],
+    messages: [],
+    createdAt: '2026-04-05T00:00:00Z',
+    updatedAt: '2026-04-05T00:00:00Z',
+    pinnedAt: '',
+    isPinned: false,
+  }
+}
+
+test.after(() => {
+  global.window = undefined
+  global.fetch = undefined
+  global.alert = undefined
+  global.confirm = undefined
+})
+
+global.window = globalThis
+global.alert = () => {}
+global.confirm = () => true

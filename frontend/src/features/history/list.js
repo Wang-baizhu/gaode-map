@@ -16,6 +16,63 @@
 
     function createAnalysisHistoryListMethods() {
         return {
+            captureHistoryReturnContext() {
+                const sidebarView = String(this.sidebarView || '').trim().toLowerCase();
+                if (sidebarView === 'wizard') {
+                    this.historyReturnContext = {
+                        sidebarView: 'wizard',
+                        step: Number.isFinite(Number(this.step)) ? Number(this.step) : 1,
+                        activeStep3Panel: String(this.activeStep3Panel || '').trim().toLowerCase() || 'poi',
+                    };
+                    return;
+                }
+                this.historyReturnContext = {
+                    sidebarView: 'start',
+                    step: 1,
+                    activeStep3Panel: '',
+                };
+            },
+            getHistoryBackButtonLabel() {
+                if (this.isSelectionMode) {
+                    return '取消';
+                }
+                const context = this.historyReturnContext || {};
+                const sidebarView = String(context.sidebarView || '').trim().toLowerCase();
+                const step = Number(context.step || 0);
+                if (sidebarView === 'wizard') {
+                    return step === 2 ? '← 返回结果界面' : '← 返回分析界面';
+                }
+                return '← 返回主界面';
+            },
+            backFromHistory() {
+                if (this.isSelectionMode) {
+                    this.toggleSelectionMode(false);
+                    return;
+                }
+                const context = this.historyReturnContext || {};
+                const sidebarView = String(context.sidebarView || '').trim().toLowerCase();
+                if (sidebarView === 'wizard') {
+                    this.sidebarView = 'wizard';
+                    this.step = Number.isFinite(Number(context.step)) ? Number(context.step) : 1;
+                    const panel = String(context.activeStep3Panel || '').trim().toLowerCase();
+                    if (this.step === 2 && panel) {
+                        if (typeof this.selectStep3Panel === 'function') {
+                            this.selectStep3Panel(panel);
+                        } else {
+                            this.activeStep3Panel = panel;
+                        }
+                    }
+                    this.historyReturnContext = null;
+                    return;
+                }
+                this.historyReturnContext = null;
+                if (typeof this.backToHome === 'function') {
+                    this.backToHome();
+                    return;
+                }
+                this.sidebarView = 'start';
+                this.step = 1;
+            },
             cancelHistoryLoading() {
                 if (this.historyFetchAbortController) {
                     try {
@@ -94,6 +151,7 @@
                 });
             },
             openHistoryView() {
+                this.captureHistoryReturnContext();
                 this.sidebarView = 'history';
                 this.loadHistoryList({ force: false, keepExisting: true, background: false }).catch((err) => {
                     console.warn('History load failed', err);
